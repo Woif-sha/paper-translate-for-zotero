@@ -21,4 +21,9 @@ export type FluentMessageId =
   | 'readerpopup-translate-label'
   | 'service-errorPrefix'
   | 'service-paper-context'
+  | 'sidebar-no-attachment'
+  | 'sidebar-preferences'
+  | 'sidebar-source-placeholder'
+  | 'sidebar-title'
+  | 'sidebar-tooltip'
   | 'status-translating';

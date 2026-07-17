@@ -19,7 +19,7 @@ export async function ensureBackgroundResearch(
   const existing = await readBackgroundResearchRecord(context);
   if (existing.status === "complete" || existing.status === "empty") return;
 
-  const academicSources = await searchAcademicSources(context);
+  const academicResult = await searchAcademicSources(context);
   const client = await getCodexClient(getPref("paper.codexPath") as string);
   const model = requiredPref("paper.codexModel");
   const threadId = await client.startThread({
@@ -30,7 +30,11 @@ export async function ensureBackgroundResearch(
   });
   const result = await client.runTurn({
     threadId,
-    prompt: buildResearchPrompt(context, academicSources),
+    prompt: buildResearchPrompt(
+      context,
+      academicResult.sources,
+      academicResult.failures,
+    ),
     model,
     effort: getPref("paper.codexEffort") as string,
     cwd: context.paperDir,
@@ -41,9 +45,25 @@ export async function ensureBackgroundResearch(
   await persistBackgroundResearch({
     context,
     summary: parsed.summary,
-    queries: [context.identity.doi, context.identity.title].filter(Boolean),
-    sources: deduplicateSources([...academicSources, ...parsed.sources]),
+    queries: buildResearchQueries(context, academicResult.query),
+    sources: deduplicateSources([...academicResult.sources, ...parsed.sources]),
+    failures: academicResult.failures,
   });
+}
+
+function buildResearchQueries(
+  context: ValidatedPaperContext,
+  academicQuery: string,
+): string[] {
+  return [
+    academicQuery,
+    context.identity.doi,
+    ...context.passages.map((passage) => passage.heading),
+  ]
+    .map((query) => query.trim())
+    .filter(
+      (query, index, queries) => query && queries.indexOf(query) === index,
+    );
 }
 
 function deduplicateSources(sources: BackgroundSource[]): BackgroundSource[] {

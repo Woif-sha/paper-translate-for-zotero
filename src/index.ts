@@ -8,6 +8,8 @@ const basicTool = new BasicTool();
 if (!basicTool.getGlobal("Zotero")[config.addonInstance]) {
   // Set global variables
   _globalThis.Zotero = basicTool.getGlobal("Zotero");
+  defineGlobal("AbortController");
+  defineGlobal("AbortSignal");
   defineGlobal("crypto");
   defineGlobal("TextEncoder");
   _globalThis.addon = new Addon();

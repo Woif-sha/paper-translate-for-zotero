@@ -18,6 +18,7 @@ import Addon from "./addon";
 import { cleanupPermanentlyDeletedPaperContexts } from "./context/runtime";
 import { cancelActiveTranslation } from "./backends/translator";
 import { closeCodexClient } from "./codex/appServer";
+import { registerReaderSidebar, updateReaderSidebar } from "./modules/sidebar";
 
 async function onStartup() {
   await Promise.all([
@@ -38,8 +39,9 @@ async function onStartup() {
   setDefaultPrefSettings();
 
   registerReaderInitializer();
+  registerReaderSidebar();
   registerNotify(["item"]);
-  registerPrefsWindow();
+  await registerPrefsWindow();
 
   await cleanupPermanentlyDeletedPaperContexts();
 
@@ -48,9 +50,13 @@ async function onStartup() {
   );
 }
 
-async function onMainWindowLoad(_win: Window): Promise<void> {}
+async function onMainWindowLoad(win: Window): Promise<void> {
+  (win as any).MozXULElement.insertFTLIfNeeded(`${config.addonRef}-addon.ftl`);
+}
 
-async function onMainWindowUnload(_win: Window): Promise<void> {}
+async function onMainWindowUnload(win: Window): Promise<void> {
+  win.document.querySelector(`[href="${config.addonRef}-addon.ftl"]`)?.remove();
+}
 
 async function onShutdown(): Promise<void> {
   cancelActiveTranslation();
@@ -133,6 +139,7 @@ function onReaderPopupShow(
 
 function onReaderPopupRefresh() {
   updateReaderPopup();
+  updateReaderSidebar();
 }
 
 // Add your hooks here. For element click, etc.

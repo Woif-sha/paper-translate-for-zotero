@@ -1,5 +1,13 @@
 pref-title=论文上下文翻译
 readerpopup-translate-label=翻译
 status-translating=正在翻译...
+sidebar-title =
+    .label = 论文上下文翻译
+sidebar-tooltip =
+    .tooltiptext = 论文上下文翻译
+sidebar-preferences =
+    .tooltiptext = 打开论文上下文翻译设置
+sidebar-source-placeholder=在 Reader 中划词，或输入需要翻译的文本
+sidebar-no-attachment=无法确定当前 Reader 附件
 service-errorPrefix=[请求错误]
 service-paper-context=论文上下文翻译

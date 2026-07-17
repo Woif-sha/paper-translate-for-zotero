@@ -10,6 +10,7 @@ import {
   parseAndValidateProvenance,
   retrievePassages,
 } from "./paperContext";
+import type { AcademicSourceFailure } from "./academicSources";
 
 const MINERU_ROOT_NAME = "llm-for-zotero-mineru";
 const CONTEXT_ROOT_NAME = "paper-translate-for-zotero";
@@ -64,6 +65,7 @@ export type BackgroundResearchRecord = {
   researchedAt?: string;
   queries: string[];
   sources: BackgroundSource[];
+  failures?: AcademicSourceFailure[];
 };
 
 export async function preparePaperContext(
@@ -153,6 +155,7 @@ export async function preparePaperContext(
       status: "pending",
       queries: [],
       sources: [],
+      failures: [],
     } satisfies BackgroundResearchRecord);
   }
   await ensureTextFile(
@@ -172,6 +175,7 @@ export async function preparePaperContext(
     status: "pending",
     queries: [],
     sources: [],
+    failures: [],
   } satisfies BackgroundResearchRecord);
 
   const [terminology, background] = await Promise.all([
@@ -220,6 +224,7 @@ export async function persistBackgroundResearch(params: {
   summary: string;
   queries: string[];
   sources: BackgroundSource[];
+  failures?: AcademicSourceFailure[];
 }): Promise<void> {
   const io = getIOUtils();
   const summary = params.summary.trim();
@@ -261,6 +266,7 @@ export async function persistBackgroundResearch(params: {
       researchedAt: new Date().toISOString(),
       queries: params.queries.map((query) => query.trim()).filter(Boolean),
       sources,
+      failures: params.failures ?? [],
     } satisfies BackgroundResearchRecord,
   );
   params.context.background = summary;
