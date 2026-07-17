@@ -5,15 +5,26 @@ import { parseTerminologyResult } from "../src/backends/translator";
 test("parses strict terminology entries", () => {
   assert.deepEqual(
     parseTerminologyResult(
-      '{"entries":[{"source":"token","translation":"词元","evidence":"Methods"}]}',
+      '{"entries":[{"observed":"token","canonical":"token","translation":"词元","category":"NLP","definition":"A text unit."}]}',
     ),
-    [{ source: "token", translation: "词元", evidence: "Methods" }],
+    [
+      {
+        observed: "token",
+        canonical: "token",
+        translation: "词元",
+        category: "NLP",
+        definition: "A text unit.",
+        evidence: "Selected text",
+        sourceLevel: "paper",
+        confidence: "medium",
+      },
+    ],
   );
 });
 
 test("rejects incomplete terminology entries", () => {
   assert.throws(
-    () => parseTerminologyResult('{"entries":[{"source":"x"}]}'),
+    () => parseTerminologyResult('{"entries":[{"observed":"x"}]}'),
     /incomplete/,
   );
 });

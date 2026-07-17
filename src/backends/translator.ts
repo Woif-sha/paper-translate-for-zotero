@@ -5,7 +5,10 @@ import {
   persistTerminology,
   preparePaperContext,
 } from "../context/runtime";
-import { ensureBackgroundResearch } from "../context/research";
+import {
+  ensureCorePaperKnowledge,
+  ensureExternalKnowledgeResearch,
+} from "../context/research";
 import {
   TERMINOLOGY_DEVELOPER_INSTRUCTIONS,
   TRANSLATION_DEVELOPER_INSTRUCTIONS,
@@ -35,7 +38,10 @@ export async function translateWithPaperContext(params: {
       params.attachmentItemID,
       params.input,
     );
-    await ensureBackgroundResearch(context, controller.signal);
+    await ensureCorePaperKnowledge(context, controller.signal);
+    void ensureExternalKnowledgeResearch(context).catch((error) =>
+      Zotero.logError(error),
+    );
     const prompt = buildTranslationPrompt({
       context,
       sourceLanguage: params.sourceLanguage,
@@ -92,7 +98,9 @@ async function updateTerminology(
   });
   await persistTerminology({
     context,
-    entries: parseTerminologyResult(result.text),
+    entries: parseTerminologyResult(result.text).filter((entry) =>
+      input.toLocaleLowerCase().includes(entry.observed.toLocaleLowerCase()),
+    ),
   });
 }
 
@@ -113,16 +121,23 @@ export function parseTerminologyResult(value: string): TerminologyEntry[] {
       throw new Error(`Terminology entry ${index} is invalid`);
     const item = entry as Record<string, unknown>;
     if (
-      typeof item.source !== "string" ||
+      typeof item.observed !== "string" ||
+      typeof item.canonical !== "string" ||
       typeof item.translation !== "string" ||
-      typeof item.evidence !== "string"
+      typeof item.category !== "string" ||
+      typeof item.definition !== "string"
     ) {
       throw new Error(`Terminology entry ${index} is incomplete`);
     }
     return {
-      source: item.source,
+      observed: item.observed,
+      canonical: item.canonical,
       translation: item.translation,
-      evidence: item.evidence,
+      category: item.category,
+      definition: item.definition,
+      evidence: "Selected text",
+      sourceLevel: "paper",
+      confidence: "medium",
     };
   });
 }

@@ -1,4 +1,4 @@
-export const PAPER_CONTEXT_SCHEMA_VERSION = 1;
+export const PAPER_CONTEXT_SCHEMA_VERSION = 2;
 export const MINERU_PROVENANCE_KIND = "llm-for-zotero/mineru-cache-source";
 export const MINERU_PROVENANCE_VERSION = 2;
 
@@ -46,8 +46,12 @@ export type PaperSourceRecord = PaperIdentity & {
 export type PaperIndexChunk = {
   id: number;
   heading: string;
+  headingLevel: number;
+  sectionIndex: number;
   charStart: number;
   charEnd: number;
+  previousChunkId: number | null;
+  nextChunkId: number | null;
 };
 
 export type PaperIndex = {
@@ -65,7 +69,7 @@ export type RetrievedPassage = PaperIndexChunk & {
 };
 
 const MAX_CHUNK_CHARS = 1600;
-const CHUNK_OVERLAP_CHARS = 160;
+const MIN_CHUNK_CHARS = 900;
 
 export function assertParentItemKey(value: string): void {
   if (!/^[A-Z0-9]{8}$/.test(value)) {
@@ -159,19 +163,31 @@ export function buildPaperIndex(params: {
   assertParentItemKey(params.parentItemKey);
   const ranges = normalizeSections(params.markdown, params.manifest);
   const chunks: PaperIndexChunk[] = [];
-  for (const range of ranges) {
-    let start = range.charStart;
-    while (start < range.charEnd) {
-      const end = Math.min(range.charEnd, start + MAX_CHUNK_CHARS);
+  for (const [sectionIndex, range] of ranges.entries()) {
+    for (const [start, end] of splitRangeAtParagraphs(
+      params.markdown,
+      range.charStart,
+      range.charEnd,
+    )) {
       chunks.push({
         id: chunks.length,
         heading: range.heading,
+        headingLevel: range.headingLevel,
+        sectionIndex,
         charStart: start,
         charEnd: end,
+        previousChunkId: null,
+        nextChunkId: null,
       });
-      if (end === range.charEnd) break;
-      start = Math.max(start + 1, end - CHUNK_OVERLAP_CHARS);
     }
+  }
+  for (const [index, chunk] of chunks.entries()) {
+    const previous = chunks[index - 1];
+    const next = chunks[index + 1];
+    chunk.previousChunkId =
+      previous?.sectionIndex === chunk.sectionIndex ? previous.id : null;
+    chunk.nextChunkId =
+      next?.sectionIndex === chunk.sectionIndex ? next.id : null;
   }
   return {
     schemaVersion: PAPER_CONTEXT_SCHEMA_VERSION,
@@ -194,7 +210,7 @@ export function retrievePassages(
   }
   const terms = tokenize(query);
   if (terms.length === 0) return [];
-  return index.chunks
+  const ranked = index.chunks
     .map((chunk) => {
       const text = markdown.slice(chunk.charStart, chunk.charEnd);
       const haystack = `${chunk.heading}\n${text}`.toLocaleLowerCase();
@@ -210,16 +226,64 @@ export function retrievePassages(
       return { ...chunk, text, score };
     })
     .filter((chunk) => chunk.score > 0)
-    .sort((a, b) => b.score - a.score || a.charStart - b.charStart)
-    .slice(0, limit);
+    .sort((a, b) => b.score - a.score || a.charStart - b.charStart);
+  const selected = new Map<number, RetrievedPassage>();
+  for (const passage of ranked) {
+    if (selected.size >= limit) break;
+    selected.set(passage.id, passage);
+    for (const neighborId of [passage.previousChunkId, passage.nextChunkId]) {
+      if (neighborId === null || selected.size >= limit) continue;
+      const neighbor = index.chunks[neighborId];
+      if (!neighbor || selected.has(neighbor.id)) continue;
+      selected.set(neighbor.id, {
+        ...neighbor,
+        text: markdown.slice(neighbor.charStart, neighbor.charEnd),
+        score: Math.max(0.1, passage.score * 0.25),
+      });
+    }
+  }
+  return [...selected.values()];
+}
+
+export function selectKnowledgePassages(
+  markdown: string,
+  index: PaperIndex,
+  maxChars = 14_000,
+): RetrievedPassage[] {
+  const selected: RetrievedPassage[] = [];
+  const seenSections = new Set<number>();
+  let totalChars = 0;
+  const priorities = [
+    /abstract|摘要/i,
+    /introduction|引言/i,
+    /method|framework|proposed|方法|框架/i,
+    /experiment|result|evaluation|实验|结果|评估/i,
+    /conclusion|结论/i,
+  ];
+  const add = (chunk: PaperIndexChunk) => {
+    if (seenSections.has(chunk.sectionIndex)) return;
+    const text = markdown.slice(chunk.charStart, chunk.charEnd);
+    if (selected.length && totalChars + text.length > maxChars) return;
+    selected.push({ ...chunk, text, score: 1 });
+    seenSections.add(chunk.sectionIndex);
+    totalChars += text.length;
+  };
+  for (const pattern of priorities) {
+    const chunk = index.chunks.find((candidate) =>
+      pattern.test(candidate.heading),
+    );
+    if (chunk) add(chunk);
+  }
+  for (const chunk of index.chunks) add(chunk);
+  return selected.sort((a, b) => a.charStart - b.charStart);
 }
 
 export function createTerminologyMarkdown(title: string): string {
   return [
     `# Terminology: ${title || "Untitled paper"}`,
     "",
-    "| Source term | Preferred translation | Section / evidence | Updated at |",
-    "| --- | --- | --- | --- |",
+    "| Observed expression | Canonical English | Preferred Chinese | Category | Definition | Paper evidence | Source level | Confidence | Updated at |",
+    "| --- | --- | --- | --- | --- | --- | --- | --- | --- |",
     "",
   ].join("\n");
 }
@@ -231,16 +295,76 @@ export function createBackgroundMarkdown(title: string): string {
 function normalizeSections(
   markdown: string,
   manifest: MineruManifest,
-): Array<{ heading: string; charStart: number; charEnd: number }> {
+): Array<{
+  heading: string;
+  headingLevel: number;
+  charStart: number;
+  charEnd: number;
+}> {
   const sections = manifest.sections ?? [];
   if (!manifest.noSections && sections.length > 0) {
     return sections.map((section) => ({
       heading: section.heading || section.title || "Paper",
+      headingLevel: 1,
       charStart: section.charStart,
       charEnd: section.charEnd,
     }));
   }
-  return [{ heading: "Paper", charStart: 0, charEnd: markdown.length }];
+  const markdownSections = extractMarkdownSections(markdown);
+  if (markdownSections.length > 1) return markdownSections;
+  return [
+    {
+      heading: markdownSections[0]?.heading || "Paper",
+      headingLevel: markdownSections[0]?.headingLevel || 1,
+      charStart: 0,
+      charEnd: markdown.length,
+    },
+  ];
+}
+
+function extractMarkdownSections(markdown: string): Array<{
+  heading: string;
+  headingLevel: number;
+  charStart: number;
+  charEnd: number;
+}> {
+  const matches = [...markdown.matchAll(/^(#{1,4})[ \t]+(.+?)\s*$/gm)];
+  if (!matches.length) return [];
+  return matches.map((match, index) => ({
+    heading: match[2].trim(),
+    headingLevel: match[1].length,
+    charStart: match.index ?? 0,
+    charEnd: matches[index + 1]?.index ?? markdown.length,
+  }));
+}
+
+function splitRangeAtParagraphs(
+  markdown: string,
+  charStart: number,
+  charEnd: number,
+): Array<[number, number]> {
+  const ranges: Array<[number, number]> = [];
+  let start = charStart;
+  while (start < charEnd) {
+    const idealEnd = Math.min(charEnd, start + MAX_CHUNK_CHARS);
+    if (idealEnd === charEnd) {
+      ranges.push([start, charEnd]);
+      break;
+    }
+    const searchFrom = Math.min(charEnd, start + MIN_CHUNK_CHARS);
+    const window = markdown.slice(searchFrom, idealEnd);
+    const paragraphMatches = [...window.matchAll(/\n\s*\n/g)];
+    const lineBreak = window.lastIndexOf("\n");
+    const boundary = paragraphMatches.length
+      ? searchFrom + (paragraphMatches.at(-1)?.index ?? 0) + 2
+      : lineBreak >= 0
+        ? searchFrom + lineBreak + 1
+        : idealEnd;
+    const end = boundary > start ? boundary : idealEnd;
+    ranges.push([start, end]);
+    start = end;
+  }
+  return ranges;
 }
 
 function tokenize(value: string): string[] {

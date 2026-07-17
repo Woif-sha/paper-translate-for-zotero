@@ -96,3 +96,38 @@ test("builds an offset-only index and retrieves relevant passages", () => {
   assert.equal(passages[0].heading, "Method");
   assert.match(passages[0].text, /heterogeneous graph attention/);
 });
+
+test("rebuilds real Markdown headings when the manifest has no sections", () => {
+  const markdown = [
+    "# Abstract\nStandard cell characterization models timing arcs.",
+    "# Introduction\nSSTA evaluates delay across PVT corners.",
+    "# Proposed HGAT Framework\nHGAT performs node-level aggregation for RC reduction.",
+    "# Experiments\nThe 3σ percentile and rRMSE measure accuracy.",
+    "# Conclusion\nThe heterogeneous graph improves prediction.",
+  ].join("\n\n");
+  const index = buildPaperIndex({
+    parentItemKey: "ABCD1234",
+    fullMdSha256: "sample",
+    markdown,
+    manifest: { noSections: true, totalChars: markdown.length },
+    updatedAt: "2026-07-17T00:00:00Z",
+  });
+  assert.deepEqual(
+    [...new Set(index.chunks.map((chunk) => chunk.heading))],
+    [
+      "Abstract",
+      "Introduction",
+      "Proposed HGAT Framework",
+      "Experiments",
+      "Conclusion",
+    ],
+  );
+  for (const [query, heading] of [
+    ["timing arc", "Abstract"],
+    ["RC reduction", "Proposed HGAT Framework"],
+    ["HGAT", "Proposed HGAT Framework"],
+    ["3σ", "Experiments"],
+  ]) {
+    assert.equal(retrievePassages(markdown, index, query)[0]?.heading, heading);
+  }
+});
