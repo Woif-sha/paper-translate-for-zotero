@@ -1,6 +1,6 @@
 {
   "name": "paper-translate-for-zotero",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "description": "Context-aware academic translation from validated llm-for-zotero MinerU Markdown.",
   "config": {
     "addonName": "Paper Translate for Zotero",
