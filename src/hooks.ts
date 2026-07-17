@@ -17,7 +17,6 @@ import { setDefaultPrefSettings } from "./modules/defaultPrefs";
 import Addon from "./addon";
 import { cleanupPermanentlyDeletedPaperContexts } from "./context/runtime";
 import { cancelActiveTranslation } from "./backends/translator";
-import { closeCodexClient } from "./codex/appServer";
 import { registerReaderSidebar, updateReaderSidebar } from "./modules/sidebar";
 
 async function onStartup() {
@@ -60,7 +59,6 @@ async function onMainWindowUnload(win: Window): Promise<void> {
 
 async function onShutdown(): Promise<void> {
   cancelActiveTranslation();
-  await closeCodexClient();
   ztoolkit.unregisterAll();
   Zotero.getMainWindows().forEach((win) => {
     onMainWindowUnload(win);

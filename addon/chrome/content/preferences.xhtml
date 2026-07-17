@@ -26,21 +26,24 @@
   <groupbox>
     <label><html:h2 data-l10n-id="pref-backend"></html:h2></label>
     <html:label
-      data-l10n-id="pref-backend-kind"
-      for="__addonRef__-paper-backend"
+      data-l10n-id="pref-auth-mode"
+      for="__addonRef__-paper-authMode"
     ></html:label>
-    <html:select id="__addonRef__-paper-backend">
-      <html:option value="codex">Codex App Server</html:option>
-      <html:option value="responses">OpenAI Responses API</html:option>
-      <html:option value="chat-completions"
-        >OpenAI-compatible Chat Completions</html:option
-      >
-    </html:select>
+    <html:input
+      id="__addonRef__-paper-authMode"
+      type="text"
+      value="Codex Auth (Legacy)"
+      readonly="readonly"
+    ></html:input>
     <html:label
-      data-l10n-id="pref-codex-path"
-      for="__addonRef__-paper-codexPath"
+      data-l10n-id="pref-codex-api-url"
+      for="__addonRef__-paper-codexApiUrl"
     ></html:label>
-    <html:input id="__addonRef__-paper-codexPath" type="text"></html:input>
+    <html:input
+      id="__addonRef__-paper-codexApiUrl"
+      type="text"
+      readonly="readonly"
+    ></html:input>
     <html:label
       data-l10n-id="pref-codex-model"
       for="__addonRef__-paper-codexModel"
@@ -67,32 +70,6 @@
       ></html:button>
       <html:span id="__addonRef__-paper-codexStatus" hidden="true"></html:span>
     </html:div>
-    <html:label
-      data-l10n-id="pref-api-endpoint"
-      for="__addonRef__-paper-apiEndpoint"
-    ></html:label>
-    <html:input id="__addonRef__-paper-apiEndpoint" type="text"></html:input>
-    <html:label
-      data-l10n-id="pref-api-model"
-      for="__addonRef__-paper-apiModel"
-    ></html:label>
-    <html:input id="__addonRef__-paper-apiModel" type="text"></html:input>
-    <html:label
-      data-l10n-id="pref-api-key"
-      for="__addonRef__-paper-apiKey"
-    ></html:label>
-    <html:input id="__addonRef__-paper-apiKey" type="password"></html:input>
-    <html:label
-      data-l10n-id="pref-temperature"
-      for="__addonRef__-paper-temperature"
-    ></html:label>
-    <html:input
-      id="__addonRef__-paper-temperature"
-      type="number"
-      min="0"
-      max="2"
-      step="0.1"
-    ></html:input>
   </groupbox>
   <description data-l10n-id="pref-context-note"></description>
 </vbox>

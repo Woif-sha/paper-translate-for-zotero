@@ -1,6 +1,6 @@
 import { config } from "../../package.json";
 
-export { getPref, setPref, getPrefJSON };
+export { getPref, setPref };
 
 type KeysWithStringValue<T> = {
   [K in keyof T]: T[K] extends string ? K : never;
@@ -33,12 +33,4 @@ function setPref<K extends keyof _PluginPrefsMap>(
 function setPref(key: string, value: string | number | boolean): void;
 function setPref(key: string, value: string | number | boolean) {
   return Zotero.Prefs.set(`${config.prefsPrefix}.${key}`, value, true);
-}
-
-function getPrefJSON(key: string) {
-  const parsed = JSON.parse(String(getPref(key) || "{}"));
-  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-    throw new Error(`Preference ${key} must contain a JSON object`);
-  }
-  return parsed as Record<string, unknown>;
 }

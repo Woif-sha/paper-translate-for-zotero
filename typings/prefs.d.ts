@@ -14,13 +14,9 @@ declare namespace _ZoteroTypes {
       "enableAutoDetectLanguage": boolean;
       "fontSize": string;
       "lineHeight": string;
-      "paper.backend": string;
-      "paper.codexPath": string;
+      "paper.codexApiUrl": string;
       "paper.codexModel": string;
       "paper.codexEffort": string;
-      "paper.apiEndpoint": string;
-      "paper.apiModel": string;
-      "paper.temperature": string;
     };
   }
 }

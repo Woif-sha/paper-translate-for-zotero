@@ -1,4 +1,4 @@
-import { getCodexClient, normalizeEffort } from "../codex/appServer";
+import { runLegacyCodexRequest } from "../codex/legacyClient";
 import {
   TerminologyEntry,
   ValidatedPaperContext,
@@ -13,11 +13,6 @@ import {
   buildTranslationPrompt,
 } from "../context/prompts";
 import { getPref } from "../utils/prefs";
-import { OpenAIProtocol, streamOpenAITranslation } from "./openaiCompatible";
-
-type TranslationBackend = "codex" | OpenAIProtocol;
-
-const translationThreads = new Map<string, string>();
 let activeController: AbortController | null = null;
 
 export function cancelActiveTranslation(): void {
@@ -30,7 +25,6 @@ export async function translateWithPaperContext(params: {
   sourceLanguage: string;
   targetLanguage: string;
   input: string;
-  apiKey: string;
   onUpdate(text: string): void;
 }): Promise<string> {
   activeController?.abort();
@@ -48,26 +42,11 @@ export async function translateWithPaperContext(params: {
       targetLanguage: params.targetLanguage,
       input: params.input,
     });
-    const backend = requiredBackend();
-    const translation =
-      backend === "codex"
-        ? await translateWithCodex(
-            context,
-            prompt,
-            params.targetLanguage,
-            controller.signal,
-            params.onUpdate,
-          )
-        : await streamOpenAITranslation({
-            protocol: backend,
-            endpoint: requiredPref("paper.apiEndpoint"),
-            apiKey: params.apiKey,
-            model: requiredPref("paper.apiModel"),
-            temperature: requiredTemperature(),
-            prompt,
-            signal: controller.signal,
-            onDelta: (_delta, accumulated) => params.onUpdate(accumulated),
-          });
+    const translation = await translateWithCodex(
+      prompt,
+      controller.signal,
+      params.onUpdate,
+    );
     await updateTerminology(
       context,
       params.input,
@@ -81,37 +60,16 @@ export async function translateWithPaperContext(params: {
 }
 
 async function translateWithCodex(
-  context: ValidatedPaperContext,
   prompt: string,
-  targetLanguage: string,
   signal: AbortSignal,
   onUpdate: (text: string) => void,
 ): Promise<string> {
-  const client = await getCodexClient(getPref("paper.codexPath") as string);
-  const model = requiredPref("paper.codexModel");
-  const key = [
-    context.identity.libraryID,
-    context.identity.parentItemKey,
-    model,
-    targetLanguage,
-    context.fullMdSha256,
-  ].join(":");
-  let threadId = translationThreads.get(key);
-  if (!threadId) {
-    threadId = await client.startThread({
-      model,
-      developerInstructions: TRANSLATION_DEVELOPER_INSTRUCTIONS,
-      cwd: context.paperDir,
-      webSearch: "disabled",
-    });
-    translationThreads.set(key, threadId);
-  }
-  const result = await client.runTurn({
-    threadId,
+  const result = await runLegacyCodexRequest({
+    apiUrl: requiredPref("paper.codexApiUrl"),
+    model: requiredPref("paper.codexModel"),
+    effort: String(getPref("paper.codexEffort") || ""),
+    instructions: TRANSLATION_DEVELOPER_INSTRUCTIONS,
     prompt,
-    model,
-    effort: normalizeEffort(getPref("paper.codexEffort") as string),
-    cwd: context.paperDir,
     signal,
     onDelta: (_delta, accumulated) => onUpdate(accumulated),
   });
@@ -124,20 +82,12 @@ async function updateTerminology(
   translation: string,
   signal: AbortSignal,
 ): Promise<void> {
-  const client = await getCodexClient(getPref("paper.codexPath") as string);
-  const model = requiredPref("paper.codexModel");
-  const threadId = await client.startThread({
-    model,
-    developerInstructions: TERMINOLOGY_DEVELOPER_INSTRUCTIONS,
-    cwd: context.paperDir,
-    webSearch: "disabled",
-  });
-  const result = await client.runTurn({
-    threadId,
+  const result = await runLegacyCodexRequest({
+    apiUrl: requiredPref("paper.codexApiUrl"),
+    model: requiredPref("paper.codexModel"),
+    effort: String(getPref("paper.codexEffort") || ""),
+    instructions: TERMINOLOGY_DEVELOPER_INSTRUCTIONS,
     prompt: buildTerminologyPrompt({ context, input, translation }),
-    model,
-    effort: normalizeEffort(getPref("paper.codexEffort") as string),
-    cwd: context.paperDir,
     signal,
   });
   await persistTerminology({
@@ -175,27 +125,6 @@ export function parseTerminologyResult(value: string): TerminologyEntry[] {
       evidence: item.evidence,
     };
   });
-}
-
-function requiredBackend(): TranslationBackend {
-  const value = String(getPref("paper.backend") || "");
-  if (
-    value === "codex" ||
-    value === "responses" ||
-    value === "chat-completions"
-  )
-    return value;
-  throw new Error(`Unsupported translation backend: ${value}`);
-}
-
-function requiredTemperature(): number {
-  const value = Number(getPref("paper.temperature"));
-  if (!Number.isFinite(value) || value < 0 || value > 2) {
-    throw new Error(
-      `Invalid API temperature: ${String(getPref("paper.temperature"))}`,
-    );
-  }
-  return value;
 }
 
 function requiredPref(key: string): string {

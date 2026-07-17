@@ -1,17 +1,13 @@
 import { config, homepage } from "../../package.json";
 import { getString } from "../utils/locale";
 import { getPref, PrefKeys, setPref } from "../utils/prefs";
-import { getServiceSecret, setServiceSecret } from "../utils/secret";
-import { testCodexConnection } from "../codex/appServer";
+import { testLegacyCodexConnection } from "../codex/legacyClient";
 
 const STRING_FIELDS: PrefKeys[] = [
   "sourceLanguage",
   "targetLanguage",
-  "paper.codexPath",
+  "paper.codexApiUrl",
   "paper.codexModel",
-  "paper.apiEndpoint",
-  "paper.apiModel",
-  "paper.temperature",
 ];
 
 export const PREFERENCES_PANE_ID = `${config.addonRef}-preferences`;
@@ -31,16 +27,8 @@ export function registerPrefsScripts(window: Window) {
   addon.data.prefs.window = window;
   const doc = window.document;
   for (const key of STRING_FIELDS) bindTextField(doc, key);
-  bindSelect(doc, "paper.backend");
   bindSelect(doc, "paper.codexEffort");
   bindCodexConnectionTest(doc);
-  const apiKey = doc.querySelector(
-    `#${makeId("paper-apiKey")}`,
-  ) as HTMLInputElement;
-  apiKey.value = getServiceSecret("paper-context");
-  apiKey.addEventListener("change", () =>
-    setServiceSecret("paper-context", apiKey.value.trim()),
-  );
 }
 
 function bindCodexConnectionTest(doc: Document): void {
@@ -57,8 +45,8 @@ function bindCodexConnectionTest(doc: Document): void {
       status.style.color = "var(--fill-secondary, #777)";
       status.textContent = getString("pref-codex-testing");
       try {
-        const reply = await testCodexConnection({
-          codexPath: fieldValue(doc, "paper-codexPath"),
+        const reply = await testLegacyCodexConnection({
+          apiUrl: fieldValue(doc, "paper-codexApiUrl"),
           model: fieldValue(doc, "paper-codexModel"),
           effort: fieldValue(doc, "paper-codexEffort"),
         });

@@ -1,4 +1,4 @@
-import { getCodexClient, normalizeEffort } from "../codex/appServer";
+import { runLegacyCodexRequest } from "../codex/legacyClient";
 import { getPref } from "../utils/prefs";
 import {
   BackgroundSource,
@@ -36,25 +36,18 @@ async function runBackgroundResearch(
   signal?: AbortSignal,
 ): Promise<void> {
   const academicResult = await searchAcademicSources(context);
-  const client = await getCodexClient(getPref("paper.codexPath") as string);
-  const model = requiredPref("paper.codexModel");
-  const threadId = await client.startThread({
-    model,
-    developerInstructions: RESEARCH_DEVELOPER_INSTRUCTIONS,
-    cwd: context.paperDir,
-    webSearch: "live",
-  });
-  const result = await client.runTurn({
-    threadId,
+  const result = await runLegacyCodexRequest({
+    apiUrl: requiredPref("paper.codexApiUrl"),
+    model: requiredPref("paper.codexModel"),
+    effort: String(getPref("paper.codexEffort") || ""),
+    instructions: RESEARCH_DEVELOPER_INSTRUCTIONS,
     prompt: buildResearchPrompt(
       context,
       academicResult.sources,
       academicResult.failures,
     ),
-    model,
-    effort: normalizeEffort(getPref("paper.codexEffort") as string),
-    cwd: context.paperDir,
     signal,
+    webSearch: true,
     requireWebSearch: true,
   });
   const parsed = parseResearchResult(result.text);
