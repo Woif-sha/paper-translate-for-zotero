@@ -8,5 +8,4 @@ pref-auth-mode = 认证模式
 pref-codex-api-url = API URL
 pref-codex-model = 模型
 pref-codex-effort = Codex 推理强度
-pref-context-note = 使用 llm-for-zotero 同款 Codex 旧版认证，读取 Codex CLI 登录凭据并直连固定 API；不会启动 App Server，也不会切换接口、模型或服务商。
 pref-codex-test = 测试连接

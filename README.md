@@ -10,6 +10,8 @@ Paper Translate for Zotero 会读取 `llm-for-zotero` 已生成的 MinerU Markdo
 ## 目前能做什么
 
 - 在 Zotero Reader 中选中文本后自动翻译；
+- 跨页选区会过滤 IEEE 版权、授权和下载页脚，并合并正文的视觉断行；
+- 保留段落、项目符号和列表换行，原文框与译文框使用固定等高尺寸；
 - 修改选区内容或粘贴新文本，再手动翻译；
 - 使用与 `llm-for-zotero` 相同的 Codex 旧版认证接口；
 - 初次使用时按摘要/引言、方法、实验和结论均衡读取 Markdown，生成中文背景和双语术语表；
@@ -27,7 +29,7 @@ Paper Translate for Zotero 会读取 `llm-for-zotero` 已生成的 MinerU Markdo
 
 请先用 `llm-for-zotero` 解析论文。对应附件的 MinerU 缓存中必须有 `_llm_source.json`、`manifest.json` 和 `full.md`。本插件不会读取 PDF，也不会替你调用 MinerU。
 
-从 [Releases](https://github.com/Woif-sha/paper-translate-for-zotero/releases) 下载 XPI，然后在 Zotero 的“工具 → 插件”中选择“从文件安装插件”。安装后可以在插件设置中填写目标语言和模型，并用“测试连接”检查当前 Codex 登录是否可用。
+从 [Releases](https://github.com/Woif-sha/paper-translate-for-zotero/releases) 下载 XPI，然后在 Zotero 的“工具 → 插件”中选择“从文件安装插件”。安装后可以在插件设置中填写目标语言和模型，并用“测试连接”检查当前 Codex 登录是否可用。默认模型为 `gpt-5.4`，推理强度为 `medium`；认证模式固定为不可编辑的 `Codex Auth`。
 
 插件读取 `~/.codex/auth.json`（设置了 `CODEX_HOME` 时读取该目录下的 `auth.json`），直接请求 `https://chatgpt.com/backend-api/codex/responses`。access token 缺失或服务端明确返回 401 时，会按 `llm-for-zotero` 的规则刷新登录令牌。插件不会启动 Codex App Server，也不会改用其他 API、模型或服务商。
 
@@ -35,7 +37,9 @@ Paper Translate for Zotero 会读取 `llm-for-zotero` 已生成的 MinerU Markdo
 
 在 Reader 中选中文本，翻译浮层会直接出现。上方文本框可以编辑，点击“翻译”即可重新提交；下方文本框显示流式译文。继续选择其他文本时，上一条请求会被取消。
 
-每篇论文第一次翻译前，插件先从已经验证的 `full.md` 建立真实章节索引，整理论文所属领域、方法流程、实验语境、翻译风险和初始术语。核心文件写完后即可翻译；随后 Codex 会根据论文分析得到的具体问题进行可选网页检索，不依赖 Crossref、Semantic Scholar 或其他固定网站。外部搜索失败会记录为警告，不会阻断基于论文 Markdown 的翻译。
+论文打开后，插件只需验证 `full.md` 并建立本地章节索引即可开始翻译。论文背景、方法流程、实验语境、翻译风险、初始术语和外部资料会在后台继续整理并原子写入上下文目录；当前翻译不会等待这些任务，之后的翻译会自动读取当时已经积累的内容。因此论文停留和使用时间越长，可用于消歧的上下文越完整。
+
+后台 Codex 会根据论文分析得到的具体问题进行可选网页检索，不依赖 Crossref、Semantic Scholar 或其他固定网站。外部搜索失败会记录为警告，不会阻断基于论文 Markdown 的翻译。
 
 外部资料分三级使用：论文正文以及官方/标准资料决定论文事实和规范术语，学术来源用于专业背景，社区页面只用于解释通用概念。背景只参与消歧，不会被拼进译文。后续请求只发送当前文本、相关 Markdown 段落、论文元数据、背景摘要和术语表，不会反复提交整篇论文。
 
@@ -53,7 +57,7 @@ E:\ZoteroData\paper-translate-for-zotero\<parentItemKey>\
 └─ index.json
 ```
 
-一个父条目对应一个文件夹。`_preparation.json` 以论文 key 和 Markdown 哈希绑定来源、索引、论文背景、双语术语、外部补充五个阶段，状态固定为 `pending / running / complete / warning / error / skipped`。侧栏每次从这个文件读取实际进度；来源、索引、论文背景和术语完成后即可翻译。
+一个父条目对应一个文件夹。`_preparation.json` 以论文 key 和 Markdown 哈希绑定来源、索引、论文背景、双语术语、外部补充五个阶段，状态固定为 `pending / running / complete / warning / error / skipped`。侧栏每次从这个文件读取实际进度；来源和索引完成后即可翻译，其余文件在后台逐步补充。
 
 `index.json` 只记录真实章节、UTF-16 字符偏移、相邻分块和哈希，不复制 `full.md`。MinerU manifest 没有章节时，插件会从 Markdown 的 `#`–`####` 标题重建索引。条目放进 Zotero 回收站时文件会保留；只有条目被永久删除后，插件才会校验路径和来源记录并清理目录。
 

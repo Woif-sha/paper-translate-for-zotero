@@ -10,4 +10,4 @@ pref(
   "https://chatgpt.com/backend-api/codex/responses",
 );
 pref("__prefsPrefix__.paper.codexModel", "gpt-5.4");
-pref("__prefsPrefix__.paper.codexEffort", "auto");
+pref("__prefsPrefix__.paper.codexEffort", "medium");

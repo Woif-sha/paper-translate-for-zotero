@@ -1,8 +1,5 @@
 import { config } from "../../package.json";
-import {
-  ensureCorePaperKnowledge,
-  ensureExternalKnowledgeResearch,
-} from "../context/research";
+import { continuePaperLearning } from "../context/research";
 import {
   PreparationRecord,
   ValidatedPaperContext,
@@ -193,10 +190,30 @@ async function preparePaper(attachmentItemID: number): Promise<void> {
   const context = await preparePaperContext(attachmentItemID, "");
   paperContexts.set(attachmentItemID, context);
   await refreshMatchingBodies(attachmentItemID);
-  await ensureCorePaperKnowledge(context);
+  const learning = continuePaperLearning(context);
+  const monitor = monitorPreparationFiles(attachmentItemID, learning);
+  try {
+    await learning;
+  } catch (error) {
+    Zotero.logError(error instanceof Error ? error : new Error(String(error)));
+  }
+  await monitor;
   await refreshMatchingBodies(attachmentItemID);
-  await ensureExternalKnowledgeResearch(context);
-  await refreshMatchingBodies(attachmentItemID);
+}
+
+async function monitorPreparationFiles(
+  attachmentItemID: number,
+  job: Promise<void>,
+): Promise<void> {
+  let finished = false;
+  void job.then(
+    () => (finished = true),
+    () => (finished = true),
+  );
+  while (!finished) {
+    await new Promise<void>((resolve) => setTimeout(resolve, 750));
+    await refreshMatchingBodies(attachmentItemID);
+  }
 }
 
 async function refreshMatchingBodies(itemID: number): Promise<void> {
@@ -260,6 +277,13 @@ export function formatPreparationRows(
   }));
 }
 
+export function isTranslationReady(record: PreparationRecord): boolean {
+  return ["source", "index"].every(
+    (id) =>
+      record.stages.find((stage) => stage.id === id)?.status === "complete",
+  );
+}
+
 function renderPreparation(body: HTMLElement, record: PreparationRecord): void {
   const summary = body.querySelector(`.${config.addonRef}-preparation-summary`);
   const files = body.querySelector(`.${config.addonRef}-preparation-files`);
@@ -280,9 +304,7 @@ function renderPreparation(body: HTMLElement, record: PreparationRecord): void {
       return line;
     }),
   );
-  body.dataset.paperReady = String(
-    record.overall === "core-ready" || record.overall === "ready",
-  );
+  body.dataset.paperReady = String(isTranslationReady(record));
 }
 
 function publishPreparationError(itemID: number, error: unknown): void {
@@ -368,7 +390,11 @@ function applyTextareaStyle(textarea: HTMLTextAreaElement): void {
   Object.assign(textarea.style, {
     boxSizing: "border-box",
     width: "100%",
-    resize: "vertical",
+    height: "128px",
+    minHeight: "128px",
+    maxHeight: "128px",
+    resize: "none",
+    overflowY: "auto",
     border: "1px solid var(--fill-quinary)",
     borderRadius: "6px",
     padding: "8px",

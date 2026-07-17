@@ -6,9 +6,10 @@
 - Never read or parse the PDF, invoke MinerU, guess an attachment mapping, or create a second paper-text source.
 - Keep this plugin's Codex requests, prompts, history, preferences and context directory independent from `llm-for-zotero`.
 - Background may disambiguate translation but the default UI returns only translated text.
+- Reader selection cleanup may remove proven page furniture such as IEEE copyright, download and authorization notices, but must preserve semantic paragraphs, bullets and list order. Translation output must retain those boundaries.
 - Never silently switch protocol, provider, model, endpoint or context source. Surface every failure.
 - Never fabricate a web result, citation, successful translation or cache record.
-- Core translation readiness depends only on validated source, index, paper-derived background and paper-evidenced terminology. External web research is optional and may only end as complete, warning or skipped without blocking core readiness.
+- Translation readiness depends only on validated source and index files. Paper-derived background, terminology and external research run incrementally in the background and must never delay a translation request.
 - Do not add fixed Crossref, Semantic Scholar or other website gates. Generate search questions from the paper first; rank paper/official evidence above academic evidence and community explanations.
 
 ## Persistent context

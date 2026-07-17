@@ -8,6 +8,7 @@ export const TRANSLATION_DEVELOPER_INSTRUCTIONS = [
   "Preserve formulas, symbols, numbers, units, citations, and acronyms exactly unless a conventional localized form is required.",
   "Respect EDA meanings of cell, corner, timing arc, characterization, parasitic, and related terms.",
   "When the paper contains an obvious lexical typo, translate the intended canonical term without changing the paper's claim.",
+  "Preserve paragraph boundaries, bullet markers, list item order, and corresponding line breaks from the source text.",
   "Do not add headings, notes, citations, commentary, or facts absent from the selected text.",
   "Never access local files or tools during translation.",
 ].join("\n");
