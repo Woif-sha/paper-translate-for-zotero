@@ -192,7 +192,11 @@ export async function preparePaperContext(
     index,
     terminology,
     background,
-    passages: retrievePassages(markdown, index, query),
+    passages: retrievePassages(
+      markdown,
+      index,
+      query.trim() || `${identity.title} ${identity.doi}`.trim(),
+    ),
   };
 }
 

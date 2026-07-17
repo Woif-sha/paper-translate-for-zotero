@@ -8,7 +8,7 @@ pref("__prefsPrefix__.lineHeight", "1.5");
 pref("__prefsPrefix__.paper.backend", "codex");
 pref("__prefsPrefix__.paper.codexPath", "");
 pref("__prefsPrefix__.paper.codexModel", "gpt-5.4");
-pref("__prefsPrefix__.paper.codexEffort", "high");
+pref("__prefsPrefix__.paper.codexEffort", "auto");
 pref(
   "__prefsPrefix__.paper.apiEndpoint",
   "https://api.openai.com/v1/responses",

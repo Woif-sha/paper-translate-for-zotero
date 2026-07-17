@@ -1,4 +1,4 @@
-import { getCodexClient } from "../codex/appServer";
+import { getCodexClient, normalizeEffort } from "../codex/appServer";
 import {
   TerminologyEntry,
   ValidatedPaperContext,
@@ -110,7 +110,7 @@ async function translateWithCodex(
     threadId,
     prompt,
     model,
-    effort: getPref("paper.codexEffort") as string,
+    effort: normalizeEffort(getPref("paper.codexEffort") as string),
     cwd: context.paperDir,
     signal,
     onDelta: (_delta, accumulated) => onUpdate(accumulated),
@@ -136,7 +136,7 @@ async function updateTerminology(
     threadId,
     prompt: buildTerminologyPrompt({ context, input, translation }),
     model,
-    effort: getPref("paper.codexEffort") as string,
+    effort: normalizeEffort(getPref("paper.codexEffort") as string),
     cwd: context.paperDir,
     signal,
   });
