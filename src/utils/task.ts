@@ -1,7 +1,6 @@
 import { inferLanguage, matchLanguage } from "./config";
 import { getString } from "./locale";
 import { getPref } from "./prefs";
-import { getServiceSecret } from "./secret";
 import { config } from "../../package.json";
 import Addon from "../addon";
 
@@ -129,7 +128,6 @@ export class TranslateTaskRunner {
 
     data.callerID = data.callerID || config.addonID;
 
-    data.secret = getServiceSecret(data.service);
     data.status = "processing";
     try {
       ztoolkit.log(sanitizeTaskForLog(data));

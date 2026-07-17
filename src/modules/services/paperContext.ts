@@ -15,7 +15,6 @@ export const PaperContextTranslation: TranslateService = {
       sourceLanguage: data.langfrom,
       targetLanguage: data.langto,
       input: data.raw,
-      apiKey: data.secret,
       onUpdate(text) {
         data.result = text;
         refresh();

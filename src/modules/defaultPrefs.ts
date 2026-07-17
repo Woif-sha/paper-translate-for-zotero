@@ -1,4 +1,4 @@
-import { getPref, getPrefJSON, setPref } from "../utils/prefs";
+import { getPref, setPref } from "../utils/prefs";
 import { services } from "./services";
 
 export function setDefaultPrefSettings() {
@@ -10,10 +10,4 @@ export function setDefaultPrefSettings() {
   if (!getPref("targetLanguage")) {
     setPref("targetLanguage", Zotero.locale);
   }
-
-  const secrets = getPrefJSON("secretObj");
-  for (const serviceId of servicesIds) {
-    if (typeof secrets[serviceId] === "undefined") secrets[serviceId] = "";
-  }
-  setPref("secretObj", JSON.stringify(secrets));
 }

@@ -3,15 +3,12 @@
 /* eslint-disable */
 // @ts-nocheck
 export type FluentMessageId =
-  | 'pref-api-endpoint'
-  | 'pref-api-key'
-  | 'pref-api-model'
+  | 'pref-auth-mode'
   | 'pref-backend'
-  | 'pref-backend-kind'
+  | 'pref-codex-api-url'
   | 'pref-codex-effort'
   | 'pref-codex-failed'
   | 'pref-codex-model'
-  | 'pref-codex-path'
   | 'pref-codex-success'
   | 'pref-codex-test'
   | 'pref-codex-testing'
@@ -19,7 +16,6 @@ export type FluentMessageId =
   | 'pref-enable-auto'
   | 'pref-source-language'
   | 'pref-target-language'
-  | 'pref-temperature'
   | 'pref-title'
   | 'pref-translation'
   | 'readerpopup-translate-label'

@@ -5,13 +5,13 @@
 
 我写这个插件，是因为普通划词翻译常常不知道论文在讨论什么。同一个术语换一篇论文，译法可能就不一样；只把选中的一句话发给模型，结果很容易跑偏。
 
-Paper Translate for Zotero 会读取 `llm-for-zotero` 已生成的 MinerU Markdown，从当前论文中找出相关段落，再结合这篇论文自己的术语表和背景资料完成翻译。它有独立的 Codex 进程、提示词和会话，不会占用或修改 `llm-for-zotero` 的聊天记录。
+Paper Translate for Zotero 会读取 `llm-for-zotero` 已生成的 MinerU Markdown，从当前论文中找出相关段落，再结合这篇论文自己的术语表和背景资料完成翻译。它有独立的提示词和论文上下文，不会占用或修改 `llm-for-zotero` 的聊天记录。
 
 ## 目前能做什么
 
 - 在 Zotero Reader 中选中文本后自动翻译；
 - 修改选区内容或粘贴新文本，再手动翻译；
-- 使用 Codex App Server、OpenAI Responses API 或兼容 Chat Completions 的接口；
+- 使用与 `llm-for-zotero` 相同的 Codex 旧版认证接口；
 - 为每篇论文保存术语表、背景摘要和来源；
 - Markdown 更新后重建索引，不沿用旧论文上下文。
 
@@ -26,9 +26,9 @@ Paper Translate for Zotero 会读取 `llm-for-zotero` 已生成的 MinerU Markdo
 
 请先用 `llm-for-zotero` 解析论文。对应附件的 MinerU 缓存中必须有 `_llm_source.json`、`manifest.json` 和 `full.md`。本插件不会读取 PDF，也不会替你调用 MinerU。
 
-从 [Releases](https://github.com/Woif-sha/paper-translate-for-zotero/releases) 下载 XPI，然后在 Zotero 的“工具 → 插件”中选择“从文件安装插件”。安装后可以在插件设置中填写目标语言、模型和 API 参数。
+从 [Releases](https://github.com/Woif-sha/paper-translate-for-zotero/releases) 下载 XPI，然后在 Zotero 的“工具 → 插件”中选择“从文件安装插件”。安装后可以在插件设置中填写目标语言和模型，并用“测试连接”检查当前 Codex 登录是否可用。
 
-即使翻译后端选用 Responses API 或 Chat Completions，首次背景检索仍会启动本插件自己的 Codex App Server。因此 Codex CLI 和登录状态始终是必需的。
+插件读取 `~/.codex/auth.json`（设置了 `CODEX_HOME` 时读取该目录下的 `auth.json`），直接请求 `https://chatgpt.com/backend-api/codex/responses`。access token 缺失或服务端明确返回 401 时，会按 `llm-for-zotero` 的规则刷新登录令牌。插件不会启动 Codex App Server，也不会改用其他 API、模型或服务商。
 
 ## 使用方式
 
@@ -73,6 +73,6 @@ npm run build
 
 ## 来源与许可
 
-Reader 交互和部分 Zotero 插件结构来自 [Translate for Zotero](https://github.com/windingwind/zotero-pdf-translate)。MinerU 缓存约定和 Codex App Server 实现参考了 [llm-for-zotero](https://github.com/yilewang/llm-for-zotero)。具体提交见 [NOTICE](NOTICE)。
+Reader 交互和部分 Zotero 插件结构来自 [Translate for Zotero](https://github.com/windingwind/zotero-pdf-translate)。MinerU 缓存约定和 Codex 旧版认证实现参考了 [llm-for-zotero](https://github.com/yilewang/llm-for-zotero)。具体提交见 [NOTICE](NOTICE)。
 
 本项目使用 [AGPL-3.0-or-later](LICENSE) 许可。

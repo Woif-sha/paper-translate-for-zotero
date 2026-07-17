@@ -21,10 +21,11 @@ This project contains and adapts code from:
    Source: https://github.com/yilewang/llm-for-zotero
    Pinned revision: f8dbbd863b021368c07efe0f61c67f3503d79bc9 (v3.8.27)
 
-   The independent Codex App Server client and MinerU cache validation design
+   The legacy Codex authentication client and MinerU cache validation design
    were adapted from the upstream implementation patterns, notably
-   src/codexAppServer/nativeClient.ts, src/codexAppServer/binaryPath.ts,
-   src/utils/codexAppServerProcess.ts, and its MinerU provenance/cache code.
+   src/utils/llmClient.ts, src/agent/model/codexResponses.ts,
+   src/utils/providerTransport.ts, and its MinerU provenance/cache code.
 
-No upstream runtime object, conversation, prompt, thread, credential, or
-private source file is accessed at runtime by this plugin.
+No upstream runtime object, conversation, prompt, thread, or private source
+file is accessed at runtime. Both plugins may read the user's Codex CLI login
+file, but this plugin keeps its requests and paper context independent.
