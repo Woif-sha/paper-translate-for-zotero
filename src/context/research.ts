@@ -1,4 +1,4 @@
-import { getCodexClient } from "../codex/appServer";
+import { getCodexClient, normalizeEffort } from "../codex/appServer";
 import { getPref } from "../utils/prefs";
 import {
   BackgroundSource,
@@ -19,6 +19,22 @@ export async function ensureBackgroundResearch(
   const existing = await readBackgroundResearchRecord(context);
   if (existing.status === "complete" || existing.status === "empty") return;
 
+  const key = `${context.identity.libraryID}:${context.identity.parentItemKey}:${context.fullMdSha256}`;
+  const active = backgroundResearchJobs.get(key);
+  if (active) return active;
+  const job = runBackgroundResearch(context, signal).finally(() => {
+    backgroundResearchJobs.delete(key);
+  });
+  backgroundResearchJobs.set(key, job);
+  return job;
+}
+
+const backgroundResearchJobs = new Map<string, Promise<void>>();
+
+async function runBackgroundResearch(
+  context: ValidatedPaperContext,
+  signal?: AbortSignal,
+): Promise<void> {
   const academicResult = await searchAcademicSources(context);
   const client = await getCodexClient(getPref("paper.codexPath") as string);
   const model = requiredPref("paper.codexModel");
@@ -36,7 +52,7 @@ export async function ensureBackgroundResearch(
       academicResult.failures,
     ),
     model,
-    effort: getPref("paper.codexEffort") as string,
+    effort: normalizeEffort(getPref("paper.codexEffort") as string),
     cwd: context.paperDir,
     signal,
     requireWebSearch: true,

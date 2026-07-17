@@ -324,6 +324,37 @@ export async function closeCodexClient(): Promise<void> {
   if (active) await (await active).close();
 }
 
+export async function testCodexConnection(params: {
+  codexPath?: string;
+  model: string;
+  effort?: string;
+}): Promise<string> {
+  const model = params.model.trim();
+  if (!model) throw new Error("Codex model is required");
+  const client = await CodexAppServerClient.spawn(params.codexPath);
+  try {
+    const threadId = await client.startThread({
+      model,
+      developerInstructions: "Reply with exactly OK.",
+      webSearch: "disabled",
+    });
+    const result = await client.runTurn({
+      threadId,
+      prompt: "Say OK",
+      model,
+      effort: normalizeEffort(params.effort),
+    });
+    return result.text.trim();
+  } finally {
+    await client.close();
+  }
+}
+
+export function normalizeEffort(value?: string): string | undefined {
+  const effort = String(value || "").trim();
+  return !effort || effort.toLowerCase() === "auto" ? undefined : effort;
+}
+
 function extractId(result: unknown, key: "thread" | "turn"): string {
   if (!result || typeof result !== "object") return "";
   const value = result as {

@@ -51,11 +51,22 @@
       for="__addonRef__-paper-codexEffort"
     ></html:label>
     <html:select id="__addonRef__-paper-codexEffort">
-      <html:option value="low">low</html:option
+      <html:option value="auto">auto</html:option
+      ><html:option value="low">low</html:option
       ><html:option value="medium">medium</html:option>
       <html:option value="high">high</html:option
       ><html:option value="xhigh">xhigh</html:option>
     </html:select>
+    <html:div
+      style="display: flex; align-items: center; gap: 8px; margin-top: 8px"
+    >
+      <html:button
+        id="__addonRef__-paper-codexTest"
+        type="button"
+        data-l10n-id="pref-codex-test"
+      ></html:button>
+      <html:span id="__addonRef__-paper-codexStatus" hidden="true"></html:span>
+    </html:div>
     <html:label
       data-l10n-id="pref-api-endpoint"
       for="__addonRef__-paper-apiEndpoint"

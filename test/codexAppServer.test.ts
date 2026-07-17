@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { CodexAppServerClient } from "../src/codex/appServer";
+import { CodexAppServerClient, normalizeEffort } from "../src/codex/appServer";
 
 function createFakeProcess() {
   const writes: string[] = [];
@@ -50,4 +50,10 @@ test("delivers notification payloads", () => {
     }),
   );
   assert.equal(delta, "译");
+});
+
+test("matches llm-for-zotero automatic reasoning semantics", () => {
+  assert.equal(normalizeEffort("auto"), undefined);
+  assert.equal(normalizeEffort(""), undefined);
+  assert.equal(normalizeEffort("high"), "high");
 });

@@ -13,3 +13,4 @@ pref-api-model = OpenAI 兼容模型
 pref-api-key = API 密钥（Codex App Server 不使用）
 pref-temperature = API 温度
 pref-context-note = 背景预研始终使用本插件独立的 Codex App Server；任何失败都不会切换协议或服务商。
+pref-codex-test = 测试连接

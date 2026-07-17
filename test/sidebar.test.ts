@@ -1,6 +1,17 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { registerReaderSidebar } from "../src/modules/sidebar";
+import {
+  getSidebarResultPlaceholderKey,
+  registerReaderSidebar,
+} from "../src/modules/sidebar";
+
+test("does not claim to translate before a task starts", () => {
+  assert.equal(getSidebarResultPlaceholderKey(), "sidebar-result-placeholder");
+  assert.equal(
+    getSidebarResultPlaceholderKey("processing"),
+    "status-translating",
+  );
+});
 
 test("registers a visible Reader pane and binds a parent item to the active attachment", () => {
   let options: any;
@@ -42,7 +53,8 @@ test("registers a visible Reader pane and binds a parent item to the active atta
   registerReaderSidebar();
   assert.equal(options.paneID, "papertranslateforzotero-translation");
   assert.equal(options.pluginID, "papertranslateforzotero@woif-sha.github.io");
-  assert.match(options.sidenav.icon, /favicon\.png$/);
+  assert.match(options.header.icon, /section-16\.png$/);
+  assert.match(options.sidenav.icon, /section-20\.png$/);
 
   const body = { dataset: {} as Record<string, string> };
   let enabled = false;

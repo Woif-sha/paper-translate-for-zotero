@@ -13,3 +13,4 @@ pref-api-model = OpenAI-compatible model
 pref-api-key = API key (unused by Codex App Server)
 pref-temperature = API temperature
 pref-context-note = Background research always uses this plugin's independent Codex App Server. No protocol or provider fallback is performed.
+pref-codex-test = Test connection
