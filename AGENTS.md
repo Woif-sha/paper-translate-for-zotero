@@ -8,10 +8,14 @@
 - Background may disambiguate translation but the default UI returns only translated text.
 - Never silently switch protocol, provider, model, endpoint or context source. Surface every failure.
 - Never fabricate a web result, citation, successful translation or cache record.
+- Core translation readiness depends only on validated source, index, paper-derived background and paper-evidenced terminology. External web research is optional and may only end as complete, warning or skipped without blocking core readiness.
+- Do not add fixed Crossref, Semantic Scholar or other website gates. Generate search questions from the paper first; rank paper/official evidence above academic evidence and community explanations.
 
 ## Persistent context
 
 Use `<ZoteroData>/paper-translate-for-zotero/<parentItemKey>/`. Validate `_paper_source.json` before reuse or deletion. Keep directories while parent items are in the Zotero trash; remove them only after permanent deletion and strict containment/identity checks.
+
+Persist file-level progress in `_preparation.json`, bound to `parentItemKey + fullMdSha256`. Write context files and stage changes atomically. Reader UI must reload this record instead of presenting an in-memory message as completed work. Preserve human terminology translations during schema migration and never accept paper-specific terminology without an exact Markdown occurrence.
 
 ## Authentication and security
 

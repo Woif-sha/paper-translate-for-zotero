@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  formatPreparationRows,
   getSidebarResultPlaceholderKey,
   registerReaderSidebar,
 } from "../src/modules/sidebar";
@@ -11,6 +12,34 @@ test("does not claim to translate before a task starts", () => {
     getSidebarResultPlaceholderKey("processing"),
     "status-translating",
   );
+});
+
+test("renders file progress without background text or full error URLs", () => {
+  const rows = formatPreparationRows({
+    stages: [
+      {
+        id: "source",
+        file: "_paper_source.json",
+        required: true,
+        status: "complete",
+      },
+      {
+        id: "external",
+        file: "background-sources.json",
+        required: false,
+        status: "warning",
+        detail: "1 个来源受限",
+      },
+    ],
+  } as any);
+  assert.deepEqual(rows, [
+    { status: "complete", text: "正文身份：_paper_source.json" },
+    {
+      status: "warning",
+      text: "外部补充：background-sources.json（完成，1 个来源受限）",
+    },
+  ]);
+  assert.doesNotMatch(rows.map((row) => row.text).join(" "), /https:|HTTP GET/);
 });
 
 test("registers a visible Reader pane and binds a parent item to the active attachment", () => {

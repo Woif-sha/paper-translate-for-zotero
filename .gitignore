@@ -19,3 +19,5 @@ zotero-cmd.json
 *.local.*
 Thumbs.db
 .DS_Store
+
+output/

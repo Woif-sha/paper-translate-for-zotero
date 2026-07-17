@@ -10,7 +10,6 @@ import {
   parseAndValidateProvenance,
   retrievePassages,
 } from "./paperContext";
-import type { AcademicSourceFailure } from "./academicSources";
 
 const MINERU_ROOT_NAME = "llm-for-zotero-mineru";
 const CONTEXT_ROOT_NAME = "paper-translate-for-zotero";
@@ -20,7 +19,11 @@ const textDecoder = new TextDecoder("utf-8", { fatal: true });
 type IOUtilsLike = {
   exists(path: string): Promise<boolean>;
   read(path: string): Promise<Uint8Array | ArrayBuffer>;
-  write(path: string, data: Uint8Array): Promise<unknown>;
+  write(
+    path: string,
+    data: Uint8Array,
+    options?: { tmpPath?: string },
+  ): Promise<unknown>;
   makeDirectory(
     path: string,
     options?: { createAncestors?: boolean; ignoreExisting?: boolean },
@@ -49,23 +52,70 @@ export type BackgroundSource = {
   title: string;
   url: string;
   snippet: string;
+  sourceLevel: "official" | "academic" | "community";
+  purpose: string;
 };
 
 export type TerminologyEntry = {
-  source: string;
+  observed: string;
+  canonical: string;
   translation: string;
+  category: string;
+  definition: string;
   evidence: string;
+  sourceLevel: "paper" | "official" | "academic" | "community";
+  confidence: "high" | "medium" | "low";
+};
+
+export type PreparationStageId =
+  | "source"
+  | "index"
+  | "background"
+  | "terminology"
+  | "external";
+
+export type PreparationStageStatus =
+  | "pending"
+  | "running"
+  | "complete"
+  | "warning"
+  | "error"
+  | "skipped";
+
+export type PreparationRecord = {
+  schemaVersion: typeof PAPER_CONTEXT_SCHEMA_VERSION;
+  parentItemKey: string;
+  fullMdSha256: string;
+  overall: "preparing" | "core-ready" | "ready" | "error";
+  stages: Array<{
+    id: PreparationStageId;
+    file: string;
+    required: boolean;
+    status: PreparationStageStatus;
+    startedAt?: string;
+    completedAt?: string;
+    detail?: string;
+  }>;
+  updatedAt: string;
 };
 
 export type BackgroundResearchRecord = {
   schemaVersion: typeof PAPER_CONTEXT_SCHEMA_VERSION;
   parentItemKey: string;
   fullMdSha256: string;
-  status: "pending" | "complete" | "empty";
+  status: "pending" | "complete" | "empty" | "warning";
   researchedAt?: string;
   queries: string[];
   sources: BackgroundSource[];
-  failures?: AcademicSourceFailure[];
+  failures?: Array<{ provider: string; message: string }>;
+};
+
+const PREPARATION_STAGE_FILES: Record<PreparationStageId, string> = {
+  source: "_paper_source.json",
+  index: "index.json",
+  background: "background.md",
+  terminology: "terminology.md",
+  external: "background-sources.json",
 };
 
 export async function preparePaperContext(
@@ -117,6 +167,9 @@ export async function preparePaperContext(
   const contentChanged =
     Boolean(previousSource?.fullMdSha256) &&
     previousSource?.fullMdSha256 !== fullMdSha256;
+  const schemaChanged =
+    Boolean(previousSource) &&
+    previousSource?.schemaVersion !== PAPER_CONTEXT_SCHEMA_VERSION;
 
   const indexPath = joinPath(paperDir, "index.json");
   let index = await readJsonIfExists<PaperIndex>(io, indexPath);
@@ -139,14 +192,26 @@ export async function preparePaperContext(
   const terminologyPath = joinPath(paperDir, "terminology.md");
   const backgroundPath = joinPath(paperDir, "background.md");
   const backgroundSourcesPath = joinPath(paperDir, "background-sources.json");
-  if (contentChanged) {
-    await io.write(
+  const preparationPath = joinPath(paperDir, "_preparation.json");
+  if (contentChanged || schemaChanged) {
+    const previousTerminology = (await io.exists(terminologyPath))
+      ? await readRequiredText(io, terminologyPath)
+      : "";
+    await writeText(
+      io,
       terminologyPath,
-      textEncoder.encode(createTerminologyMarkdown(identity.title)),
+      previousTerminology
+        ? migrateTerminologyMarkdown(
+            previousTerminology,
+            identity.title,
+            markdown,
+          )
+        : createTerminologyMarkdown(identity.title),
     );
-    await io.write(
+    await writeText(
+      io,
       backgroundPath,
-      textEncoder.encode(createBackgroundMarkdown(identity.title)),
+      createBackgroundMarkdown(identity.title),
     );
     await writeJson(io, backgroundSourcesPath, {
       schemaVersion: PAPER_CONTEXT_SCHEMA_VERSION,
@@ -157,7 +222,14 @@ export async function preparePaperContext(
       sources: [],
       failures: [],
     } satisfies BackgroundResearchRecord);
+    await writeJson(
+      io,
+      preparationPath,
+      createPreparationRecord(identity.parentItemKey, fullMdSha256),
+    );
   }
+  const backgroundSourcesExisted = await io.exists(backgroundSourcesPath);
+  const preparationExisted = await io.exists(preparationPath);
   await ensureTextFile(
     io,
     terminologyPath,
@@ -177,11 +249,63 @@ export async function preparePaperContext(
     sources: [],
     failures: [],
   } satisfies BackgroundResearchRecord);
-
-  const [terminology, background] = await Promise.all([
+  await ensureJsonFile(
+    io,
+    preparationPath,
+    createPreparationRecord(identity.parentItemKey, fullMdSha256),
+  );
+  const preparation = await readPreparationRecordFromPath(
+    io,
+    preparationPath,
+    identity.parentItemKey,
+    fullMdSha256,
+  );
+  const [terminology, background, backgroundResearch] = await Promise.all([
     readRequiredText(io, terminologyPath),
     readRequiredText(io, backgroundPath),
+    readRequiredText(io, backgroundSourcesPath).then(
+      (value) => JSON.parse(value) as BackgroundResearchRecord,
+    ),
   ]);
+  validateBackgroundResearchRecord(
+    backgroundResearch,
+    identity.parentItemKey,
+    fullMdSha256,
+  );
+  const stageUpdates: Array<{
+    id: PreparationStageId;
+    status: PreparationStageStatus;
+  }> = [
+    { id: "source", status: "complete" },
+    { id: "index", status: "complete" },
+  ];
+  if (!background.includes("## 论文依据")) {
+    stageUpdates.push({ id: "background", status: "pending" });
+  } else {
+    stageUpdates.push({ id: "background", status: "complete" });
+  }
+  if (!hasTerminologyEntries(terminology)) {
+    stageUpdates.push({ id: "terminology", status: "pending" });
+  } else {
+    stageUpdates.push({ id: "terminology", status: "complete" });
+  }
+  if (!preparationExisted || !backgroundSourcesExisted) {
+    stageUpdates.push({
+      id: "external",
+      status:
+        backgroundResearch.status === "complete"
+          ? "complete"
+          : backgroundResearch.status === "warning" ||
+              backgroundResearch.status === "empty"
+            ? "warning"
+            : "pending",
+    });
+  }
+  await writePreparationRecord(
+    io,
+    preparationPath,
+    updatePreparationStages(preparation, stageUpdates),
+  );
   return {
     identity,
     mineruCacheDir,
@@ -209,10 +333,23 @@ export async function readBackgroundResearchRecord(
       joinPath(context.paperDir, "background-sources.json"),
     ),
   ) as BackgroundResearchRecord;
+  validateBackgroundResearchRecord(
+    record,
+    context.identity.parentItemKey,
+    context.fullMdSha256,
+  );
+  return record;
+}
+
+function validateBackgroundResearchRecord(
+  record: BackgroundResearchRecord,
+  parentItemKey: string,
+  fullMdSha256: string,
+): void {
   if (
     record.schemaVersion !== PAPER_CONTEXT_SCHEMA_VERSION ||
-    record.parentItemKey !== context.identity.parentItemKey ||
-    record.fullMdSha256 !== context.fullMdSha256 ||
+    record.parentItemKey !== parentItemKey ||
+    record.fullMdSha256 !== fullMdSha256 ||
     !Array.isArray(record.queries) ||
     !Array.isArray(record.sources)
   ) {
@@ -220,7 +357,26 @@ export async function readBackgroundResearchRecord(
       "Background research record does not match the paper context",
     );
   }
-  return record;
+}
+
+export async function persistCoreBackground(params: {
+  context: ValidatedPaperContext;
+  markdown: string;
+}): Promise<void> {
+  const value = params.markdown.trim();
+  if (!value) throw new Error("Core paper background is empty");
+  const markdown = [
+    `# Background: ${params.context.identity.title || "Untitled paper"}`,
+    "",
+    value,
+    "",
+  ].join("\n");
+  await writeText(
+    getIOUtils(),
+    joinPath(params.context.paperDir, "background.md"),
+    markdown,
+  );
+  params.context.background = markdown;
 }
 
 export async function persistBackgroundResearch(params: {
@@ -228,7 +384,8 @@ export async function persistBackgroundResearch(params: {
   summary: string;
   queries: string[];
   sources: BackgroundSource[];
-  failures?: AcademicSourceFailure[];
+  failures?: Array<{ provider: string; message: string }>;
+  status?: BackgroundResearchRecord["status"];
 }): Promise<void> {
   const io = getIOUtils();
   const summary = params.summary.trim();
@@ -246,19 +403,18 @@ export async function persistBackgroundResearch(params: {
       title: source.title.trim(),
       url: url.href,
       snippet: source.snippet.trim(),
+      sourceLevel: source.sourceLevel,
+      purpose: source.purpose.trim(),
     };
   });
-  await io.write(
-    joinPath(params.context.paperDir, "background.md"),
-    textEncoder.encode(
-      [
-        `# Background: ${params.context.identity.title || "Untitled paper"}`,
-        "",
-        summary,
-        "",
-      ].join("\n"),
-    ),
-  );
+  const backgroundPath = joinPath(params.context.paperDir, "background.md");
+  const current = await readRequiredText(io, backgroundPath);
+  const marker = "## 外部背景补充";
+  const base = current.includes(marker)
+    ? current.slice(0, current.indexOf(marker)).trimEnd()
+    : current.trimEnd();
+  const merged = summary ? `${base}\n\n${marker}\n\n${summary}\n` : `${base}\n`;
+  await writeText(io, backgroundPath, merged);
   await writeJson(
     io,
     joinPath(params.context.paperDir, "background-sources.json"),
@@ -266,14 +422,20 @@ export async function persistBackgroundResearch(params: {
       schemaVersion: PAPER_CONTEXT_SCHEMA_VERSION,
       parentItemKey: params.context.identity.parentItemKey,
       fullMdSha256: params.context.fullMdSha256,
-      status: sources.length > 0 ? "complete" : "empty",
+      status:
+        params.status ??
+        (params.failures?.length
+          ? "warning"
+          : sources.length > 0
+            ? "complete"
+            : "empty"),
       researchedAt: new Date().toISOString(),
       queries: params.queries.map((query) => query.trim()).filter(Boolean),
       sources,
       failures: params.failures ?? [],
     } satisfies BackgroundResearchRecord,
   );
-  params.context.background = summary;
+  params.context.background = merged;
 }
 
 export async function persistTerminology(params: {
@@ -287,24 +449,61 @@ export async function persistTerminology(params: {
   const existingSources = new Set(
     markdown
       .split("\n")
-      .filter((line) => line.startsWith("|") && !line.includes("Source term"))
-      .map((line) => line.split("|")[1]?.trim().toLocaleLowerCase())
+      .filter(
+        (line) => line.startsWith("|") && !line.includes("Observed expression"),
+      )
+      .map((line) => line.split("|")[2]?.trim().toLocaleLowerCase())
       .filter(Boolean),
   );
   const now = new Date().toISOString();
   for (const entry of params.entries) {
-    const source = entry.source.trim();
+    const observed = entry.observed.trim();
+    const canonical = entry.canonical.trim();
     const translation = entry.translation.trim();
+    const category = entry.category.trim();
+    const definition = entry.definition.trim();
     const evidence = entry.evidence.trim();
-    if (!source || !translation || !evidence) {
+    if (
+      !observed ||
+      !canonical ||
+      !translation ||
+      !category ||
+      !definition ||
+      !evidence
+    ) {
       throw new Error("Terminology entry contains an empty field");
     }
-    if (existingSources.has(source.toLocaleLowerCase())) continue;
-    markdown += `| ${escapeMarkdownCell(source)} | ${escapeMarkdownCell(translation)} | ${escapeMarkdownCell(evidence)} | ${now} |\n`;
-    existingSources.add(source.toLocaleLowerCase());
+    if (existingSources.has(canonical.toLocaleLowerCase())) continue;
+    markdown += `| ${escapeMarkdownCell(observed)} | ${escapeMarkdownCell(canonical)} | ${escapeMarkdownCell(translation)} | ${escapeMarkdownCell(category)} | ${escapeMarkdownCell(definition)} | ${escapeMarkdownCell(evidence)} | ${entry.sourceLevel} | ${entry.confidence} | ${now} |\n`;
+    existingSources.add(canonical.toLocaleLowerCase());
   }
-  await io.write(path, textEncoder.encode(markdown));
+  await writeText(io, path, markdown);
   params.context.terminology = markdown;
+}
+
+export async function readPreparationRecord(
+  context: ValidatedPaperContext,
+): Promise<PreparationRecord> {
+  return readPreparationRecordFromPath(
+    getIOUtils(),
+    joinPath(context.paperDir, "_preparation.json"),
+    context.identity.parentItemKey,
+    context.fullMdSha256,
+  );
+}
+
+export async function setPreparationStage(params: {
+  context: ValidatedPaperContext;
+  id: PreparationStageId;
+  status: PreparationStageStatus;
+  detail?: string;
+}): Promise<PreparationRecord> {
+  const io = getIOUtils();
+  const path = joinPath(params.context.paperDir, "_preparation.json");
+  const current = await readPreparationRecord(params.context);
+  const next = updatePreparationStages(current, [params]);
+  await writePreparationRecord(io, path, next);
+  return next;
 }
 
 export async function cleanupPermanentlyDeletedPaperContexts(): Promise<void> {
@@ -429,10 +628,11 @@ async function readJsonIfExists<T>(
 }
 
 async function writeJson(io: IOUtilsLike, path: string, value: unknown) {
-  await io.write(
-    path,
-    textEncoder.encode(`${JSON.stringify(value, null, 2)}\n`),
-  );
+  await writeText(io, path, `${JSON.stringify(value, null, 2)}\n`);
+}
+
+async function writeText(io: IOUtilsLike, path: string, value: string) {
+  await io.write(path, textEncoder.encode(value), { tmpPath: `${path}.tmp` });
 }
 
 async function ensureJsonFile(io: IOUtilsLike, path: string, value: unknown) {
@@ -440,7 +640,169 @@ async function ensureJsonFile(io: IOUtilsLike, path: string, value: unknown) {
 }
 
 async function ensureTextFile(io: IOUtilsLike, path: string, value: string) {
-  if (!(await io.exists(path))) await io.write(path, textEncoder.encode(value));
+  if (!(await io.exists(path))) await writeText(io, path, value);
+}
+
+export function createPreparationRecord(
+  parentItemKey: string,
+  fullMdSha256: string,
+  now = new Date().toISOString(),
+): PreparationRecord {
+  const required = new Set<PreparationStageId>([
+    "source",
+    "index",
+    "background",
+    "terminology",
+  ]);
+  return {
+    schemaVersion: PAPER_CONTEXT_SCHEMA_VERSION,
+    parentItemKey,
+    fullMdSha256,
+    overall: "preparing",
+    stages: (Object.keys(PREPARATION_STAGE_FILES) as PreparationStageId[]).map(
+      (id) => ({
+        id,
+        file: PREPARATION_STAGE_FILES[id],
+        required: required.has(id),
+        status: "pending",
+      }),
+    ),
+    updatedAt: now,
+  };
+}
+
+export function updatePreparationStages(
+  record: PreparationRecord,
+  updates: Array<{
+    id: PreparationStageId;
+    status: PreparationStageStatus;
+    detail?: string;
+  }>,
+  now = new Date().toISOString(),
+): PreparationRecord {
+  const updateMap = new Map(updates.map((update) => [update.id, update]));
+  const terminal = new Set<PreparationStageStatus>([
+    "complete",
+    "warning",
+    "error",
+    "skipped",
+  ]);
+  const stages = record.stages.map((stage) => {
+    const update = updateMap.get(stage.id);
+    if (!update) return { ...stage };
+    return {
+      ...stage,
+      status: update.status,
+      startedAt:
+        update.status === "pending" ? undefined : (stage.startedAt ?? now),
+      completedAt: terminal.has(update.status)
+        ? stage.status === update.status
+          ? (stage.completedAt ?? now)
+          : now
+        : undefined,
+      detail: update.detail?.trim() || undefined,
+    };
+  });
+  const required = stages.filter((stage) => stage.required);
+  const coreReady = required.every((stage) => stage.status === "complete");
+  const external = stages.find((stage) => stage.id === "external");
+  const overall = required.some((stage) => stage.status === "error")
+    ? "error"
+    : coreReady &&
+        external &&
+        ["complete", "warning", "skipped"].includes(external.status)
+      ? "ready"
+      : coreReady
+        ? "core-ready"
+        : "preparing";
+  return { ...record, stages, overall, updatedAt: now };
+}
+
+async function readPreparationRecordFromPath(
+  io: IOUtilsLike,
+  path: string,
+  parentItemKey: string,
+  fullMdSha256: string,
+): Promise<PreparationRecord> {
+  const record = JSON.parse(
+    await readRequiredText(io, path),
+  ) as PreparationRecord;
+  const expectedIds = Object.keys(
+    PREPARATION_STAGE_FILES,
+  ) as PreparationStageId[];
+  if (
+    record.schemaVersion !== PAPER_CONTEXT_SCHEMA_VERSION ||
+    record.parentItemKey !== parentItemKey ||
+    record.fullMdSha256 !== fullMdSha256 ||
+    !Array.isArray(record.stages) ||
+    expectedIds.some(
+      (id) =>
+        !record.stages.some(
+          (stage) =>
+            stage.id === id && stage.file === PREPARATION_STAGE_FILES[id],
+        ),
+    )
+  ) {
+    throw new Error("Preparation record does not match the paper context");
+  }
+  return record;
+}
+
+async function writePreparationRecord(
+  io: IOUtilsLike,
+  path: string,
+  record: PreparationRecord,
+): Promise<void> {
+  await writeJson(io, path, record);
+}
+
+export function migrateTerminologyMarkdown(
+  markdown: string,
+  title: string,
+  paperMarkdown?: string,
+): string {
+  if (markdown.includes("| Observed expression | Canonical English |")) {
+    const header = markdown.split(/\r?\n/).filter((line) => {
+      if (!line.startsWith("|") || /^\|\s*-/.test(line)) return true;
+      if (line.includes("Observed expression")) return true;
+      const observed = line.split("|")[1]?.trim().replace(/\\\|/g, "|");
+      return !paperMarkdown || containsCaseInsensitive(paperMarkdown, observed);
+    });
+    return `${header.join("\n").trimEnd()}\n`;
+  }
+  let result = createTerminologyMarkdown(title);
+  for (const line of markdown.split(/\r?\n/)) {
+    if (!line.startsWith("|") || /^\|\s*-/.test(line)) continue;
+    const cells = line
+      .slice(1, -1)
+      .split("|")
+      .map((cell) => cell.trim());
+    if (cells.length < 3 || /source|原文/i.test(cells[0])) continue;
+    const [observed, translation, evidence, updatedAt = ""] = cells;
+    if (!observed || !translation) continue;
+    if (paperMarkdown && !containsCaseInsensitive(paperMarkdown, observed))
+      continue;
+    result += `| ${escapeMarkdownCell(observed)} | ${escapeMarkdownCell(observed)} | ${escapeMarkdownCell(translation)} | legacy | Migrated from schema v1 | ${escapeMarkdownCell(evidence || "legacy entry")} | paper | medium | ${escapeMarkdownCell(updatedAt || new Date().toISOString())} |\n`;
+  }
+  return result;
+}
+
+function hasTerminologyEntries(markdown: string): boolean {
+  return markdown
+    .split(/\r?\n/)
+    .some(
+      (line) =>
+        line.startsWith("|") &&
+        !line.includes("Observed expression") &&
+        !/^\|\s*-/.test(line),
+    );
+}
+
+function containsCaseInsensitive(value: string, needle: string): boolean {
+  return (
+    Boolean(needle) &&
+    value.toLocaleLowerCase().includes(needle.toLocaleLowerCase())
+  );
 }
 
 function escapeMarkdownCell(value: string): string {

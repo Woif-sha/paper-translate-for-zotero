@@ -1,8 +1,14 @@
 import { config } from "../../package.json";
-import { ensureBackgroundResearch } from "../context/research";
 import {
+  ensureCorePaperKnowledge,
+  ensureExternalKnowledgeResearch,
+} from "../context/research";
+import {
+  PreparationRecord,
+  ValidatedPaperContext,
+  createPreparationRecord,
   preparePaperContext,
-  readBackgroundResearchRecord,
+  readPreparationRecord,
 } from "../context/runtime";
 import { getLocaleID, getString } from "../utils/locale";
 import {
@@ -12,15 +18,9 @@ import {
 } from "../utils/task";
 import { PREFERENCES_PANE_ID } from "./preferenceWindow";
 
-type PaperPreparationState = {
-  markdown: "checking" | "ready" | "error";
-  background: "waiting" | "researching" | "ready" | "empty" | "error";
-  detail: string;
-};
-
 const activeBodies = new Set<HTMLElement>();
 const preparationJobs = new Map<number, Promise<void>>();
-const preparationStates = new Map<number, PaperPreparationState>();
+const paperContexts = new Map<number, ValidatedPaperContext>();
 
 export function registerReaderSidebar(): void {
   const paneKey = Zotero.ItemPaneManager.registerSection({
@@ -37,26 +37,22 @@ export function registerReaderSidebar(): void {
     onInit: ({ body }) => activeBodies.add(body),
     onDestroy: ({ body }) => activeBodies.delete(body),
     onItemChange: ({ body, item, tabType, setEnabled }) => {
-      const enabled = tabType === "reader";
-      const attachmentItemID = enabled
-        ? resolveReaderAttachmentItemID(item)
-        : null;
+      const attachmentItemID =
+        tabType === "reader" ? resolveReaderAttachmentItemID(item) : null;
       body.dataset.itemId = attachmentItemID ? String(attachmentItemID) : "";
-      setEnabled(enabled);
+      setEnabled(tabType === "reader");
       if (attachmentItemID) ensurePaperPreparation(attachmentItemID);
       return true;
     },
     onRender: ({ body, item, tabType, setEnabled }) => {
-      const enabled = tabType === "reader";
-      const attachmentItemID = enabled
-        ? resolveReaderAttachmentItemID(item)
-        : null;
+      const attachmentItemID =
+        tabType === "reader" ? resolveReaderAttachmentItemID(item) : null;
       body.dataset.itemId = attachmentItemID ? String(attachmentItemID) : "";
-      setEnabled(enabled);
-      if (!enabled) return;
+      setEnabled(tabType === "reader");
+      if (tabType !== "reader") return;
       buildSidebar(body);
       if (attachmentItemID) ensurePaperPreparation(attachmentItemID);
-      renderPreparationState(body);
+      void refreshPreparation(body);
       updateSidebarBody(body);
     },
     sectionButtons: [
@@ -64,20 +60,18 @@ export function registerReaderSidebar(): void {
         type: `${config.addonRef}-preferences`,
         icon: iconURI("action-settings.svg"),
         l10nID: getLocaleID("sidebar-preferences"),
-        onClick: () => {
-          Zotero.Utilities.Internal.openPreferences(PREFERENCES_PANE_ID);
-        },
+        onClick: () =>
+          Zotero.Utilities.Internal.openPreferences(PREFERENCES_PANE_ID),
       },
     ],
   });
-  if (!paneKey) {
+  if (!paneKey)
     throw new Error("Failed to register the Paper Translate Reader sidebar");
-  }
 }
 
 export function updateReaderSidebar(): void {
   for (const body of activeBodies) {
-    renderPreparationState(body);
+    void refreshPreparation(body);
     updateSidebarBody(body);
   }
 }
@@ -85,8 +79,7 @@ export function updateReaderSidebar(): void {
 function buildSidebar(body: HTMLElement): void {
   if (body.querySelector(`.${config.addonRef}-sidebar`)) return;
   const doc = body.ownerDocument;
-  const container = createHTMLElement(doc, "div");
-  container.className = `${config.addonRef}-sidebar`;
+  const container = element(doc, "div", `${config.addonRef}-sidebar`);
   Object.assign(container.style, {
     display: "flex",
     flexDirection: "column",
@@ -94,46 +87,83 @@ function buildSidebar(body: HTMLElement): void {
     padding: "8px",
   });
 
-  const status = createHTMLElement(doc, "section");
-  status.className = `${config.addonRef}-sidebar-status`;
-  Object.assign(status.style, {
+  const card = element(doc, "section", `${config.addonRef}-paper-card`);
+  Object.assign(card.style, {
+    padding: "10px",
+    border: "1px solid #77ad99",
+    borderRadius: "8px",
+    background: "#e7f7f1",
+  });
+  const heading = element(doc, "div", `${config.addonRef}-paper-heading`);
+  Object.assign(heading.style, {
     display: "flex",
-    flexDirection: "column",
-    gap: "5px",
+    alignItems: "flex-start",
+    gap: "8px",
+  });
+  const title = element(doc, "strong", `${config.addonRef}-paper-title`);
+  Object.assign(title.style, {
+    flex: "1",
+    color: "#173b32",
+    lineHeight: "1.25",
+  });
+  const badge = element(doc, "span", `${config.addonRef}-md-badge`);
+  badge.textContent = "MD";
+  badge.hidden = true;
+  Object.assign(badge.style, {
+    color: "#168c68",
+    background: "#c8f1e2",
+    borderRadius: "10px",
+    padding: "1px 7px",
+    fontSize: "0.85em",
+  });
+  const meta = element(doc, "div", `${config.addonRef}-paper-meta`);
+  Object.assign(meta.style, {
+    color: "#6b7f78",
+    marginTop: "4px",
+    fontSize: "0.9em",
+  });
+  heading.append(title, badge);
+  card.append(heading, meta);
+
+  const preparation = element(doc, "section", `${config.addonRef}-preparation`);
+  Object.assign(preparation.style, {
     padding: "8px",
     border: "1px solid var(--fill-quinary)",
     borderRadius: "6px",
-    background: "var(--material-background)",
   });
-  const markdownStatus = createHTMLElement(doc, "div");
-  markdownStatus.className = `${config.addonRef}-sidebar-md-status`;
-  const backgroundStatus = createHTMLElement(doc, "div");
-  backgroundStatus.className = `${config.addonRef}-sidebar-background-status`;
-  const statusDetail = createHTMLElement(doc, "div");
-  statusDetail.className = `${config.addonRef}-sidebar-status-detail`;
-  Object.assign(statusDetail.style, {
-    color: "var(--fill-secondary)",
+  const summary = element(doc, "div", `${config.addonRef}-preparation-summary`);
+  Object.assign(summary.style, { fontWeight: "600", marginBottom: "6px" });
+  const files = element(doc, "div", `${config.addonRef}-preparation-files`);
+  Object.assign(files.style, {
+    display: "flex",
+    flexDirection: "column",
+    gap: "4px",
     fontSize: "0.9em",
-    lineHeight: "1.4",
-    whiteSpace: "pre-wrap",
-    overflowWrap: "anywhere",
   });
-  status.append(markdownStatus, backgroundStatus, statusDetail);
+  preparation.append(summary, files);
 
-  const source = createHTMLElement(doc, "textarea");
-  source.className = `${config.addonRef}-sidebar-source`;
+  const source = element(doc, "textarea", `${config.addonRef}-sidebar-source`);
   source.rows = 5;
   source.placeholder = getString("sidebar-source-placeholder");
   applyTextareaStyle(source);
-
-  const translate = createHTMLElement(doc, "button");
-  translate.className = `${config.addonRef}-sidebar-translate`;
+  source.addEventListener("input", () => updateSidebarBody(body));
+  const translate = element(
+    doc,
+    "button",
+    `${config.addonRef}-sidebar-translate`,
+  );
   translate.type = "button";
   translate.textContent = getString("readerpopup-translate-label");
   translate.addEventListener("click", () => {
     const itemId = Number(body.dataset.itemId);
     const input = source.value.trim();
-    if (!Number.isInteger(itemId) || itemId <= 0 || !input) return;
+    if (
+      !Number.isInteger(itemId) ||
+      itemId <= 0 ||
+      !input ||
+      body.dataset.paperReady !== "true"
+    )
+      return;
     addTranslateTask(input, itemId);
     updateSidebarBody(body);
     void addon.hooks.onTranslate({
@@ -141,16 +171,131 @@ function buildSidebar(body: HTMLElement): void {
       noCache: true,
     });
   });
-
-  const result = createHTMLElement(doc, "textarea");
-  result.className = `${config.addonRef}-sidebar-result`;
+  const result = element(doc, "textarea", `${config.addonRef}-sidebar-result`);
   result.rows = 8;
   result.readOnly = true;
   result.placeholder = getString(getSidebarResultPlaceholderKey());
   applyTextareaStyle(result);
-
-  container.append(status, source, translate, result);
+  container.append(card, preparation, source, translate, result);
   body.append(container);
+  renderPreparation(body, createPreparationRecord("AAAAAAAA", "pending"));
+}
+
+function ensurePaperPreparation(attachmentItemID: number): void {
+  if (preparationJobs.has(attachmentItemID)) return;
+  const job = preparePaper(attachmentItemID)
+    .catch((error) => publishPreparationError(attachmentItemID, error))
+    .finally(() => preparationJobs.delete(attachmentItemID));
+  preparationJobs.set(attachmentItemID, job);
+}
+
+async function preparePaper(attachmentItemID: number): Promise<void> {
+  const context = await preparePaperContext(attachmentItemID, "");
+  paperContexts.set(attachmentItemID, context);
+  await refreshMatchingBodies(attachmentItemID);
+  await ensureCorePaperKnowledge(context);
+  await refreshMatchingBodies(attachmentItemID);
+  await ensureExternalKnowledgeResearch(context);
+  await refreshMatchingBodies(attachmentItemID);
+}
+
+async function refreshMatchingBodies(itemID: number): Promise<void> {
+  for (const body of activeBodies)
+    if (Number(body.dataset.itemId) === itemID) await refreshPreparation(body);
+}
+
+async function refreshPreparation(body: HTMLElement): Promise<void> {
+  const itemID = Number(body.dataset.itemId);
+  const context = paperContexts.get(itemID);
+  if (!context) return;
+  renderPaperCard(body, context);
+  renderPreparation(body, await readPreparationRecord(context));
+  updateSidebarBody(body);
+}
+
+function renderPaperCard(
+  body: HTMLElement,
+  context: ValidatedPaperContext,
+): void {
+  const title = body.querySelector(`.${config.addonRef}-paper-title`);
+  const meta = body.querySelector(`.${config.addonRef}-paper-meta`);
+  const badge = body.querySelector(
+    `.${config.addonRef}-md-badge`,
+  ) as HTMLElement | null;
+  if (title)
+    title.textContent =
+      context.identity.title || getString("sidebar-untitled-paper");
+  const parent =
+    Zotero.Items.getByLibraryAndKey(
+      context.identity.libraryID,
+      context.identity.parentItemKey,
+    ) || null;
+  const creators = parent?.getCreators?.() ?? [];
+  const names = creators
+    .map(
+      (creator: { lastName?: string; name?: string }) =>
+        creator.lastName || creator.name,
+    )
+    .filter(Boolean)
+    .slice(0, 3);
+  const year = String(parent?.getField("date") || "").match(/\d{4}/)?.[0] || "";
+  if (meta)
+    meta.textContent = [names.join(", "), year].filter(Boolean).join(" · ");
+  if (badge) badge.hidden = false;
+}
+
+export function formatPreparationRows(
+  record: PreparationRecord,
+): Array<{ text: string; status: string }> {
+  const labels: Record<string, string> = {
+    source: "正文身份",
+    index: "章节索引",
+    background: "论文背景",
+    terminology: "双语术语",
+    external: "外部补充",
+  };
+  return record.stages.map((stage) => ({
+    status: stage.status,
+    text: `${labels[stage.id]}：${stage.file}${stage.id === "external" && stage.status === "warning" ? `（完成，${stage.detail || "有来源受限"}）` : ""}`,
+  }));
+}
+
+function renderPreparation(body: HTMLElement, record: PreparationRecord): void {
+  const summary = body.querySelector(`.${config.addonRef}-preparation-summary`);
+  const files = body.querySelector(`.${config.addonRef}-preparation-files`);
+  if (!summary || !files) return;
+  const completed = record.stages.filter((stage) =>
+    ["complete", "warning", "skipped"].includes(stage.status),
+  ).length;
+  summary.textContent = `${getString("sidebar-preparation-title")} ${completed}/${record.stages.length}`;
+  files.replaceChildren(
+    ...formatPreparationRows(record).map((row) => {
+      const line = element(
+        body.ownerDocument,
+        "div",
+        `${config.addonRef}-preparation-row`,
+      );
+      line.dataset.status = row.status;
+      line.textContent = `${stageIcon(row.status)} ${row.text}`;
+      return line;
+    }),
+  );
+  body.dataset.paperReady = String(
+    record.overall === "core-ready" || record.overall === "ready",
+  );
+}
+
+function publishPreparationError(itemID: number, error: unknown): void {
+  for (const body of activeBodies) {
+    if (Number(body.dataset.itemId) !== itemID) continue;
+    const summary = body.querySelector(
+      `.${config.addonRef}-preparation-summary`,
+    );
+    if (summary)
+      summary.textContent = `${getString("sidebar-preparation-error")}: ${conciseError(error)}`;
+    body.dataset.paperReady = "false";
+    updateSidebarBody(body);
+  }
 }
 
 function updateSidebarBody(body: HTMLElement): void {
@@ -175,14 +320,13 @@ function updateSidebarBody(body: HTMLElement): void {
   const paperReady = body.dataset.paperReady === "true";
   if (!task) {
     result.value = "";
-    translate.disabled = !paperReady;
+    translate.disabled = !paperReady || !source.value.trim();
     return;
   }
   if (source.ownerDocument.activeElement !== source) source.value = task.raw;
   result.value = task.result;
-  if (task.status === "processing") {
+  if (task.status === "processing")
     result.placeholder = getString(getSidebarResultPlaceholderKey(task.status));
-  }
   translate.disabled = !paperReady || task.status === "processing";
 }
 
@@ -194,119 +338,30 @@ export function getSidebarResultPlaceholderKey(
     : "sidebar-result-placeholder";
 }
 
-function ensurePaperPreparation(attachmentItemID: number): void {
-  if (preparationJobs.has(attachmentItemID)) return;
-  const existing = preparationStates.get(attachmentItemID);
-  if (
-    existing?.markdown === "ready" &&
-    (existing.background === "ready" || existing.background === "empty")
-  ) {
-    return;
-  }
-  publishPreparationState(attachmentItemID, {
-    markdown: "checking",
-    background: "waiting",
-    detail: "",
-  });
-  const job = preparePaper(attachmentItemID)
-    .catch((error) => {
-      const current = preparationStates.get(attachmentItemID);
-      publishPreparationState(attachmentItemID, {
-        markdown: current?.markdown === "ready" ? "ready" : "error",
-        background: current?.markdown === "ready" ? "error" : "waiting",
-        detail: String(error),
-      });
-    })
-    .finally(() => preparationJobs.delete(attachmentItemID));
-  preparationJobs.set(attachmentItemID, job);
-}
-
-async function preparePaper(attachmentItemID: number): Promise<void> {
-  const context = await preparePaperContext(attachmentItemID, "");
-  publishPreparationState(attachmentItemID, {
-    markdown: "ready",
-    background: "waiting",
-    detail: context.fullMdPath,
-  });
-  let record = await readBackgroundResearchRecord(context);
-  if (record.status === "pending") {
-    publishPreparationState(attachmentItemID, {
-      markdown: "ready",
-      background: "researching",
-      detail: context.fullMdPath,
-    });
-    await ensureBackgroundResearch(context);
-    record = await readBackgroundResearchRecord(context);
-  }
-  const background = formatBackgroundPreview(context.background);
-  const failures = (record.failures ?? [])
-    .map((failure) => `${failure.provider}: ${failure.message}`)
-    .join("\n");
-  publishPreparationState(attachmentItemID, {
-    markdown: "ready",
-    background: record.status === "empty" ? "empty" : "ready",
-    detail: [background, failures].filter(Boolean).join("\n\n"),
-  });
-}
-
-function publishPreparationState(
-  attachmentItemID: number,
-  state: PaperPreparationState,
-): void {
-  preparationStates.set(attachmentItemID, state);
-  for (const body of activeBodies) {
-    if (Number(body.dataset.itemId) === attachmentItemID) {
-      renderPreparationState(body);
-      updateSidebarBody(body);
-    }
-  }
-}
-
-function renderPreparationState(body: HTMLElement): void {
-  const markdown = body.querySelector(
-    `.${config.addonRef}-sidebar-md-status`,
-  ) as HTMLElement | null;
-  const background = body.querySelector(
-    `.${config.addonRef}-sidebar-background-status`,
-  ) as HTMLElement | null;
-  const detail = body.querySelector(
-    `.${config.addonRef}-sidebar-status-detail`,
-  ) as HTMLElement | null;
-  if (!markdown || !background || !detail) return;
-  const itemID = Number(body.dataset.itemId);
-  const state = preparationStates.get(itemID) ?? {
-    markdown: "checking",
-    background: "waiting",
-    detail: "",
-  };
-  body.dataset.paperReady = String(state.markdown === "ready");
-  markdown.textContent = getString(`sidebar-md-${state.markdown}`);
-  background.textContent = getString(`sidebar-background-${state.background}`);
-  detail.textContent = state.detail;
-  detail.hidden = !state.detail;
-}
-
 function resolveReaderAttachmentItemID(item: Zotero.Item): number | null {
   if (item.isAttachment()) return item.id;
-  const tabs = ztoolkit.getGlobal("Zotero_Tabs") as {
-    selectedID?: string;
-  };
+  const tabs = ztoolkit.getGlobal("Zotero_Tabs") as { selectedID?: string };
   const reader = tabs.selectedID
     ? Zotero.Reader.getByTabID(tabs.selectedID)
     : null;
   const itemID = Number(reader?.itemID);
   if (!Number.isInteger(itemID) || itemID <= 0) return null;
-  const attachment = Zotero.Items.get(itemID);
-  return attachment?.isAttachment() ? itemID : null;
+  return Zotero.Items.get(itemID)?.isAttachment() ? itemID : null;
 }
 
-function formatBackgroundPreview(value: string): string {
-  return value
-    .split("\n")
-    .filter((line) => !line.trim().startsWith("#"))
-    .join("\n")
-    .trim()
-    .slice(0, 800);
+function stageIcon(status: string): string {
+  if (status === "running") return "◌";
+  if (status === "complete") return "✓";
+  if (status === "warning") return "⚠";
+  if (status === "error") return "✕";
+  if (status === "skipped") return "–";
+  return "○";
+}
+
+function conciseError(error: unknown): string {
+  return (error instanceof Error ? error.message : String(error))
+    .replace(/https?:\/\/\S+/g, "[URL omitted]")
+    .slice(0, 180);
 }
 
 function applyTextareaStyle(textarea: HTMLTextAreaElement): void {
@@ -327,12 +382,15 @@ function iconURI(name: string): string {
   return `chrome://${config.addonRef}/content/icons/${name}`;
 }
 
-function createHTMLElement<K extends keyof HTMLElementTagNameMap>(
+function element<K extends keyof HTMLElementTagNameMap>(
   doc: Document,
-  tagName: K,
+  tag: K,
+  className: string,
 ): HTMLElementTagNameMap[K] {
-  return doc.createElementNS(
+  const result = doc.createElementNS(
     "http://www.w3.org/1999/xhtml",
-    tagName,
+    tag,
   ) as HTMLElementTagNameMap[K];
+  result.className = className;
+  return result;
 }

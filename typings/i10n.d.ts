@@ -31,8 +31,11 @@ export type FluentMessageId =
   | 'sidebar-md-ready'
   | 'sidebar-no-attachment'
   | 'sidebar-preferences'
+  | 'sidebar-preparation-error'
+  | 'sidebar-preparation-title'
   | 'sidebar-result-placeholder'
   | 'sidebar-source-placeholder'
   | 'sidebar-title'
   | 'sidebar-tooltip'
+  | 'sidebar-untitled-paper'
   | 'status-translating';
