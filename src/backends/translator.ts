@@ -5,10 +5,7 @@ import {
   persistTerminology,
   preparePaperContext,
 } from "../context/runtime";
-import {
-  ensureCorePaperKnowledge,
-  ensureExternalKnowledgeResearch,
-} from "../context/research";
+import { continuePaperLearning } from "../context/research";
 import {
   TERMINOLOGY_DEVELOPER_INSTRUCTIONS,
   TRANSLATION_DEVELOPER_INSTRUCTIONS,
@@ -38,10 +35,6 @@ export async function translateWithPaperContext(params: {
       params.attachmentItemID,
       params.input,
     );
-    await ensureCorePaperKnowledge(context, controller.signal);
-    void ensureExternalKnowledgeResearch(context).catch((error) =>
-      Zotero.logError(error),
-    );
     const prompt = buildTranslationPrompt({
       context,
       sourceLanguage: params.sourceLanguage,
@@ -50,14 +43,15 @@ export async function translateWithPaperContext(params: {
     });
     const translation = await translateWithCodex(
       prompt,
+      params.input,
       controller.signal,
       params.onUpdate,
     );
-    await updateTerminology(
-      context,
-      params.input,
-      translation,
-      controller.signal,
+    void continuePaperLearning(context).catch((error) =>
+      Zotero.logError(error),
+    );
+    void updateTerminology(context, params.input, translation).catch((error) =>
+      Zotero.logError(error),
     );
     return translation;
   } finally {
@@ -67,6 +61,7 @@ export async function translateWithPaperContext(params: {
 
 async function translateWithCodex(
   prompt: string,
+  source: string,
   signal: AbortSignal,
   onUpdate: (text: string) => void,
 ): Promise<string> {
@@ -77,16 +72,29 @@ async function translateWithCodex(
     instructions: TRANSLATION_DEVELOPER_INSTRUCTIONS,
     prompt,
     signal,
-    onDelta: (_delta, accumulated) => onUpdate(accumulated),
+    onDelta: (_delta, accumulated) =>
+      onUpdate(formatTranslationLayout(source, accumulated)),
   });
-  return result.text;
+  return formatTranslationLayout(source, result.text);
+}
+
+export function formatTranslationLayout(
+  source: string,
+  translation: string,
+): string {
+  if (!/[•●▪◦‣]/u.test(source)) return translation;
+  return translation
+    .replace(
+      /\s*([•●▪◦‣])\s*/gu,
+      (_match, bullet, offset) => `${offset > 0 ? "\n" : ""}${bullet} `,
+    )
+    .trim();
 }
 
 async function updateTerminology(
   context: ValidatedPaperContext,
   input: string,
   translation: string,
-  signal: AbortSignal,
 ): Promise<void> {
   const result = await runLegacyCodexRequest({
     apiUrl: requiredPref("paper.codexApiUrl"),
@@ -94,7 +102,6 @@ async function updateTerminology(
     effort: String(getPref("paper.codexEffort") || ""),
     instructions: TERMINOLOGY_DEVELOPER_INSTRUCTIONS,
     prompt: buildTerminologyPrompt({ context, input, translation }),
-    signal,
   });
   await persistTerminology({
     context,

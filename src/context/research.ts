@@ -39,6 +39,13 @@ const coreJobs = new Map<string, Promise<void>>();
 const externalJobs = new Map<string, Promise<void>>();
 const researchQueries = new Map<string, string[]>();
 
+export async function continuePaperLearning(
+  context: ValidatedPaperContext,
+): Promise<void> {
+  await ensureCorePaperKnowledge(context);
+  await ensureExternalKnowledgeResearch(context);
+}
+
 export async function ensureCorePaperKnowledge(
   context: ValidatedPaperContext,
   signal?: AbortSignal,

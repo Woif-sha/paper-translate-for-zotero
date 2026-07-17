@@ -159,10 +159,7 @@ export function addTranslateTask(
   // @ts-ignore - Plugin instance is not typed
   const addon = Zotero[config.addonInstance] as Addon;
   type = type || "text";
-  // Filter raw string
-
-  // eslint-disable-next-line no-control-regex
-  raw = raw.replace(/[\u0000-\u001F\u007F-\u009F]/gu, " ").normalize("NFKC");
+  raw = normalizeTaskText(raw);
 
   // Create a new task
   const newTask: TranslateTask = {
@@ -185,6 +182,17 @@ export function addTranslateTask(
   // Keep queue size
   cleanTasks();
   return newTask;
+}
+
+export function normalizeTaskText(raw: string): string {
+  return (
+    raw
+      .normalize("NFKC")
+      .replace(/\r\n?/g, "\n")
+      // eslint-disable-next-line no-control-regex
+      .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F-\u009F]/gu, " ")
+      .trim()
+  );
 }
 
 function setDefaultService(task: TranslateTask) {

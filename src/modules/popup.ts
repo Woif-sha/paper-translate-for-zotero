@@ -23,7 +23,6 @@ export function updateReaderPopup() {
   if (source.ownerDocument.activeElement !== source) source.value = task.raw;
   result.value = task.result;
   button.disabled = task.status === "processing";
-  resize(result);
 }
 
 export function buildReaderPopup(
@@ -38,7 +37,13 @@ export function buildReaderPopup(
   const textStyle = {
     boxSizing: "border-box",
     width: "320px",
-    minWidth: "184px",
+    minWidth: "320px",
+    maxWidth: "320px",
+    height: "96px",
+    minHeight: "96px",
+    maxHeight: "96px",
+    resize: "none",
+    overflowY: "auto",
     marginInline: "2px",
     border: "none",
     borderRadius: "6px",
@@ -117,9 +122,4 @@ export function buildReaderPopup(
       ],
     }),
   );
-}
-
-function resize(textarea: HTMLTextAreaElement): void {
-  textarea.style.height = "30px";
-  textarea.style.height = `${Math.max(30, textarea.scrollHeight + 3)}px`;
 }

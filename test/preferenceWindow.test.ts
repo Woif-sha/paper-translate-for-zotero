@@ -22,13 +22,24 @@ test("registers the exact plugin name and a correctly sized settings icon", asyn
   assert.match(options.image, /section-20\.png$/);
 });
 
-test("offers only the llm-for-zotero legacy Codex configuration", async () => {
+test("locks the Codex authentication mode and defaults to the legacy endpoint", async () => {
   const markup = await readFile(
     new URL("../addon/chrome/content/preferences.xhtml", import.meta.url),
     "utf8",
   );
-  assert.match(markup, /Codex Auth \(Legacy\)/);
+  assert.match(markup, /value="Codex Auth"/);
+  assert.match(
+    markup,
+    /paper-authMode[\s\S]*readonly="readonly"[\s\S]*disabled="disabled"/,
+  );
+  assert.doesNotMatch(markup, /\(Legacy\)|pref-context-note/);
   assert.match(markup, /paper-codexApiUrl/);
   assert.doesNotMatch(markup, /Codex App Server/);
   assert.doesNotMatch(markup, /chat-completions|paper-apiKey|paper-codexPath/);
+  const defaults = await readFile(
+    new URL("../addon/prefs.js", import.meta.url),
+    "utf8",
+  );
+  assert.match(defaults, /paper\.codexModel", "gpt-5\.4"/);
+  assert.match(defaults, /paper\.codexEffort", "medium"/);
 });

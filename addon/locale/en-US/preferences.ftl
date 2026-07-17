@@ -8,5 +8,4 @@ pref-auth-mode = Authentication mode
 pref-codex-api-url = API URL
 pref-codex-model = Model
 pref-codex-effort = Codex reasoning effort
-pref-context-note = Uses the same legacy Codex authentication as llm-for-zotero: reads the Codex CLI login and calls the fixed API directly. It never starts App Server or switches endpoint, model, or provider.
 pref-codex-test = Test connection

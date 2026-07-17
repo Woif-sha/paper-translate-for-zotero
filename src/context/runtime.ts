@@ -117,6 +117,7 @@ const PREPARATION_STAGE_FILES: Record<PreparationStageId, string> = {
   terminology: "terminology.md",
   external: "background-sources.json",
 };
+const terminologyWrites = new Map<string, Promise<void>>();
 
 export async function preparePaperContext(
   attachmentItemID: number,
@@ -279,15 +280,15 @@ export async function preparePaperContext(
     { id: "source", status: "complete" },
     { id: "index", status: "complete" },
   ];
-  if (!background.includes("## 论文依据")) {
-    stageUpdates.push({ id: "background", status: "pending" });
-  } else {
+  if (background.includes("## 论文依据")) {
     stageUpdates.push({ id: "background", status: "complete" });
+  } else if (!stageIsActiveOrFailed(preparation, "background")) {
+    stageUpdates.push({ id: "background", status: "pending" });
   }
-  if (!hasTerminologyEntries(terminology)) {
-    stageUpdates.push({ id: "terminology", status: "pending" });
-  } else {
+  if (hasTerminologyEntries(terminology)) {
     stageUpdates.push({ id: "terminology", status: "complete" });
+  } else if (!stageIsActiveOrFailed(preparation, "terminology")) {
+    stageUpdates.push({ id: "terminology", status: "pending" });
   }
   if (!preparationExisted || !backgroundSourcesExisted) {
     stageUpdates.push({
@@ -443,6 +444,22 @@ export async function persistTerminology(params: {
   entries: TerminologyEntry[];
 }): Promise<void> {
   if (!params.entries.length) return;
+  const key = `${params.context.identity.libraryID}:${params.context.identity.parentItemKey}`;
+  const previous = terminologyWrites.get(key);
+  const write = () => persistTerminologyNow(params);
+  const current = previous ? previous.then(write, write) : write();
+  terminologyWrites.set(key, current);
+  try {
+    await current;
+  } finally {
+    if (terminologyWrites.get(key) === current) terminologyWrites.delete(key);
+  }
+}
+
+async function persistTerminologyNow(params: {
+  context: ValidatedPaperContext;
+  entries: TerminologyEntry[];
+}): Promise<void> {
   const io = getIOUtils();
   const path = joinPath(params.context.paperDir, "terminology.md");
   let markdown = await readRequiredText(io, path);
@@ -796,6 +813,14 @@ function hasTerminologyEntries(markdown: string): boolean {
         !line.includes("Observed expression") &&
         !/^\|\s*-/.test(line),
     );
+}
+
+function stageIsActiveOrFailed(
+  record: PreparationRecord,
+  id: PreparationStageId,
+): boolean {
+  const status = record.stages.find((stage) => stage.id === id)?.status;
+  return status === "running" || status === "error";
 }
 
 function containsCaseInsensitive(value: string, needle: string): boolean {

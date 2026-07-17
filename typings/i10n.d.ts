@@ -12,7 +12,6 @@ export type FluentMessageId =
   | 'pref-codex-success'
   | 'pref-codex-test'
   | 'pref-codex-testing'
-  | 'pref-context-note'
   | 'pref-enable-auto'
   | 'pref-source-language'
   | 'pref-target-language'

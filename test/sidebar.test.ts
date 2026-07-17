@@ -3,6 +3,7 @@ import test from "node:test";
 import {
   formatPreparationRows,
   getSidebarResultPlaceholderKey,
+  isTranslationReady,
   registerReaderSidebar,
 } from "../src/modules/sidebar";
 
@@ -11,6 +12,36 @@ test("does not claim to translate before a task starts", () => {
   assert.equal(
     getSidebarResultPlaceholderKey("processing"),
     "status-translating",
+  );
+});
+
+test("allows translation as soon as source and index files are complete", () => {
+  assert.equal(
+    isTranslationReady({
+      stages: [
+        { id: "source", status: "complete" },
+        { id: "index", status: "complete" },
+        { id: "background", status: "running" },
+        { id: "terminology", status: "pending" },
+        { id: "external", status: "pending" },
+      ],
+    } as any),
+    true,
+  );
+});
+
+test("keeps translation ready when background preparation reports an error", () => {
+  assert.equal(
+    isTranslationReady({
+      stages: [
+        { id: "source", status: "complete" },
+        { id: "index", status: "complete" },
+        { id: "background", status: "error" },
+        { id: "terminology", status: "error" },
+        { id: "external", status: "pending" },
+      ],
+    } as any),
+    true,
   );
 });
 
