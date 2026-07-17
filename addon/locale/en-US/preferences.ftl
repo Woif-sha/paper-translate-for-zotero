@@ -1,0 +1,15 @@
+pref-translation = Translation
+pref-enable-auto =
+    .label = Automatically translate Reader selections
+pref-source-language = Source language code (automatic detection remains available)
+pref-target-language = Target language code
+pref-backend = Backend
+pref-backend-kind = Translation protocol
+pref-codex-path = Codex CLI path (blank uses the standard location)
+pref-codex-model = Codex model
+pref-codex-effort = Codex reasoning effort
+pref-api-endpoint = OpenAI-compatible endpoint
+pref-api-model = OpenAI-compatible model
+pref-api-key = API key (unused by Codex App Server)
+pref-temperature = API temperature
+pref-context-note = Background research always uses this plugin's independent Codex App Server. No protocol or provider fallback is performed.

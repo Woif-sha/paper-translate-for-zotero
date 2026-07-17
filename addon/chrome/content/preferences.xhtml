@@ -1,0 +1,87 @@
+<linkset>
+  <html:link rel="localization" href="__addonRef__-preferences.ftl" />
+</linkset>
+<vbox
+  id="zotero-prefpane-__addonRef__"
+  onload="Zotero.__addonInstance__.hooks.onPrefsLoad(event)"
+>
+  <groupbox>
+    <label><html:h2 data-l10n-id="pref-translation"></html:h2></label>
+    <checkbox
+      data-l10n-id="pref-enable-auto"
+      native="true"
+      preference="__prefsPrefix__.enableAuto"
+    />
+    <html:label
+      data-l10n-id="pref-source-language"
+      for="__addonRef__-sourceLanguage"
+    ></html:label>
+    <html:input id="__addonRef__-sourceLanguage" type="text"></html:input>
+    <html:label
+      data-l10n-id="pref-target-language"
+      for="__addonRef__-targetLanguage"
+    ></html:label>
+    <html:input id="__addonRef__-targetLanguage" type="text"></html:input>
+  </groupbox>
+  <groupbox>
+    <label><html:h2 data-l10n-id="pref-backend"></html:h2></label>
+    <html:label
+      data-l10n-id="pref-backend-kind"
+      for="__addonRef__-paper-backend"
+    ></html:label>
+    <html:select id="__addonRef__-paper-backend">
+      <html:option value="codex">Codex App Server</html:option>
+      <html:option value="responses">OpenAI Responses API</html:option>
+      <html:option value="chat-completions"
+        >OpenAI-compatible Chat Completions</html:option
+      >
+    </html:select>
+    <html:label
+      data-l10n-id="pref-codex-path"
+      for="__addonRef__-paper-codexPath"
+    ></html:label>
+    <html:input id="__addonRef__-paper-codexPath" type="text"></html:input>
+    <html:label
+      data-l10n-id="pref-codex-model"
+      for="__addonRef__-paper-codexModel"
+    ></html:label>
+    <html:input id="__addonRef__-paper-codexModel" type="text"></html:input>
+    <html:label
+      data-l10n-id="pref-codex-effort"
+      for="__addonRef__-paper-codexEffort"
+    ></html:label>
+    <html:select id="__addonRef__-paper-codexEffort">
+      <html:option value="low">low</html:option
+      ><html:option value="medium">medium</html:option>
+      <html:option value="high">high</html:option
+      ><html:option value="xhigh">xhigh</html:option>
+    </html:select>
+    <html:label
+      data-l10n-id="pref-api-endpoint"
+      for="__addonRef__-paper-apiEndpoint"
+    ></html:label>
+    <html:input id="__addonRef__-paper-apiEndpoint" type="text"></html:input>
+    <html:label
+      data-l10n-id="pref-api-model"
+      for="__addonRef__-paper-apiModel"
+    ></html:label>
+    <html:input id="__addonRef__-paper-apiModel" type="text"></html:input>
+    <html:label
+      data-l10n-id="pref-api-key"
+      for="__addonRef__-paper-apiKey"
+    ></html:label>
+    <html:input id="__addonRef__-paper-apiKey" type="password"></html:input>
+    <html:label
+      data-l10n-id="pref-temperature"
+      for="__addonRef__-paper-temperature"
+    ></html:label>
+    <html:input
+      id="__addonRef__-paper-temperature"
+      type="number"
+      min="0"
+      max="2"
+      step="0.1"
+    ></html:input>
+  </groupbox>
+  <description data-l10n-id="pref-context-note"></description>
+</vbox>

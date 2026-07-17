@@ -1,0 +1,78 @@
+# Paper Translate for Zotero
+
+[![CI](https://github.com/Woif-sha/paper-translate-for-zotero/actions/workflows/ci.yml/badge.svg)](https://github.com/Woif-sha/paper-translate-for-zotero/actions/workflows/ci.yml)
+[![License: AGPL-3.0-or-later](https://img.shields.io/badge/license-AGPL--3.0--or--later-blue.svg)](LICENSE)
+
+我写这个插件，是因为普通划词翻译常常不知道论文在讨论什么。同一个术语换一篇论文，译法可能就不一样；只把选中的一句话发给模型，结果很容易跑偏。
+
+Paper Translate for Zotero 会读取 `llm-for-zotero` 已生成的 MinerU Markdown，从当前论文中找出相关段落，再结合这篇论文自己的术语表和背景资料完成翻译。它有独立的 Codex 进程、提示词和会话，不会占用或修改 `llm-for-zotero` 的聊天记录。
+
+## 目前能做什么
+
+- 在 Zotero Reader 中选中文本后自动翻译；
+- 修改选区内容或粘贴新文本，再手动翻译；
+- 使用 Codex App Server、OpenAI Responses API 或兼容 Chat Completions 的接口；
+- 为每篇论文保存术语表、背景摘要和来源；
+- Markdown 更新后重建索引，不沿用旧论文上下文。
+
+界面只显示原文和译文。插件不会把翻译写进批注、笔记或条目字段，也没有词典、语音和传统机器翻译服务。
+
+## 安装前要准备什么
+
+这个插件依赖两样东西：
+
+1. Zotero 7，以及已经安装并配置好的 `llm-for-zotero`；
+2. 官方 Codex CLI。安装后先在终端运行 `codex login`。
+
+请先用 `llm-for-zotero` 解析论文。对应附件的 MinerU 缓存中必须有 `_llm_source.json`、`manifest.json` 和 `full.md`。本插件不会读取 PDF，也不会替你调用 MinerU。
+
+从 [Releases](https://github.com/Woif-sha/paper-translate-for-zotero/releases) 下载 XPI，然后在 Zotero 的“工具 → 插件”中选择“从文件安装插件”。安装后可以在插件设置中填写目标语言、模型和 API 参数。
+
+即使翻译后端选用 Responses API 或 Chat Completions，首次背景检索仍会启动本插件自己的 Codex App Server。因此 Codex CLI 和登录状态始终是必需的。
+
+## 使用方式
+
+在 Reader 中选中文本，翻译浮层会直接出现。上方文本框可以编辑，点击“翻译”即可重新提交；下方文本框显示流式译文。继续选择其他文本时，上一条请求会被取消。
+
+每篇论文第一次翻译前，插件会查询 Crossref 和 Semantic Scholar，并通过 Codex 搜索补充背景资料。后续请求只发送当前文本、相关 Markdown 段落、论文元数据、背景摘要和术语表，不会反复提交整篇论文。
+
+## 文件放在哪里
+
+论文上下文保存在 Zotero 数据目录下。假设数据目录是 `E:\ZoteroData`，文件结构如下：
+
+```text
+E:\ZoteroData\paper-translate-for-zotero\<parentItemKey>\
+├─ _paper_source.json
+├─ terminology.md
+├─ background.md
+├─ background-sources.json
+└─ index.json
+```
+
+一个父条目对应一个文件夹。`index.json` 只记录章节、字符偏移和哈希，不复制 `full.md`。条目放进 Zotero 回收站时文件会保留；只有条目被永久删除后，插件才会校验路径和来源记录并清理目录。
+
+`terminology.md` 和 `background.md` 都是普通文本，可以直接查看或修改。
+
+## 出错时会怎样
+
+来源文件缺失、附件映射不一致、Markdown 损坏、网络失败或流式响应格式错误都会直接显示出来。插件不会偷偷改用另一个模型、接口或翻译服务。
+
+如果错误指向 MinerU 缓存，请回到 `llm-for-zotero` 修复或重新解析对应附件。
+
+## 开发
+
+```powershell
+npm ci
+npm test
+npx tsc --noEmit
+npx eslint src test
+npm run build
+```
+
+构建后的 XPI 位于 `build/paper-translate-for-zotero.xpi`。推送和拉取请求会运行同样的检查；推送 `v*` 标签后，GitHub Actions 会创建 Release 并上传 XPI。
+
+## 来源与许可
+
+Reader 交互和部分 Zotero 插件结构来自 [Translate for Zotero](https://github.com/windingwind/zotero-pdf-translate)。MinerU 缓存约定和 Codex App Server 实现参考了 [llm-for-zotero](https://github.com/yilewang/llm-for-zotero)。具体提交见 [NOTICE](NOTICE)。
+
+本项目使用 [AGPL-3.0-or-later](LICENSE) 许可。

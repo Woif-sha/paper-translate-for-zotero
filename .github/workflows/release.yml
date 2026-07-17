@@ -1,0 +1,46 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Verify tag matches package version
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: node -e "const expected='v'+require('./package.json').version;if(process.env.RELEASE_TAG!==expected){throw new Error('Expected tag '+expected+', received '+process.env.RELEASE_TAG)}"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run checks
+        run: |
+          npm test
+          npx tsc --noEmit
+          npx eslint src test
+          npm audit --omit=dev --audit-level=high
+
+      - name: Build XPI
+        run: npm run build
+
+      - name: Publish GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" build/*.xpi --verify-tag --generate-notes --title "$GITHUB_REF_NAME"

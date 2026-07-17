@@ -1,0 +1,30 @@
+Paper Translate for Zotero
+Copyright (C) 2026 Woif-sha and contributors
+
+Licensed under the GNU Affero General Public License, version 3 or (at your option) any later version.
+
+This project contains and adapts code from:
+
+1. Translate for Zotero (zotero-pdf-translate)
+   Copyright (C) windingwind and contributors
+   License: AGPL-3.0-or-later
+   Source: https://github.com/windingwind/zotero-pdf-translate
+   Pinned revision: 227cd6633d0317a2ef5374cb334aee9136044bf3 (v2.4.5)
+
+   Retained/adapted areas include the Zotero plugin scaffold and lifecycle,
+   Reader text-selection integration, popup/task/refresh flow, preference and
+   localization infrastructure, language utilities, and build assets.
+
+2. llm-for-zotero
+   Copyright (C) Yile Wang and contributors
+   License: AGPL-3.0-or-later
+   Source: https://github.com/yilewang/llm-for-zotero
+   Pinned revision: f8dbbd863b021368c07efe0f61c67f3503d79bc9 (v3.8.27)
+
+   The independent Codex App Server client and MinerU cache validation design
+   were adapted from the upstream implementation patterns, notably
+   src/codexAppServer/nativeClient.ts, src/codexAppServer/binaryPath.ts,
+   src/utils/codexAppServerProcess.ts, and its MinerU provenance/cache code.
+
+No upstream runtime object, conversation, prompt, thread, credential, or
+private source file is accessed at runtime by this plugin.

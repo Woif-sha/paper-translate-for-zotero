@@ -1,0 +1,15 @@
+pref-translation = 翻译
+pref-enable-auto =
+    .label = 自动翻译 Reader 选区
+pref-source-language = 源语言代码（仍可使用自动检测）
+pref-target-language = 目标语言代码
+pref-backend = 后端
+pref-backend-kind = 翻译协议
+pref-codex-path = Codex CLI 路径（留空使用标准位置）
+pref-codex-model = Codex 模型
+pref-codex-effort = Codex 推理强度
+pref-api-endpoint = OpenAI 兼容接口地址
+pref-api-model = OpenAI 兼容模型
+pref-api-key = API 密钥（Codex App Server 不使用）
+pref-temperature = API 温度
+pref-context-note = 背景预研始终使用本插件独立的 Codex App Server；任何失败都不会切换协议或服务商。
