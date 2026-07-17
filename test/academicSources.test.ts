@@ -3,6 +3,7 @@ import test from "node:test";
 import {
   parseCrossrefResponse,
   parseSemanticScholarResponse,
+  searchAcademicSources,
 } from "../src/context/academicSources";
 
 test("parses Crossref works into background sources", () => {
@@ -35,5 +36,31 @@ test("prefers DOI links for Semantic Scholar records", () => {
       ],
     })[0].url,
     "https://doi.org/10.2%2Fy",
+  );
+});
+
+test("uses the validated paper title and records a rate-limited provider", async () => {
+  const requested: string[] = [];
+  const result = await searchAcademicSources(
+    {
+      identity: { title: "Paper-derived query", doi: "10.1/doi" },
+    } as any,
+    async (url) => {
+      requested.push(url);
+      if (url.includes("semanticscholar")) {
+        throw new Error("HTTP 429");
+      }
+      return { status: 200, response: { message: { items: [] } } };
+    },
+  );
+  assert.equal(result.query, "Paper-derived query");
+  assert.equal(result.sources.length, 0);
+  assert.deepEqual(result.failures, [
+    { provider: "semantic-scholar", message: "Error: HTTP 429" },
+  ]);
+  assert.ok(
+    requested.every((url) =>
+      url.includes(encodeURIComponent("Paper-derived query")),
+    ),
   );
 });

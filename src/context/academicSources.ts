@@ -1,21 +1,46 @@
 import type { BackgroundSource, ValidatedPaperContext } from "./runtime";
 
+export type AcademicSourceFailure = {
+  provider: "crossref" | "semantic-scholar";
+  message: string;
+};
+
+export type AcademicSourceSearchResult = {
+  query: string;
+  sources: BackgroundSource[];
+  failures: AcademicSourceFailure[];
+};
+
+type HttpGet = (url: string) => Promise<{ status: number; response: unknown }>;
+
 export async function searchAcademicSources(
   context: ValidatedPaperContext,
-): Promise<BackgroundSource[]> {
-  const query = context.identity.doi || context.identity.title;
+  httpGet: HttpGet = requestJson,
+): Promise<AcademicSourceSearchResult> {
+  const query = context.identity.title || context.identity.doi;
   if (!query.trim())
     throw new Error(
       "Paper has neither DOI nor title for academic source lookup",
     );
-  const crossref = await searchCrossref(query);
-  const semanticScholar = await searchSemanticScholar(query);
-  return deduplicateSources([...crossref, ...semanticScholar]);
+  const results = await Promise.all([
+    collectProvider("crossref", () => searchCrossref(query, httpGet)),
+    collectProvider("semantic-scholar", () =>
+      searchSemanticScholar(query, httpGet),
+    ),
+  ]);
+  return {
+    query,
+    sources: deduplicateSources(results.flatMap((result) => result.sources)),
+    failures: results.flatMap((result) => result.failures),
+  };
 }
 
-async function searchCrossref(query: string): Promise<BackgroundSource[]> {
+async function searchCrossref(
+  query: string,
+  httpGet: HttpGet,
+): Promise<BackgroundSource[]> {
   const url = `https://api.crossref.org/works?query.bibliographic=${encodeURIComponent(query)}&rows=3&select=DOI,title,abstract,URL`;
-  const xhr = await Zotero.HTTP.request("GET", url, { responseType: "json" });
+  const xhr = await httpGet(url);
   if (xhr.status < 200 || xhr.status >= 300) {
     throw new Error(`Crossref lookup failed with HTTP ${xhr.status}`);
   }
@@ -24,13 +49,37 @@ async function searchCrossref(query: string): Promise<BackgroundSource[]> {
 
 async function searchSemanticScholar(
   query: string,
+  httpGet: HttpGet,
 ): Promise<BackgroundSource[]> {
   const url = `https://api.semanticscholar.org/graph/v1/paper/search?query=${encodeURIComponent(query)}&limit=3&fields=title,url,abstract,externalIds`;
-  const xhr = await Zotero.HTTP.request("GET", url, { responseType: "json" });
+  const xhr = await httpGet(url);
   if (xhr.status < 200 || xhr.status >= 300) {
     throw new Error(`Semantic Scholar lookup failed with HTTP ${xhr.status}`);
   }
   return parseSemanticScholarResponse(xhr.response);
+}
+
+async function requestJson(
+  url: string,
+): Promise<{ status: number; response: unknown }> {
+  return Zotero.HTTP.request("GET", url, { responseType: "json" });
+}
+
+async function collectProvider(
+  provider: AcademicSourceFailure["provider"],
+  search: () => Promise<BackgroundSource[]>,
+): Promise<{
+  sources: BackgroundSource[];
+  failures: AcademicSourceFailure[];
+}> {
+  try {
+    return { sources: await search(), failures: [] };
+  } catch (error) {
+    return {
+      sources: [],
+      failures: [{ provider, message: String(error) }],
+    };
+  }
 }
 
 export function parseCrossrefResponse(value: unknown): BackgroundSource[] {

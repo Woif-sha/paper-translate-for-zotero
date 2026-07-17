@@ -13,9 +13,12 @@ const STRING_FIELDS: PrefKeys[] = [
   "paper.temperature",
 ];
 
-export function registerPrefsWindow() {
-  Zotero.PreferencePanes.register({
+export const PREFERENCES_PANE_ID = `${config.addonRef}-preferences`;
+
+export async function registerPrefsWindow(): Promise<void> {
+  await Zotero.PreferencePanes.register({
     pluginID: config.addonID,
+    id: PREFERENCES_PANE_ID,
     src: rootURI + "chrome/content/preferences.xhtml",
     label: getString("pref-title"),
     image: `chrome://${config.addonRef}/content/icons/favicon.png`,

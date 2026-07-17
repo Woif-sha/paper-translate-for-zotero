@@ -1,4 +1,5 @@
 import type { BackgroundSource, ValidatedPaperContext } from "./runtime";
+import type { AcademicSourceFailure } from "./academicSources";
 
 export const TRANSLATION_DEVELOPER_INSTRUCTIONS = [
   "You are the isolated translation engine for Paper Translate for Zotero.",
@@ -58,15 +59,19 @@ export function buildTranslationPrompt(params: {
 export function buildResearchPrompt(
   context: ValidatedPaperContext,
   academicSources: BackgroundSource[] = [],
+  academicFailures: AcademicSourceFailure[] = [],
 ): string {
   return [
-    "Research the academic and technical background needed to translate this paper accurately.",
+    "The validated MinerU Markdown excerpts below are the primary paper context.",
+    "After reading those excerpts, research only the additional academic and technical background needed to translate them accurately.",
     "You must use web search at least once.",
     'Return JSON: {"summary":"concise background","sources":[{"title":"...","url":"https://...","snippet":"..."}]}',
     `Title: ${context.identity.title}`,
     `DOI: ${context.identity.doi || "unavailable"}`,
     "Crossref and Semantic Scholar results already retrieved by the plugin:",
     JSON.stringify(academicSources),
+    "Academic API failures recorded by the plugin (do not retry these APIs; use other reliable web sources):",
+    JSON.stringify(academicFailures),
     "Paper excerpts:",
     context.passages.map((passage) => passage.text).join("\n\n"),
   ].join("\n");

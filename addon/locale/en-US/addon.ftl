@@ -1,5 +1,13 @@
 pref-title=Paper Translate
 readerpopup-translate-label=Translate
 status-translating=Translating...
+sidebar-title =
+    .label = Paper Translate
+sidebar-tooltip =
+    .tooltiptext = Paper context translation
+sidebar-preferences =
+    .tooltiptext = Open Paper Translate settings
+sidebar-source-placeholder=Select text in the Reader or enter text to translate
+sidebar-no-attachment=Cannot resolve the active Reader attachment
 service-errorPrefix=[Request Error]
 service-paper-context=Paper Context Translation
