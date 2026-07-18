@@ -47,9 +47,15 @@ export type LegacyCodexRequest = {
   onDelta?: (delta: string, accumulated: string) => void;
   webSearch?: boolean;
   requireWebSearch?: boolean;
-  maxOutputTokens?: number;
-  maxWebSearchCalls?: number;
+  maxOutputCharacters?: number;
+  maxResponseBytes?: number;
+  maxObservedWebSearchCalls?: number;
 };
+
+type CodexStreamLimits = Pick<
+  LegacyCodexRequest,
+  "maxOutputCharacters" | "maxObservedWebSearchCalls"
+>;
 
 type AuthRefreshJob = {
   promise: Promise<CodexAuthState>;
@@ -69,7 +75,7 @@ export class CodexResponsesStreamParser {
 
   constructor(
     private readonly onDelta?: (delta: string, accumulated: string) => void,
-    private readonly maxWebSearchCalls?: number,
+    private readonly limits: CodexStreamLimits = {},
   ) {}
 
   feed(chunk: string): void {
@@ -155,7 +161,16 @@ export class CodexResponsesStreamParser {
   }
 
   private appendText(delta: string): void {
-    this.text += delta;
+    const next = this.text + delta;
+    if (
+      this.limits.maxOutputCharacters &&
+      next.length > this.limits.maxOutputCharacters
+    ) {
+      throw new Error(
+        `Codex visible output exceeded the ${this.limits.maxOutputCharacters}-character limit`,
+      );
+    }
+    this.text = next;
     this.onDelta?.(delta, this.text);
   }
 
@@ -165,9 +180,12 @@ export class CodexResponsesStreamParser {
     if (id) this.webSearchCallIDs.add(id);
     else this.anonymousWebSearchCalls += 1;
     const count = this.webSearchCallIDs.size + this.anonymousWebSearchCalls;
-    if (this.maxWebSearchCalls && count > this.maxWebSearchCalls) {
+    if (
+      this.limits.maxObservedWebSearchCalls &&
+      count > this.limits.maxObservedWebSearchCalls
+    ) {
       throw new Error(
-        `Codex web search exceeded the ${this.maxWebSearchCalls}-call limit`,
+        `Codex web search exceeded the ${this.limits.maxObservedWebSearchCalls}-call limit`,
       );
     }
   }
@@ -239,16 +257,23 @@ export async function runLegacyCodexRequest(
   if (!response.body) {
     throw new Error("Codex legacy response has no streaming body");
   }
-  const parser = new CodexResponsesStreamParser(
-    params.onDelta,
-    params.maxWebSearchCalls,
-  );
+  const parser = new CodexResponsesStreamParser(params.onDelta, {
+    maxOutputCharacters: params.maxOutputCharacters,
+    maxObservedWebSearchCalls: params.maxObservedWebSearchCalls,
+  });
   const reader = response.body.getReader();
   const decoder = new TextDecoder("utf-8", { fatal: true });
+  let responseBytes = 0;
   try {
     while (true) {
       const { done, value } = await reader.read();
       if (done) break;
+      responseBytes += value.byteLength;
+      if (params.maxResponseBytes && responseBytes > params.maxResponseBytes) {
+        throw new Error(
+          `Codex streaming response exceeded the ${params.maxResponseBytes}-byte limit`,
+        );
+      }
       parser.feed(decoder.decode(value, { stream: true }));
     }
     parser.feed(decoder.decode());
@@ -291,13 +316,7 @@ export async function testLegacyCodexConnection(params: {
 export function buildLegacyCodexPayload(
   params: Pick<
     LegacyCodexRequest,
-    | "model"
-    | "effort"
-    | "instructions"
-    | "prompt"
-    | "webSearch"
-    | "maxOutputTokens"
-    | "maxWebSearchCalls"
+    "model" | "effort" | "instructions" | "prompt" | "webSearch"
   >,
 ): Record<string, unknown> {
   const effort = normalizeEffort(params.effort);
@@ -313,12 +332,6 @@ export function buildLegacyCodexPayload(
     ],
     store: false,
     stream: true,
-    ...(params.maxOutputTokens
-      ? { max_output_tokens: params.maxOutputTokens }
-      : {}),
-    ...(params.maxWebSearchCalls
-      ? { max_tool_calls: params.maxWebSearchCalls }
-      : {}),
     ...(effort ? { reasoning: { effort } } : {}),
     ...(params.webSearch
       ? { tools: [{ type: "web_search" }], tool_choice: "auto" }
@@ -343,15 +356,16 @@ function validateRequest(params: LegacyCodexRequest): void {
   }
   if (!params.prompt.trim()) throw new Error("Codex prompt is required");
   for (const [name, value] of [
-    ["maxOutputTokens", params.maxOutputTokens],
-    ["maxWebSearchCalls", params.maxWebSearchCalls],
+    ["maxOutputCharacters", params.maxOutputCharacters],
+    ["maxResponseBytes", params.maxResponseBytes],
+    ["maxObservedWebSearchCalls", params.maxObservedWebSearchCalls],
   ] as const) {
     if (value !== undefined && (!Number.isInteger(value) || value <= 0)) {
       throw new Error(`${name} must be a positive integer`);
     }
   }
-  if (params.maxWebSearchCalls !== undefined && !params.webSearch) {
-    throw new Error("maxWebSearchCalls requires webSearch");
+  if (params.maxObservedWebSearchCalls !== undefined && !params.webSearch) {
+    throw new Error("maxObservedWebSearchCalls requires webSearch");
   }
 }
 
