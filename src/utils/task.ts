@@ -3,6 +3,7 @@ import { getString } from "./locale";
 import { getPref } from "./prefs";
 import { config } from "../../package.json";
 import Addon from "../addon";
+import { FIXED_TARGET_LANGUAGE } from "../constants";
 
 export interface TranslateTask {
   /**
@@ -109,7 +110,8 @@ export class TranslateTaskRunner {
     // @ts-ignore - Plugin instance is not typed
     const addon = Zotero[config.addonInstance] as Addon;
     const ztoolkit = addon.data.ztoolkit;
-    if (!data.langfrom || !data.langto) {
+    data.langto = FIXED_TARGET_LANGUAGE;
+    if (!data.langfrom) {
       ztoolkit.log("try auto detect language");
       const { fromLanguage, toLanguage, isInferred } = autoDetectLanguage(
         Zotero.Items.get(data.itemId || -1),
@@ -153,13 +155,11 @@ export function addTranslateTask(
   type?: TranslateTask["type"],
   service?: string,
 ) {
-  if (!raw) {
-    return;
-  }
   // @ts-ignore - Plugin instance is not typed
   const addon = Zotero[config.addonInstance] as Addon;
   type = type || "text";
   raw = normalizeTaskText(raw);
+  if (!raw) return;
 
   // Create a new task
   const newTask: TranslateTask = {
@@ -187,7 +187,7 @@ export function addTranslateTask(
 export function normalizeTaskText(raw: string): string {
   return (
     raw
-      .normalize("NFKC")
+      .normalize("NFC")
       .replace(/\r\n?/g, "\n")
       // eslint-disable-next-line no-control-regex
       .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F-\u009F]/gu, " ")
@@ -220,10 +220,7 @@ export function getTranslateTasks(count: number) {
   );
 }
 
-export function getLastTranslateTask<
-  K extends keyof TranslateTask,
-  V extends TranslateTask[K],
->(conditions?: { [key in K]: V }) {
+export function getLastTranslateTask(conditions?: Partial<TranslateTask>) {
   // @ts-ignore - Plugin instance is not typed
   const queue = (Zotero[config.addonInstance] as Addon).data.translate.queue;
   let i = queue.length - 1;
@@ -232,7 +229,11 @@ export function getLastTranslateTask<
     const notMatchConditions =
       conditions &&
       Object.keys(conditions)
-        .map((key) => currentTask[key as K] === conditions[key as K])
+        .map(
+          (key) =>
+            currentTask[key as keyof TranslateTask] ===
+            conditions[key as keyof TranslateTask],
+        )
         .includes(false);
     if (!notMatchConditions) {
       return queue[i];
@@ -242,6 +243,19 @@ export function getLastTranslateTask<
   return undefined;
 }
 
+export function dispatchTranslateTask(task: TranslateTask): void {
+  void addon.hooks.onTranslate(task).catch((error) => {
+    const reported = error instanceof Error ? error : new Error(String(error));
+    Zotero.logError(reported);
+    task.result = `${getString("service-errorPrefix")} ${getString(
+      "service-paper-context",
+    )}\n\n${reported}`;
+    task.status = "fail";
+    task.processed = true;
+    addon.hooks.onReaderPopupRefresh();
+  });
+}
+
 /**
  * Update the task with the latest language settings.
  */
@@ -249,14 +263,14 @@ export function updateTranslateTaskLang(task: TranslateTask) {
   if (!task.langfromInferred) {
     task.langfrom = getPref("sourceLanguage") as string;
   }
-  task.langto = getPref("targetLanguage") as string;
+  task.langto = FIXED_TARGET_LANGUAGE;
 }
 
 export function autoDetectLanguage(item: Zotero.Item | null) {
   if (!item) {
     return {
       fromLanguage: getPref("sourceLanguage") as string,
-      toLanguage: getPref("targetLanguage") as string,
+      toLanguage: FIXED_TARGET_LANGUAGE,
     };
   }
   // @ts-ignore - Plugin instance is not typed
@@ -264,7 +278,7 @@ export function autoDetectLanguage(item: Zotero.Item | null) {
   const ztoolkit = addon.data.ztoolkit;
   const topItem = Zotero.Items.getTopLevel([item])[0];
   const fromLanguage = getPref("sourceLanguage") as string;
-  const toLanguage = getPref("targetLanguage") as string;
+  const toLanguage = FIXED_TARGET_LANGUAGE;
   let detectedFromLanguage = fromLanguage;
   // Use cached source language
   const sourceLanguageCache =

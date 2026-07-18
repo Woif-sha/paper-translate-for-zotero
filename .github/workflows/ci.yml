@@ -30,10 +30,13 @@ jobs:
         run: npm ci
 
       - name: Run unit tests
-        run: npm test
+        run: timeout 60s npm test
 
       - name: Check types
         run: npx tsc --noEmit
+
+      - name: Check formatting
+        run: npm run format:check
 
       - name: Run ESLint
         run: npx eslint src test
@@ -43,6 +46,21 @@ jobs:
 
       - name: Build XPI
         run: npm run build
+
+      - name: Verify XPI and update manifest
+        env:
+          REPOSITORY_URL: https://github.com/${{ github.repository }}
+        run: |
+          xpi="$(find build -maxdepth 1 -name '*.xpi' -print -quit)"
+          test -n "$xpi"
+          unzip -tqq "$xpi"
+          if unzip -Z1 "$xpi" | grep -E '(^|/)(docs|output|test|tests|node_modules)(/|$)|(^|/)(auth\.json|\.env[^/]*)$'; then
+            echo "Unexpected private or development content in $xpi" >&2
+            exit 1
+          fi
+          unzip -p "$xpi" manifest.json > "$RUNNER_TEMP/xpi-manifest.json"
+          XPI_MANIFEST="$RUNNER_TEMP/xpi-manifest.json" node -e "const fs=require('fs');const pkg=require('./package.json');const value=JSON.parse(fs.readFileSync(process.env.XPI_MANIFEST,'utf8'));const zotero=value.applications?.zotero;const expected=process.env.REPOSITORY_URL+'/releases/download/release/update.json';if(value.version!==pkg.version||zotero?.id!==pkg.config.addonID||zotero?.update_url!==expected)throw new Error('Invalid XPI manifest identity, version, or update URL')"
+          XPI_NAME="$(basename "$xpi")" node -e "const fs=require('fs');const pkg=require('./package.json');const value=JSON.parse(fs.readFileSync('build/update.json','utf8'));const update=value.addons?.[pkg.config.addonID]?.updates?.[0];const expected=process.env.REPOSITORY_URL+'/releases/download/v'+pkg.version+'/'+process.env.XPI_NAME;if(update?.version!==pkg.version||update?.update_link!==expected)throw new Error('Invalid build/update.json')"
 
       - name: Upload XPI artifact
         uses: actions/upload-artifact@v7

@@ -1,18 +1,21 @@
-export function registerNotify(types: _ZoteroTypes.Notifier.Type[]) {
+let notifyID: string | null = null;
+
+export function registerNotify(types: _ZoteroTypes.Notifier.Type[]): void {
+  if (notifyID) return;
   const callback = {
     notify: async (...data: Parameters<_ZoteroTypes.Notifier.Notify>) => {
       if (!addon?.data.alive) {
-        unregisterNotify(notifyID);
+        unregisterNotify();
         return;
       }
-      addon.hooks.onNotify(...data);
+      await addon.hooks.onNotify(...data);
     },
   };
-
-  // Register the callback in Zotero as an item observer
-  const notifyID = Zotero.Notifier.registerObserver(callback, types);
+  notifyID = Zotero.Notifier.registerObserver(callback, types);
 }
 
-function unregisterNotify(notifyID: string) {
+export function unregisterNotify(): void {
+  if (!notifyID) return;
   Zotero.Notifier.unregisterObserver(notifyID);
+  notifyID = null;
 }

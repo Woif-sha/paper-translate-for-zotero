@@ -13,9 +13,10 @@
   "scripts": {
     "start": "zotero-plugin serve",
     "build": "tsc --noEmit && zotero-plugin build",
+    "format:check": "prettier --check \"src/**/*.ts\" \"test/**/*.ts\" \"typings/**/*.ts\" \".github/**/*.yml\" addon/chrome/content/preferences.xhtml addon/manifest.json \"addon/*.js\" README.md CHANGELOG.md AGENTS.md package.json zotero-plugin.config.ts eslint.config.mjs",
     "release": "zotero-plugin release",
     "lint": "prettier --write . && eslint . --fix",
-    "test": "node --test --import tsx test/**/*.test.ts",
+    "test": "node --test --test-concurrency=1 --test-timeout=60000 --import tsx test/**/*.test.ts",
     "update-deps": "npm update --save"
   },
   "repository": {

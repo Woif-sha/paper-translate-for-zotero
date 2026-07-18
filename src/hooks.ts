@@ -3,13 +3,18 @@ import { initLocale } from "./utils/locale";
 import {
   registerPrefsScripts,
   registerPrefsWindow,
+  unregisterPrefsWindow,
 } from "./modules/preferenceWindow";
 import { buildReaderPopup, updateReaderPopup } from "./modules/popup";
-import { registerNotify } from "./modules/notify";
-import { registerReaderInitializer } from "./modules/reader";
+import { registerNotify, unregisterNotify } from "./modules/notify";
+import {
+  registerReaderInitializer,
+  unregisterReaderInitializer,
+} from "./modules/reader";
 import { getPref } from "./utils/prefs";
 import {
   addTranslateTask,
+  dispatchTranslateTask,
   getLastTranslateTask,
   TranslateTask,
 } from "./utils/task";
@@ -17,7 +22,16 @@ import { setDefaultPrefSettings } from "./modules/defaultPrefs";
 import Addon from "./addon";
 import { cleanupPermanentlyDeletedPaperContexts } from "./context/runtime";
 import { cancelActiveTranslation } from "./backends/translator";
-import { registerReaderSidebar, updateReaderSidebar } from "./modules/sidebar";
+import {
+  registerReaderSidebar,
+  unregisterReaderSidebar,
+  updateReaderSidebar,
+} from "./modules/sidebar";
+import {
+  beginKnowledgeOperationsSession,
+  endKnowledgeOperationsSession,
+} from "./context/research";
+import { cancelActiveCodexAuthRefreshes } from "./codex/legacyClient";
 
 async function onStartup() {
   await Promise.all([
@@ -36,17 +50,26 @@ async function onStartup() {
   initLocale();
 
   setDefaultPrefSettings();
-
-  registerReaderInitializer();
-  registerReaderSidebar();
-  registerNotify(["item"]);
-  await registerPrefsWindow();
-
   await cleanupPermanentlyDeletedPaperContexts();
 
-  await Promise.all(
-    Zotero.getMainWindows().map((win) => onMainWindowLoad(win)),
-  );
+  try {
+    beginKnowledgeOperationsSession();
+    registerReaderInitializer();
+    registerReaderSidebar();
+    registerNotify(["item"]);
+    await registerPrefsWindow();
+    await Promise.all(
+      Zotero.getMainWindows().map((win) => onMainWindowLoad(win)),
+    );
+  } catch (error) {
+    endKnowledgeOperationsSession();
+    cancelActiveCodexAuthRefreshes();
+    unregisterNotify();
+    unregisterReaderSidebar();
+    unregisterReaderInitializer();
+    unregisterPrefsWindow();
+    throw error;
+  }
 }
 
 async function onMainWindowLoad(win: Window): Promise<void> {
@@ -59,6 +82,12 @@ async function onMainWindowUnload(win: Window): Promise<void> {
 
 async function onShutdown(): Promise<void> {
   cancelActiveTranslation();
+  endKnowledgeOperationsSession();
+  cancelActiveCodexAuthRefreshes();
+  unregisterNotify();
+  unregisterReaderSidebar();
+  unregisterReaderInitializer();
+  unregisterPrefsWindow();
   ztoolkit.unregisterAll();
   Zotero.getMainWindows().forEach((win) => {
     onMainWindowUnload(win);
@@ -120,18 +149,21 @@ function onReaderPopupShow(
   event: _ZoteroTypes.Reader.EventParams<"renderTextSelectionPopup">,
 ) {
   const selection = addon.data.translate.selectedText;
-  cancelActiveTranslation();
-  const task = getLastTranslateTask();
-  if (task?.raw === selection) {
-    buildReaderPopup(event);
+  const task = getLastTranslateTask({
+    type: "text",
+    itemId: event.reader.itemID,
+  });
+  if (task?.raw === selection && task.status === "processing") {
+    buildReaderPopup(event, task.id);
     addon.hooks.onReaderPopupRefresh();
     return;
   }
-  addTranslateTask(selection, event.reader.itemID);
-  buildReaderPopup(event);
+  cancelActiveTranslation();
+  const nextTask = addTranslateTask(selection, event.reader.itemID);
+  buildReaderPopup(event, nextTask?.id);
   addon.hooks.onReaderPopupRefresh();
-  if (getPref("enableAuto")) {
-    addon.hooks.onTranslate();
+  if (nextTask && getPref("enableAuto")) {
+    dispatchTranslateTask(nextTask);
   }
 }
 

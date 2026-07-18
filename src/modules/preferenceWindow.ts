@@ -5,14 +5,17 @@ import { testLegacyCodexConnection } from "../codex/legacyClient";
 
 const STRING_FIELDS: PrefKeys[] = [
   "sourceLanguage",
-  "targetLanguage",
   "paper.codexApiUrl",
   "paper.codexModel",
 ];
 
 export const PREFERENCES_PANE_ID = `${config.addonRef}-preferences`;
+const CONNECTION_TEST_TIMEOUT_MS = 30_000;
+let preferencesRegistered = false;
+let connectionTestController: AbortController | undefined;
 
 export async function registerPrefsWindow(): Promise<void> {
+  if (preferencesRegistered) return;
   await Zotero.PreferencePanes.register({
     pluginID: config.addonID,
     id: PREFERENCES_PANE_ID,
@@ -21,6 +24,14 @@ export async function registerPrefsWindow(): Promise<void> {
     image: `chrome://${config.addonRef}/content/icons/section-20.png`,
     helpURL: homepage,
   });
+  preferencesRegistered = true;
+}
+
+export function unregisterPrefsWindow(): void {
+  cancelConnectionTest();
+  if (!preferencesRegistered) return;
+  Zotero.PreferencePanes.unregister(PREFERENCES_PANE_ID);
+  preferencesRegistered = false;
 }
 
 export function registerPrefsScripts(window: Window) {
@@ -29,6 +40,7 @@ export function registerPrefsScripts(window: Window) {
   for (const key of STRING_FIELDS) bindTextField(doc, key);
   bindSelect(doc, "paper.codexEffort");
   bindCodexConnectionTest(doc);
+  window.addEventListener("unload", cancelConnectionTest, { once: true });
 }
 
 function bindCodexConnectionTest(doc: Document): void {
@@ -40,6 +52,13 @@ function bindCodexConnectionTest(doc: Document): void {
   ) as HTMLSpanElement;
   button.addEventListener("click", () => {
     void (async () => {
+      cancelConnectionTest();
+      const controller = new AbortController();
+      connectionTestController = controller;
+      const timeout = setTimeout(
+        () => controller.abort(),
+        CONNECTION_TEST_TIMEOUT_MS,
+      );
       button.disabled = true;
       status.hidden = false;
       status.style.color = "var(--fill-secondary, #777)";
@@ -49,17 +68,29 @@ function bindCodexConnectionTest(doc: Document): void {
           apiUrl: fieldValue(doc, "paper-codexApiUrl"),
           model: fieldValue(doc, "paper-codexModel"),
           effort: fieldValue(doc, "paper-codexEffort"),
+          signal: controller.signal,
         });
+        if (connectionTestController !== controller) return;
         status.style.color = "green";
         status.textContent = `${getString("pref-codex-success")}: ${reply}`;
       } catch (error) {
+        if (connectionTestController !== controller) return;
         status.style.color = "red";
         status.textContent = `${getString("pref-codex-failed")}: ${String(error)}`;
       } finally {
-        button.disabled = false;
+        clearTimeout(timeout);
+        if (connectionTestController === controller) {
+          connectionTestController = undefined;
+          button.disabled = false;
+        }
       }
     })();
   });
+}
+
+function cancelConnectionTest(): void {
+  connectionTestController?.abort();
+  connectionTestController = undefined;
 }
 
 function fieldValue(doc: Document, id: string): string {

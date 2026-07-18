@@ -2,9 +2,11 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   buildPaperIndex,
+  alignSelectionHyphens,
   parseAndValidateManifest,
   parseAndValidateProvenance,
   retrievePassages,
+  selectKnowledgePassages,
 } from "../src/context/paperContext";
 
 const identity = {
@@ -69,6 +71,20 @@ test("uses JavaScript UTF-16 lengths for manifest validation", () => {
       ),
     /UTF-16 length/,
   );
+  assert.throws(
+    () =>
+      parseAndValidateManifest(
+        JSON.stringify({
+          totalChars: markdown.length,
+          sections: [
+            { heading: "later", charStart: 8, charEnd: markdown.length },
+            { heading: "earlier", charStart: 0, charEnd: 8 },
+          ],
+        }),
+        markdown,
+      ),
+    /out of order or overlap/,
+  );
 });
 
 test("builds an offset-only index and retrieves relevant passages", () => {
@@ -87,6 +103,7 @@ test("builds an offset-only index and retrieves relevant passages", () => {
   const index = buildPaperIndex({
     parentItemKey: "ABCD1234",
     fullMdSha256: "abc",
+    manifestSha256: "manifest",
     markdown,
     manifest,
     updatedAt: "2026-07-17T00:00:00Z",
@@ -108,6 +125,7 @@ test("rebuilds real Markdown headings when the manifest has no sections", () => 
   const index = buildPaperIndex({
     parentItemKey: "ABCD1234",
     fullMdSha256: "sample",
+    manifestSha256: "manifest",
     markdown,
     manifest: { noSections: true, totalChars: markdown.length },
     updatedAt: "2026-07-17T00:00:00Z",
@@ -130,4 +148,69 @@ test("rebuilds real Markdown headings when the manifest has no sections", () => 
   ]) {
     assert.equal(retrievePassages(markdown, index, query)[0]?.heading, heading);
   }
+});
+
+test("samples multiple parts of an unsectioned paper within the fixed budget", () => {
+  const markdown = Array.from(
+    { length: 12 },
+    (_, index) => `paragraph ${index} ${"x".repeat(900)}`,
+  ).join("\n\n");
+  const index = buildPaperIndex({
+    parentItemKey: "ABCD1234",
+    fullMdSha256: "sample",
+    manifestSha256: "manifest",
+    markdown,
+    manifest: { noSections: true, totalChars: markdown.length },
+  });
+  const passages = selectKnowledgePassages(markdown, index);
+  assert.ok(passages.length > 1);
+  assert.ok(
+    passages.reduce((sum, passage) => sum + passage.text.length, 0) <= 8_000,
+  );
+  assert.ok(passages.at(-1)!.charStart > passages[0].charStart);
+});
+
+test("balances the bounded knowledge pass across method, evaluation, and conclusion", () => {
+  const section = (heading: string, marker: string) =>
+    `# ${heading}\n${marker} ${"evidence ".repeat(260)}`;
+  const markdown = [
+    section("Paper title", "abstract"),
+    section("I. INTRODUCTION", "introduction"),
+    "# III. PROPOSED FRAMEWORK",
+    section("A. Overview", "method"),
+    section("C. Parasitic RC Reduction Approach", "reduction"),
+    "# IV. EXPERIMENT SETUP AND RESULTS",
+    section("B. Prediction Accuracy Comparison", "evaluation"),
+    section("V. CONCLUSION", "conclusion"),
+  ].join("\n\n");
+  const index = buildPaperIndex({
+    parentItemKey: "ABCD1234",
+    fullMdSha256: "sample",
+    manifestSha256: "manifest",
+    markdown,
+    manifest: { noSections: true, totalChars: markdown.length },
+  });
+  const passages = selectKnowledgePassages(markdown, index);
+  const headings = passages.map((passage) => passage.heading).join("\n");
+  assert.match(headings, /INTRODUCTION/);
+  assert.match(headings, /Overview/);
+  assert.match(headings, /Parasitic RC Reduction/);
+  assert.match(headings, /Prediction Accuracy/);
+  assert.match(headings, /CONCLUSION/);
+  assert.ok(
+    passages.reduce((sum, passage) => sum + passage.text.length, 0) <= 8_000,
+  );
+});
+
+test("removes a line-wrap hyphen only when validated Markdown proves the word", () => {
+  const markdown = "A well-known characterization reduction method.";
+  assert.equal(
+    alignSelectionHyphens("well-known charac-terization", markdown),
+    "well-known characterization",
+  );
+  assert.equal(
+    alignSelectionHyphens("paper-specific term", markdown),
+    "paper-specific term",
+  );
+  assert.equal(alignSelectionHyphens("re-duction", markdown), "reduction");
 });

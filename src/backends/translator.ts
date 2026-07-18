@@ -1,23 +1,27 @@
 import { runLegacyCodexRequest } from "../codex/legacyClient";
-import {
-  TerminologyEntry,
-  ValidatedPaperContext,
-  persistTerminology,
-  preparePaperContext,
-} from "../context/runtime";
+import { preparePaperContext } from "../context/runtime";
 import { continuePaperLearning } from "../context/research";
 import {
-  TERMINOLOGY_DEVELOPER_INSTRUCTIONS,
   TRANSLATION_DEVELOPER_INSTRUCTIONS,
-  buildTerminologyPrompt,
   buildTranslationPrompt,
 } from "../context/prompts";
 import { getPref } from "../utils/prefs";
-let activeController: AbortController | null = null;
+import {
+  monitorReaderSidebarLearning,
+  synchronizeReaderSidebarContext,
+} from "../modules/sidebar";
+let activeTranslation:
+  | { attachmentItemID: number; controller: AbortController }
+  | undefined;
 
-export function cancelActiveTranslation(): void {
-  activeController?.abort();
-  activeController = null;
+export function cancelActiveTranslation(attachmentItemID?: number): void {
+  if (
+    attachmentItemID !== undefined &&
+    activeTranslation?.attachmentItemID !== attachmentItemID
+  )
+    return;
+  activeTranslation?.controller.abort();
+  activeTranslation = undefined;
 }
 
 export async function translateWithPaperContext(params: {
@@ -27,35 +31,37 @@ export async function translateWithPaperContext(params: {
   input: string;
   onUpdate(text: string): void;
 }): Promise<string> {
-  activeController?.abort();
+  activeTranslation?.controller.abort();
   const controller = new AbortController();
-  activeController = controller;
+  activeTranslation = {
+    attachmentItemID: params.attachmentItemID,
+    controller,
+  };
   try {
     const context = await preparePaperContext(
       params.attachmentItemID,
       params.input,
     );
+    synchronizeReaderSidebarContext(context);
+    const input = context.alignedQuery || params.input;
     const prompt = buildTranslationPrompt({
       context,
       sourceLanguage: params.sourceLanguage,
       targetLanguage: params.targetLanguage,
-      input: params.input,
+      input,
     });
     const translation = await translateWithCodex(
       prompt,
-      params.input,
+      input,
       controller.signal,
       params.onUpdate,
     );
-    void continuePaperLearning(context).catch((error) =>
-      Zotero.logError(error),
-    );
-    void updateTerminology(context, params.input, translation).catch((error) =>
-      Zotero.logError(error),
-    );
+    const learning = continuePaperLearning(context);
+    monitorReaderSidebarLearning(context, learning);
     return translation;
   } finally {
-    if (activeController === controller) activeController = null;
+    if (activeTranslation?.controller === controller)
+      activeTranslation = undefined;
   }
 }
 
@@ -82,71 +88,30 @@ export function formatTranslationLayout(
   source: string,
   translation: string,
 ): string {
-  if (!/[•●▪◦‣]/u.test(source)) return translation;
+  const sourceBulletLayout = classifySourceBullets(source);
+  if (!sourceBulletLayout.includes("list")) return translation;
+  const translationBulletCount = translation.match(/[•●▪◦‣]/gu)?.length ?? 0;
+  const hasInlineBullet = sourceBulletLayout.includes("inline");
+  if (hasInlineBullet && translationBulletCount !== sourceBulletLayout.length) {
+    return translation;
+  }
+  let bulletIndex = 0;
   return translation
-    .replace(
-      /\s*([•●▪◦‣])\s*/gu,
-      (_match, bullet, offset) => `${offset > 0 ? "\n" : ""}${bullet} `,
-    )
+    .replace(/\s*([•●▪◦‣])\s*/gu, (match, bullet: string, offset: number) => {
+      if (sourceBulletLayout[bulletIndex++] === "inline") return match;
+      return `${offset > 0 ? "\n" : ""}${bullet} `;
+    })
     .trim();
 }
 
-async function updateTerminology(
-  context: ValidatedPaperContext,
-  input: string,
-  translation: string,
-): Promise<void> {
-  const result = await runLegacyCodexRequest({
-    apiUrl: requiredPref("paper.codexApiUrl"),
-    model: requiredPref("paper.codexModel"),
-    effort: String(getPref("paper.codexEffort") || ""),
-    instructions: TERMINOLOGY_DEVELOPER_INSTRUCTIONS,
-    prompt: buildTerminologyPrompt({ context, input, translation }),
-  });
-  await persistTerminology({
-    context,
-    entries: parseTerminologyResult(result.text).filter((entry) =>
-      input.toLocaleLowerCase().includes(entry.observed.toLocaleLowerCase()),
-    ),
-  });
-}
-
-export function parseTerminologyResult(value: string): TerminologyEntry[] {
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(value);
-  } catch (error) {
-    throw new Error(
-      `Codex terminology extraction returned invalid JSON: ${String(error)}`,
-    );
+function classifySourceBullets(value: string): Array<"list" | "inline"> {
+  const layout: Array<"list" | "inline"> = [];
+  for (const match of value.matchAll(/[•●▪◦‣]/gu)) {
+    const offset = match.index;
+    const lineStart = value.lastIndexOf("\n", offset - 1) + 1;
+    layout.push(value.slice(lineStart, offset).trim() ? "inline" : "list");
   }
-  const entries = (parsed as { entries?: unknown })?.entries;
-  if (!Array.isArray(entries))
-    throw new Error("Codex terminology result has no entries array");
-  return entries.map((entry, index) => {
-    if (!entry || typeof entry !== "object")
-      throw new Error(`Terminology entry ${index} is invalid`);
-    const item = entry as Record<string, unknown>;
-    if (
-      typeof item.observed !== "string" ||
-      typeof item.canonical !== "string" ||
-      typeof item.translation !== "string" ||
-      typeof item.category !== "string" ||
-      typeof item.definition !== "string"
-    ) {
-      throw new Error(`Terminology entry ${index} is incomplete`);
-    }
-    return {
-      observed: item.observed,
-      canonical: item.canonical,
-      translation: item.translation,
-      category: item.category,
-      definition: item.definition,
-      evidence: "Selected text",
-      sourceLevel: "paper",
-      confidence: "medium",
-    };
-  });
+  return layout;
 }
 
 function requiredPref(key: string): string {

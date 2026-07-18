@@ -19,7 +19,9 @@ if (!basicTool.getGlobal("Zotero")[config.addonInstance]) {
   // @ts-ignore - Plugin instance is not typed
   Zotero[config.addonInstance] = addon;
   // Trigger addon hook for initialization
-  addon.hooks.onStartup();
+  void addon.hooks.onStartup().catch((error) => {
+    Zotero.logError(error instanceof Error ? error : new Error(String(error)));
+  });
 }
 
 function defineGlobal(name: Parameters<BasicTool["getGlobal"]>[0]): void;

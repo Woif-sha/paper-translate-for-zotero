@@ -1,4 +1,4 @@
-export const PAPER_CONTEXT_SCHEMA_VERSION = 2;
+export const PAPER_CONTEXT_SCHEMA_VERSION = 3;
 export const MINERU_PROVENANCE_KIND = "llm-for-zotero/mineru-cache-source";
 export const MINERU_PROVENANCE_VERSION = 2;
 
@@ -58,6 +58,7 @@ export type PaperIndex = {
   schemaVersion: typeof PAPER_CONTEXT_SCHEMA_VERSION;
   parentItemKey: string;
   fullMdSha256: string;
+  manifestSha256: string;
   totalChars: number;
   chunks: PaperIndexChunk[];
   updatedAt: string;
@@ -137,7 +138,8 @@ export function parseAndValidateManifest(
       `MinerU manifest totalChars ${manifest.totalChars} does not match full.md UTF-16 length ${markdown.length}`,
     );
   }
-  for (const section of manifest.sections ?? []) {
+  let previousEnd = 0;
+  for (const [index, section] of (manifest.sections ?? []).entries()) {
     if (
       !Number.isInteger(section.charStart) ||
       !Number.isInteger(section.charEnd) ||
@@ -149,6 +151,12 @@ export function parseAndValidateManifest(
         `MinerU manifest section range is invalid: ${section.charStart}-${section.charEnd}`,
       );
     }
+    if (index > 0 && section.charStart < previousEnd) {
+      throw new Error(
+        `MinerU manifest sections are out of order or overlap at ${section.charStart}-${section.charEnd}`,
+      );
+    }
+    previousEnd = section.charEnd;
   }
   return manifest;
 }
@@ -156,6 +164,7 @@ export function parseAndValidateManifest(
 export function buildPaperIndex(params: {
   parentItemKey: string;
   fullMdSha256: string;
+  manifestSha256: string;
   markdown: string;
   manifest: MineruManifest;
   updatedAt?: string;
@@ -193,6 +202,7 @@ export function buildPaperIndex(params: {
     schemaVersion: PAPER_CONTEXT_SCHEMA_VERSION,
     parentItemKey: params.parentItemKey,
     fullMdSha256: params.fullMdSha256,
+    manifestSha256: params.manifestSha256,
     totalChars: params.markdown.length,
     chunks,
     updatedAt: params.updatedAt ?? new Date().toISOString(),
@@ -245,37 +255,145 @@ export function retrievePassages(
   return [...selected.values()];
 }
 
+export function alignSelectionHyphens(
+  input: string,
+  paperMarkdown: string,
+): string {
+  return input.replace(
+    /\b([\p{L}]+)-([\p{L}]+)\b/gu,
+    (observed, prefix: string, suffix: string) => {
+      if (paperMarkdown.includes(observed)) return observed;
+      const joined = `${prefix}${suffix}`;
+      return paperMarkdown.includes(joined) ? joined : observed;
+    },
+  );
+}
+
 export function selectKnowledgePassages(
   markdown: string,
   index: PaperIndex,
-  maxChars = 14_000,
+  maxChars = 8_000,
 ): RetrievedPassage[] {
   const selected: RetrievedPassage[] = [];
-  const seenSections = new Set<number>();
+  const selectedChunks = new Set<number>();
   let totalChars = 0;
-  const priorities = [
+  const priorities: Array<RegExp | null> = [
     /abstract|摘要/i,
     /introduction|引言/i,
-    /method|framework|proposed|方法|框架/i,
-    /experiment|result|evaluation|实验|结果|评估/i,
+    /proposed|method|framework|methodology|overview|方法|框架/i,
+    /parasitic.*(?:RC)?.*reduction|RC reduction|寄生.*缩减/i,
+    /prediction accuracy|evaluation|\bresults?\b|^.*experiments?$|实验结果|评估/i,
     /conclusion|结论/i,
   ];
-  const add = (chunk: PaperIndexChunk) => {
-    if (seenSections.has(chunk.sectionIndex)) return;
-    const text = markdown.slice(chunk.charStart, chunk.charEnd);
-    if (selected.length && totalChars + text.length > maxChars) return;
-    selected.push({ ...chunk, text, score: 1 });
-    seenSections.add(chunk.sectionIndex);
+  const perPriorityBudget = Math.max(
+    320,
+    Math.floor(maxChars / priorities.length),
+  );
+  const add = (chunk: PaperIndexChunk, charBudget = perPriorityBudget) => {
+    if (selectedChunks.has(chunk.id)) return;
+    const remaining = maxChars - totalChars;
+    if (remaining <= 0) return;
+    const available = markdown.slice(chunk.charStart, chunk.charEnd);
+    const text = clipKnowledgePassage(
+      available,
+      Math.min(charBudget, remaining),
+    );
+    if (!hasSubstantivePaperText(text)) return;
+    selected.push({
+      ...chunk,
+      charEnd: chunk.charStart + text.length,
+      text,
+      score: 1,
+    });
+    selectedChunks.add(chunk.id);
     totalChars += text.length;
   };
-  for (const pattern of priorities) {
-    const chunk = index.chunks.find((candidate) =>
-      pattern.test(candidate.heading),
-    );
+  for (const [priorityIndex, pattern] of priorities.entries()) {
+    const chunk =
+      findPriorityKnowledgeChunk(
+        markdown,
+        index.chunks,
+        pattern,
+        selectedChunks,
+        priorityIndex === 0 ? undefined : index.chunks[0]?.heading,
+      ) ??
+      (priorityIndex === 0
+        ? findPriorityKnowledgeChunk(
+            markdown,
+            index.chunks,
+            null,
+            selectedChunks,
+          )
+        : undefined);
     if (chunk) add(chunk);
   }
-  for (const chunk of index.chunks) add(chunk);
+  const remaining = index.chunks.filter((chunk) => {
+    if (selectedChunks.has(chunk.id)) return false;
+    if (/^references$|参考文献/i.test(chunk.heading.trim())) return false;
+    return hasSubstantivePaperText(
+      markdown.slice(chunk.charStart, chunk.charEnd),
+    );
+  });
+  const step = Math.max(1, Math.ceil(remaining.length / 6));
+  for (
+    let remainingIndex = 0;
+    remainingIndex < remaining.length && totalChars < maxChars;
+    remainingIndex += step
+  ) {
+    add(remaining[remainingIndex], maxChars - totalChars);
+  }
   return selected.sort((a, b) => a.charStart - b.charStart);
+}
+
+function findPriorityKnowledgeChunk(
+  markdown: string,
+  chunks: PaperIndexChunk[],
+  pattern: RegExp | null,
+  excludedChunks: Set<number>,
+  excludedHeading?: string,
+): PaperIndexChunk | undefined {
+  for (const [anchorIndex, anchor] of chunks.entries()) {
+    if (excludedChunks.has(anchor.id)) continue;
+    if (excludedHeading && anchor.heading === excludedHeading) continue;
+    if (pattern && !pattern.test(anchor.heading)) continue;
+    const sectionEnd = Math.min(chunks.length, anchorIndex + 7);
+    for (
+      let chunkIndex = anchorIndex;
+      chunkIndex < sectionEnd;
+      chunkIndex += 1
+    ) {
+      const candidate = chunks[chunkIndex];
+      if (candidate.sectionIndex !== anchor.sectionIndex) break;
+      if (excludedChunks.has(candidate.id)) continue;
+      if (
+        hasSubstantivePaperText(
+          markdown.slice(candidate.charStart, candidate.charEnd),
+        )
+      ) {
+        return candidate;
+      }
+    }
+    if (!pattern) return undefined;
+  }
+  return undefined;
+}
+
+function hasSubstantivePaperText(value: string): boolean {
+  return value.replace(/^#{1,4}[^\n]*$/gm, "").trim().length >= 120;
+}
+
+function clipKnowledgePassage(value: string, maxChars: number): string {
+  if (value.length <= maxChars) return value;
+  const window = value.slice(0, maxChars);
+  const paragraphEnd = window.lastIndexOf("\n\n");
+  const lineEnd = window.lastIndexOf("\n");
+  const boundary =
+    paragraphEnd >= Math.floor(maxChars * 0.6)
+      ? paragraphEnd + 2
+      : lineEnd >= Math.floor(maxChars * 0.75)
+        ? lineEnd + 1
+        : maxChars;
+  return value.slice(0, boundary);
 }
 
 export function createTerminologyMarkdown(title: string): string {
