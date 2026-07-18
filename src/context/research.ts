@@ -51,8 +51,10 @@ const MAXIMUM_TRANSLATION_RISKS = 4;
 const MAXIMUM_OPEN_QUESTIONS = 3;
 const MAXIMUM_SEARCH_QUERIES = 3;
 const MAXIMUM_EXTERNAL_SOURCES = 3;
-const CORE_MAX_OUTPUT_TOKENS = 4_096;
-const EXTERNAL_MAX_OUTPUT_TOKENS = 2_048;
+const CORE_MAX_OUTPUT_CHARACTERS = 16_000;
+const EXTERNAL_MAX_OUTPUT_CHARACTERS = 8_000;
+const CORE_MAX_RESPONSE_BYTES = 2_000_000;
+const EXTERNAL_MAX_RESPONSE_BYTES = 1_000_000;
 const CORE_REQUEST_HANG_LIMIT_MS = 180_000;
 const EXTERNAL_REQUEST_HANG_LIMIT_MS = 60_000;
 let knowledgeSessionGeneration = 0;
@@ -228,7 +230,8 @@ async function runCoreKnowledge(
           instructions: CORE_KNOWLEDGE_DEVELOPER_INSTRUCTIONS,
           prompt: buildCoreKnowledgePrompt(context),
           signal: requestSignal,
-          maxOutputTokens: CORE_MAX_OUTPUT_TOKENS,
+          maxOutputCharacters: CORE_MAX_OUTPUT_CHARACTERS,
+          maxResponseBytes: CORE_MAX_RESPONSE_BYTES,
         }),
     });
     assertKnowledgeSession(session);
@@ -336,8 +339,9 @@ async function runExternalResearch(
           signal: requestSignal,
           webSearch: true,
           requireWebSearch: false,
-          maxOutputTokens: EXTERNAL_MAX_OUTPUT_TOKENS,
-          maxWebSearchCalls: MAXIMUM_SEARCH_QUERIES,
+          maxOutputCharacters: EXTERNAL_MAX_OUTPUT_CHARACTERS,
+          maxResponseBytes: EXTERNAL_MAX_RESPONSE_BYTES,
+          maxObservedWebSearchCalls: MAXIMUM_SEARCH_QUERIES,
         }),
     });
     assertKnowledgeSession(session);
