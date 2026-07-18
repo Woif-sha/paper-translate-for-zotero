@@ -11,6 +11,19 @@
 - Never fabricate a web result, citation, successful translation or cache record.
 - Translation readiness depends only on validated source and index files. Paper-derived background, terminology and external research run incrementally in the background and must never delay a translation request.
 - Do not add fixed Crossref, Semantic Scholar or other website gates. Generate search questions from the paper first; rank paper/official evidence above academic evidence and community explanations.
+- Knowledge preparation is finite, ordered work: one balanced paper pass, then one optional external pass. Stop after five non-empty background fields and 6–12 exact paper-evidenced terms; external work is capped at three paper-derived questions and three sources. Never recurse, broaden, or automatically retry from a render callback.
+- Never issue a per-translation terminology model request. The single core pass owns the complete 6–12 term budget. If a previous core or external pass is found half-written after restart, mark the unfinished stage terminal and do not rerun the model request.
+- Enforce the finite scope at the request boundary with explicit output-token and web-search-call limits; prompt wording alone is not a stopping mechanism.
+- Duration limits only detect and cancel a stuck request. They must end in an explicit error or warning, never a fabricated completion.
+- Preparation stages are monotonic terminal states and have a single writer per paper. A completed, warned, failed, or skipped stage must never regress or be overwritten by another task.
+- A normal context refresh must never treat a currently active `running` stage as stale. Only the single-flight knowledge scheduler may close a `running` stage after confirming that no in-memory job owns it.
+- Optional knowledge integrity failures must be persisted separately from the monotonic terminal status, displayed from `_preparation.json`, and excluded from prompts. They must never make validated source and index unavailable for translation.
+- External background text and its source record must be paired by a content hash and written as one recoverable operation; a failed second write must restore the first file.
+- Reader progress renders must be versioned by attachment and Markdown hash. Translation stream refreshes must not reread or overwrite knowledge-file progress, and an older translation task must never invalidate the active task's refresh handler.
+- Revalidate `_paper_source.json`, `_preparation.json`, and the current Markdown hash inside the paper file lock immediately before every knowledge-file write; a late request from an older hash must fail before modifying content.
+- Restart recovery must parse and validate the same five background fields and complete terminology rows used at creation time. File markers and row counts alone are not completion evidence.
+- Persist external background only when every HTTPS source URL exactly matches a URL citation from the same web-search response. A model-only summary without cited sources is invalid.
+- The persistent terminology schema is Chinese-only. Keep the target language fixed to `zh-CN` unless the storage schema is deliberately redesigned to separate languages.
 
 ## Persistent context
 

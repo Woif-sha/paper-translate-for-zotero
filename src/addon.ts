@@ -27,7 +27,6 @@ class Addon {
       maximumQueueLength: number;
       services: TranslationServices;
       cachedSourceLanguage: Record<number, string>;
-      refreshTick: string;
     };
   };
   // Lifecycle hooks
@@ -50,7 +49,6 @@ class Addon {
         maximumQueueLength: 100,
         services,
         cachedSourceLanguage: {},
-        refreshTick: "",
       },
     };
     this.hooks = hooks;

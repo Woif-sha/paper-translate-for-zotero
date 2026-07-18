@@ -1,7 +1,7 @@
 pref("__prefsPrefix__.enableAuto", true);
 pref("__prefsPrefix__.translateSource", "paper-context");
 pref("__prefsPrefix__.sourceLanguage", "en-US");
-pref("__prefsPrefix__.targetLanguage", "");
+pref("__prefsPrefix__.targetLanguage", "zh-CN");
 pref("__prefsPrefix__.enableAutoDetectLanguage", true);
 pref("__prefsPrefix__.fontSize", "12");
 pref("__prefsPrefix__.lineHeight", "1.5");

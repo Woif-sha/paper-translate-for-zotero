@@ -8,6 +8,10 @@ on:
 permissions:
   contents: write
 
+concurrency:
+  group: paper-translate-release
+  cancel-in-progress: false
+
 jobs:
   release:
     runs-on: ubuntu-latest
@@ -32,15 +36,60 @@ jobs:
 
       - name: Run checks
         run: |
-          npm test
+          timeout 60s npm test
           npx tsc --noEmit
+          npm run format:check
           npx eslint src test
           npm audit --omit=dev --audit-level=high
 
       - name: Build XPI
         run: npm run build
 
+      - name: Verify XPI and update manifest
+        env:
+          REPOSITORY_URL: https://github.com/${{ github.repository }}
+        run: |
+          xpi="$(find build -maxdepth 1 -name '*.xpi' -print -quit)"
+          test -n "$xpi"
+          unzip -tqq "$xpi"
+          if unzip -Z1 "$xpi" | grep -E '(^|/)(docs|output|test|tests|node_modules)(/|$)|(^|/)(auth\.json|\.env[^/]*)$'; then
+            echo "Unexpected private or development content in $xpi" >&2
+            exit 1
+          fi
+          unzip -p "$xpi" manifest.json > "$RUNNER_TEMP/xpi-manifest.json"
+          XPI_MANIFEST="$RUNNER_TEMP/xpi-manifest.json" node -e "const fs=require('fs');const pkg=require('./package.json');const value=JSON.parse(fs.readFileSync(process.env.XPI_MANIFEST,'utf8'));const zotero=value.applications?.zotero;const expected=process.env.REPOSITORY_URL+'/releases/download/release/update.json';if(value.version!==pkg.version||zotero?.id!==pkg.config.addonID||zotero?.update_url!==expected)throw new Error('Invalid XPI manifest identity, version, or update URL')"
+          XPI_NAME="$(basename "$xpi")" node -e "const fs=require('fs');const pkg=require('./package.json');const value=JSON.parse(fs.readFileSync('build/update.json','utf8'));const update=value.addons?.[pkg.config.addonID]?.updates?.[0];const expected=process.env.REPOSITORY_URL+'/releases/download/v'+pkg.version+'/'+process.env.XPI_NAME;if(update?.version!==pkg.version||update?.update_link!==expected)throw new Error('Invalid build/update.json')"
+
       - name: Publish GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "$GITHUB_REF_NAME" build/*.xpi --verify-tag --generate-notes --title "$GITHUB_REF_NAME"
+        run: |
+          gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1 || gh release create "$GITHUB_REF_NAME" --verify-tag --generate-notes --title "$GITHUB_REF_NAME"
+          xpi="$(find build -maxdepth 1 -name '*.xpi' -print -quit)"
+          asset_name="$(basename "$xpi")"
+          assets="$(gh release view "$GITHUB_REF_NAME" --json assets --jq '.assets[].name')"
+          if grep -Fxq "$asset_name" <<<"$assets"; then
+            mkdir -p "$RUNNER_TEMP/current-xpi"
+            gh release download "$GITHUB_REF_NAME" --pattern "$asset_name" --dir "$RUNNER_TEMP/current-xpi"
+            cmp -s "$xpi" "$RUNNER_TEMP/current-xpi/$asset_name" || { echo "Refusing to replace a different $asset_name for the same version" >&2; exit 1; }
+            echo "$asset_name is already published with identical content"
+          else
+            gh release upload "$GITHUB_REF_NAME" "$xpi"
+          fi
+
+      - name: Update Zotero auto-update manifest
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release view release >/dev/null 2>&1 || gh release create release --latest=false --title "Zotero update manifest" --notes "Stable auto-update metadata."
+          mkdir -p "$RUNNER_TEMP/current-update"
+          assets="$(gh release view release --json assets --jq '.assets[].name')"
+          if grep -Fxq update.json <<<"$assets"; then
+            gh release download release --pattern update.json --dir "$RUNNER_TEMP/current-update"
+            CURRENT_UPDATE="$RUNNER_TEMP/current-update/update.json" NEXT_UPDATE="build/update.json" node -e "const fs=require('fs');const pkg=require('./package.json');const read=p=>JSON.parse(fs.readFileSync(p,'utf8')).addons?.[pkg.config.addonID]?.updates?.[0]?.version;const parse=v=>{if(!/^\\d+\\.\\d+\\.\\d+$/.test(v||''))throw new Error('Expected a stable semantic version, received '+v);return v.split('.').map(Number)};const current=parse(read(process.env.CURRENT_UPDATE));const next=parse(read(process.env.NEXT_UPDATE));let order=0;for(let i=0;i<3;i++){if(next[i]!==current[i]){order=next[i]>current[i]?1:-1;break}}if(order<0)throw new Error('Refusing to replace update.json '+current.join('.')+' with older '+next.join('.'));if(order===0&&!fs.readFileSync(process.env.CURRENT_UPDATE).equals(fs.readFileSync(process.env.NEXT_UPDATE)))throw new Error('Refusing to replace update.json with different content for the same version')"
+            if cmp -s "$RUNNER_TEMP/current-update/update.json" build/update.json; then
+              echo "update.json is already current"
+              exit 0
+            fi
+          fi
+          gh release upload release build/update.json --clobber

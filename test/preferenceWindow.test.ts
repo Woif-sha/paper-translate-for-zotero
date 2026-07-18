@@ -36,10 +36,23 @@ test("locks the Codex authentication mode and defaults to the legacy endpoint", 
   assert.match(markup, /paper-codexApiUrl/);
   assert.doesNotMatch(markup, /Codex App Server/);
   assert.doesNotMatch(markup, /chat-completions|paper-apiKey|paper-codexPath/);
+  assert.match(
+    markup,
+    /targetLanguage[\s\S]*value="zh-CN"[\s\S]*readonly="readonly"[\s\S]*disabled="disabled"/,
+  );
   const defaults = await readFile(
     new URL("../addon/prefs.js", import.meta.url),
     "utf8",
   );
   assert.match(defaults, /paper\.codexModel", "gpt-5\.4"/);
   assert.match(defaults, /paper\.codexEffort", "medium"/);
+  assert.match(defaults, /targetLanguage", "zh-CN"/);
+  const runtimeDefaults = await readFile(
+    new URL("../src/modules/defaultPrefs.ts", import.meta.url),
+    "utf8",
+  );
+  assert.match(
+    runtimeDefaults,
+    /setPref\("paper\.codexApiUrl", DEFAULT_CODEX_API_URL\)/,
+  );
 });

@@ -1,4 +1,6 @@
 import { getPref, setPref } from "../utils/prefs";
+import { FIXED_TARGET_LANGUAGE } from "../constants";
+import { DEFAULT_CODEX_API_URL } from "../codex/legacyClient";
 import { services } from "./services";
 
 export function setDefaultPrefSettings() {
@@ -7,7 +9,6 @@ export function setDefaultPrefSettings() {
     setPref("translateSource", "paper-context");
   }
 
-  if (!getPref("targetLanguage")) {
-    setPref("targetLanguage", Zotero.locale);
-  }
+  setPref("targetLanguage", FIXED_TARGET_LANGUAGE);
+  setPref("paper.codexApiUrl", DEFAULT_CODEX_API_URL);
 }

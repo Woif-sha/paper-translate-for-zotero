@@ -38,3 +38,44 @@ test("preserves bullet boundaries while joining visual line wraps", () => {
     ].join("\n"),
   );
 });
+
+test("keeps an inline bullet operator inside a semantic line", () => {
+  assert.equal(
+    normalizeReaderSelection(
+      "The similarity is defined as a • b\nfor each pair.",
+    ),
+    "The similarity is defined as a • b for each pair.",
+  );
+});
+
+test("preserves formulas, standalone numeric content, and semantic hyphens", () => {
+  assert.equal(
+    normalizeReaderSelection(
+      "The sample size was\n128\nwith m²/σ². A well-\nknown method uses x -\ny.",
+    ),
+    "The sample size was 128 with m²/σ². A well-known method uses x - y.",
+  );
+  assert.equal(normalizeTaskText("m²/σ²"), "m²/σ²");
+});
+
+test("does not remove a semantic restrictions sentence without IEEE furniture", () => {
+  assert.equal(
+    normalizeReaderSelection(
+      "The following restrictions apply. The method remains valid.",
+    ),
+    "The following restrictions apply. The method remains valid.",
+  );
+});
+
+test("never spans semantic text while removing separated IEEE furniture", () => {
+  const selected = [
+    "979-8-3503-9354-5/24/$31.00 ©2024 IEEE",
+    "This semantic paragraph reports the measured timing improvement.",
+    "Restrictions apply.",
+  ].join("\n");
+  const normalized = normalizeReaderSelection(selected);
+  assert.match(
+    normalized,
+    /This semantic paragraph reports the measured timing improvement\./,
+  );
+});

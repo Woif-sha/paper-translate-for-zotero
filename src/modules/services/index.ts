@@ -44,9 +44,7 @@ export class TranslationServices {
   public async runTranslationTask(
     task?: TranslateTask,
     options: {
-      noCheckZoteroItemLanguage?: boolean;
       noDisplay?: boolean;
-      noCache?: boolean;
     } = {},
   ): Promise<boolean> {
     task = task || getLastTranslateTask();
@@ -58,25 +56,10 @@ export class TranslationServices {
     }
     task.result = "";
     task.status = "processing";
-    if (!options.noDisplay) addon.api.getTemporaryRefreshHandler()();
-
-    if (!options.noCache) {
-      const cached = addon.data.translate.queue.findLast(
-        (candidate) =>
-          candidate !== task &&
-          candidate.status === "success" &&
-          candidate.raw === task!.raw &&
-          candidate.itemId === task!.itemId &&
-          candidate.langfrom === task!.langfrom &&
-          candidate.langto === task!.langto,
-      );
-      if (cached) {
-        task.result = cached.result;
-        task.status = "success";
-        if (!options.noDisplay) addon.api.getTemporaryRefreshHandler()();
-        return true;
-      }
-    }
+    const refresh = options.noDisplay
+      ? undefined
+      : addon.api.getTemporaryRefreshHandler({ task });
+    refresh?.();
 
     const service = this.getServiceById(task.service);
     if (!service) {
@@ -85,7 +68,7 @@ export class TranslationServices {
       return false;
     }
     await new TranslateTaskRunner(service.translate).run(task);
-    if (!options.noDisplay) addon.api.getTemporaryRefreshHandler()();
+    refresh?.();
     return (task.status as TranslateTask["status"]) === "success";
   }
 }
