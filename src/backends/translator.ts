@@ -1,5 +1,5 @@
 import { runLegacyCodexRequest } from "../codex/legacyClient";
-import { preparePaperContext } from "../context/runtime";
+import { preparePaperContext, readPreparationRecord } from "../context/runtime";
 import { continuePaperLearning } from "../context/research";
 import {
   TRANSLATION_DEVELOPER_INSTRUCTIONS,
@@ -10,6 +10,22 @@ import {
   monitorReaderSidebarLearning,
   synchronizeReaderSidebarContext,
 } from "../modules/sidebar";
+
+type PaperLearningScheduleDependencies = {
+  readAttemptId(
+    context: Parameters<typeof readPreparationRecord>[0],
+  ): Promise<number>;
+  continueLearning(
+    context: Parameters<typeof continuePaperLearning>[0],
+  ): Promise<void>;
+  monitor(
+    context: Parameters<typeof monitorReaderSidebarLearning>[0],
+    learning: Promise<void>,
+    attemptId: number,
+  ): void;
+  report(error: unknown): void;
+};
+
 let activeTranslation:
   | { attachmentItemID: number; controller: AbortController }
   | undefined;
@@ -56,13 +72,36 @@ export async function translateWithPaperContext(params: {
       controller.signal,
       params.onUpdate,
     );
-    const learning = continuePaperLearning(context);
-    monitorReaderSidebarLearning(context, learning);
+    schedulePaperLearningAfterTranslation(context);
     return translation;
   } finally {
     if (activeTranslation?.controller === controller)
       activeTranslation = undefined;
   }
+}
+
+export function schedulePaperLearningAfterTranslation(
+  context: Parameters<typeof readPreparationRecord>[0],
+  dependencies: PaperLearningScheduleDependencies = {
+    async readAttemptId(value) {
+      return (await readPreparationRecord(value)).attemptId;
+    },
+    continueLearning: continuePaperLearning,
+    monitor: monitorReaderSidebarLearning,
+    report(error) {
+      Zotero.logError(
+        error instanceof Error ? error : new Error(String(error)),
+      );
+    },
+  },
+): void {
+  void Promise.resolve()
+    .then(async () => {
+      const attemptId = await dependencies.readAttemptId(context);
+      const learning = dependencies.continueLearning(context);
+      dependencies.monitor(context, learning, attemptId);
+    })
+    .catch((error) => dependencies.report(error));
 }
 
 async function translateWithCodex(

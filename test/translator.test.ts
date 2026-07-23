@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
-import { formatTranslationLayout } from "../src/backends/translator";
+import {
+  formatTranslationLayout,
+  schedulePaperLearningAfterTranslation,
+} from "../src/backends/translator";
 
 test("keeps translated bullet items on separate lines", () => {
   assert.equal(
@@ -53,8 +56,35 @@ test("does not await paper learning or start per-translation knowledge requests"
     new URL("../src/backends/translator.ts", import.meta.url),
     "utf8",
   );
-  assert.match(source, /const learning = continuePaperLearning\(context\)/);
-  assert.match(source, /monitorReaderSidebarLearning\(context, learning\)/);
+  assert.match(source, /schedulePaperLearningAfterTranslation\(context\)/);
+  assert.doesNotMatch(source, /await readPreparationRecord\(context\)/);
   assert.doesNotMatch(source, /updateTerminology|TERMINOLOGY_DEVELOPER/);
   assert.doesNotMatch(source, /await ensureCorePaperKnowledge/);
+});
+
+test("reports a background setup failure without blocking a completed translation", async () => {
+  const failure = new Error("preparation record is unavailable");
+  let reported: unknown;
+  const result = "已完成的译文";
+
+  assert.equal(
+    schedulePaperLearningAfterTranslation({} as any, {
+      readAttemptId: async () => {
+        throw failure;
+      },
+      continueLearning: async () => {
+        assert.fail("learning must not start without a validated attempt");
+      },
+      monitor: () => {
+        assert.fail("a failed setup must not install a monitor");
+      },
+      report(error) {
+        reported = error;
+      },
+    }),
+    undefined,
+  );
+  assert.equal(result, "已完成的译文");
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  assert.equal(reported, failure);
 });

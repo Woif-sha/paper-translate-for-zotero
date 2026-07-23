@@ -7,16 +7,21 @@ import {
   assertMinimumCoreKnowledge,
   beginKnowledgeOperationsSession,
   cancelActiveKnowledgeOperations,
+  continuePaperLearning,
   endKnowledgeOperationsSession,
   ensureCorePaperKnowledge,
   ensureExternalKnowledgeResearch,
   parseCoreKnowledgeResult,
   parseResearchResult,
   runBoundedKnowledgeOperation,
+  startPaperLearningRetry,
+  stopPaperLearning,
   validatePaperTerminology,
 } from "../src/context/research";
 import {
+  beginPreparationAttempt,
   createPreparationRecord,
+  getPreparationRetryScope,
   updatePreparationStages,
 } from "../src/context/runtime";
 
@@ -662,6 +667,452 @@ test("cancels active knowledge work during shutdown", async () => {
   cancelActiveKnowledgeOperations();
   await assert.rejects(running, /论文知识准备已取消/);
   assert.equal(aborted, true);
+});
+
+test("stops only the selected paper across Markdown hash versions", async () => {
+  const previousIO = (globalThis as any).IOUtils;
+  const paperDir = "E:\\ZoteroData\\paper-translate-for-zotero\\ABCD1234";
+  const preparationPath = `${paperDir}\\_preparation.json`;
+  const preparation = updatePreparationStages(
+    createPreparationRecord("ABCD1234", "hash-a"),
+    [
+      { id: "source", status: "complete" },
+      { id: "index", status: "complete" },
+      { id: "background", status: "complete" },
+      { id: "terminology", status: "complete" },
+      { id: "external", status: "complete" },
+    ],
+  );
+  (globalThis as any).IOUtils = {
+    async exists(path: string) {
+      return path === preparationPath;
+    },
+    async read(path: string) {
+      assert.equal(path, preparationPath);
+      return new TextEncoder().encode(JSON.stringify(preparation));
+    },
+  };
+  const firstContext = {
+    paperDir,
+    identity: { libraryID: 1, parentItemKey: "ABCD1234" },
+    fullMdSha256: "hash-a",
+  } as any;
+  let finishSecond!: () => void;
+  const first = runBoundedKnowledgeOperation({
+    label: "first paper",
+    maxDurationMs: 1_000,
+    operationKey: "1:ABCD1234:old-hash:1",
+    operation: () => new Promise(() => {}),
+  });
+  const second = runBoundedKnowledgeOperation({
+    label: "second paper",
+    maxDurationMs: 1_000,
+    operationKey: "1:EFGH5678:hash-b:1",
+    operation: () =>
+      new Promise<string>((resolve) => {
+        finishSecond = () => resolve("done");
+      }),
+  });
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  const firstStopped = assert.rejects(first, /用户已停止/);
+  try {
+    await stopPaperLearning(firstContext);
+    await firstStopped;
+    finishSecond();
+    assert.equal(await second, "done");
+  } finally {
+    (globalThis as any).IOUtils = previousIO;
+  }
+});
+
+test("closes an unowned running stage when the user stops it", async () => {
+  const previousIO = (globalThis as any).IOUtils;
+  const paperDir = "E:\\ZoteroData\\paper-translate-for-zotero\\ABCD1234";
+  const mineruCacheDir = "E:\\ZoteroData\\llm-for-zotero-mineru\\42";
+  const fullMdPath = `${mineruCacheDir}\\full.md`;
+  const sourcePath = `${paperDir}\\_paper_source.json`;
+  const preparationPath = `${paperDir}\\_preparation.json`;
+  const markdown = "# Paper\nValidated Markdown";
+  const fullMdSha256 = createHash("sha256").update(markdown).digest("hex");
+  let preparation = createPreparationRecord("ABCD1234", fullMdSha256);
+  preparation = updatePreparationStages(preparation, [
+    { id: "source", status: "complete" },
+    { id: "index", status: "complete" },
+    { id: "background", status: "running" },
+  ]);
+  const files = new Map<string, string>([
+    [
+      sourcePath,
+      JSON.stringify({
+        schemaVersion: 3,
+        libraryID: 1,
+        parentItemKey: "ABCD1234",
+        attachmentID: 42,
+        attachmentKey: "WXYZ5678",
+        mineruCacheDir,
+        fullMdPath,
+        fullMdSha256,
+      }),
+    ],
+    [preparationPath, JSON.stringify(preparation)],
+    [fullMdPath, markdown],
+  ]);
+  (globalThis as any).IOUtils = {
+    async exists(path: string) {
+      return files.has(path);
+    },
+    async read(path: string) {
+      return new TextEncoder().encode(files.get(path) || "");
+    },
+    async write(path: string, data: Uint8Array) {
+      files.set(path, new TextDecoder().decode(data));
+    },
+  };
+  const context = {
+    paperDir,
+    mineruCacheDir,
+    fullMdPath,
+    fullMdSha256,
+    identity: {
+      libraryID: 1,
+      parentItemKey: "ABCD1234",
+      attachmentID: 42,
+      attachmentKey: "WXYZ5678",
+    },
+  } as any;
+  try {
+    await stopPaperLearning(context);
+    const stopped = JSON.parse(files.get(preparationPath) || "{}");
+    const background = stopped.stages.find(
+      (stage: { id: string }) => stage.id === "background",
+    );
+    assert.equal(background.status, "error");
+    assert.equal(background.failureKind, "user-stopped");
+    assert.equal(
+      stopped.stages.find((stage: { id: string }) => stage.id === "terminology")
+        .status,
+      "skipped",
+    );
+  } finally {
+    (globalThis as any).IOUtils = previousIO;
+  }
+});
+
+test("closes a persisted retry attempt that lost its in-memory owner", async () => {
+  const previousIO = (globalThis as any).IOUtils;
+  const paperDir = "E:\\ZoteroData\\paper-translate-for-zotero\\ABCD1234";
+  const mineruCacheDir = "E:\\ZoteroData\\llm-for-zotero-mineru\\42";
+  const fullMdPath = `${mineruCacheDir}\\full.md`;
+  const sourcePath = `${paperDir}\\_paper_source.json`;
+  const preparationPath = `${paperDir}\\_preparation.json`;
+  const markdown = "# Paper\nValidated Markdown";
+  const fullMdSha256 = createHash("sha256").update(markdown).digest("hex");
+  let preparation = createPreparationRecord("ABCD1234", fullMdSha256);
+  preparation = updatePreparationStages(preparation, [
+    { id: "source", status: "complete" },
+    { id: "index", status: "complete" },
+    {
+      id: "background",
+      status: "error",
+      detail: "quota exhausted",
+      failureKind: "request",
+    },
+    { id: "terminology", status: "skipped" },
+    { id: "external", status: "skipped" },
+  ]);
+  const files = new Map<string, string>([
+    [
+      sourcePath,
+      JSON.stringify({
+        schemaVersion: 3,
+        libraryID: 1,
+        parentItemKey: "ABCD1234",
+        attachmentID: 42,
+        attachmentKey: "WXYZ5678",
+        mineruCacheDir,
+        fullMdPath,
+        fullMdSha256,
+      }),
+    ],
+    [preparationPath, JSON.stringify(preparation)],
+    [fullMdPath, markdown],
+  ]);
+  (globalThis as any).IOUtils = {
+    async exists(path: string) {
+      return files.has(path);
+    },
+    async read(path: string) {
+      return new TextEncoder().encode(files.get(path) || "");
+    },
+    async write(path: string, data: Uint8Array) {
+      files.set(path, new TextDecoder().decode(data));
+    },
+  };
+  const context = {
+    paperDir,
+    mineruCacheDir,
+    fullMdPath,
+    fullMdSha256,
+    identity: {
+      libraryID: 1,
+      parentItemKey: "ABCD1234",
+      attachmentID: 42,
+      attachmentKey: "WXYZ5678",
+    },
+  } as any;
+  try {
+    const pendingRetry = await beginPreparationAttempt(context, "core");
+    assert.equal(pendingRetry.attemptId, 2);
+    assert.equal(pendingRetry.stages[2].status, "pending");
+
+    beginKnowledgeOperationsSession();
+    await ensureCorePaperKnowledge(context);
+
+    const stopped = JSON.parse(files.get(preparationPath) || "{}");
+    const background = stopped.stages.find(
+      (stage: { id: string }) => stage.id === "background",
+    );
+    assert.equal(background.status, "error");
+    assert.equal(background.failureKind, "interrupted");
+    assert.equal(getPreparationRetryScope(stopped), "core");
+  } finally {
+    endKnowledgeOperationsSession();
+    (globalThis as any).IOUtils = previousIO;
+  }
+});
+
+test("keeps the retry handoff gated until the new attempt job is registered", async () => {
+  const previousIO = (globalThis as any).IOUtils;
+  const paperDir = "E:\\ZoteroData\\paper-translate-for-zotero\\ABCD1234";
+  const mineruCacheDir = "E:\\ZoteroData\\llm-for-zotero-mineru\\42";
+  const fullMdPath = `${mineruCacheDir}\\full.md`;
+  const sourcePath = `${paperDir}\\_paper_source.json`;
+  const preparationPath = `${paperDir}\\_preparation.json`;
+  const backgroundPath = `${paperDir}\\background.md`;
+  const sourcesPath = `${paperDir}\\background-sources.json`;
+  const markdown = "# Paper\nValidated Markdown";
+  const fullMdSha256 = createHash("sha256").update(markdown).digest("hex");
+  let preparation = createPreparationRecord("ABCD1234", fullMdSha256);
+  preparation = updatePreparationStages(preparation, [
+    { id: "source", status: "complete" },
+    { id: "index", status: "complete" },
+    { id: "background", status: "complete" },
+    { id: "terminology", status: "complete" },
+    {
+      id: "external",
+      status: "warning",
+      detail: "quota exhausted",
+      failureKind: "request",
+    },
+  ]);
+  const background = [
+    "# Background: Paper",
+    "",
+    "## 论文依据",
+    "",
+    "### 所属领域",
+    "EDA",
+    "### 研究问题",
+    "Timing variation",
+    "### 工作流",
+    "Library characterization",
+    "### 方法组件",
+    "HGAT",
+    "### 实验与评价语境",
+    "rRMSE",
+    "### 外部检索问题",
+    "- 无",
+    "",
+  ].join("\n");
+  const files = new Map<string, string>([
+    [
+      sourcePath,
+      JSON.stringify({
+        schemaVersion: 3,
+        libraryID: 1,
+        parentItemKey: "ABCD1234",
+        attachmentID: 42,
+        attachmentKey: "WXYZ5678",
+        mineruCacheDir,
+        fullMdPath,
+        fullMdSha256,
+      }),
+    ],
+    [preparationPath, JSON.stringify(preparation)],
+    [fullMdPath, markdown],
+    [backgroundPath, background],
+    [
+      sourcesPath,
+      JSON.stringify({
+        schemaVersion: 3,
+        parentItemKey: "ABCD1234",
+        fullMdSha256,
+        status: "warning",
+        researchedAt: new Date().toISOString(),
+        queries: [],
+        sources: [],
+        failures: [{ provider: "web-search", message: "quota exhausted" }],
+      }),
+    ],
+  ]);
+  let releaseReset!: () => void;
+  const resetPaused = new Promise<void>((resolve) => {
+    releaseReset = resolve;
+  });
+  let notifyResetStarted!: () => void;
+  const resetStarted = new Promise<void>((resolve) => {
+    notifyResetStarted = resolve;
+  });
+  let pauseSourcesWrite = true;
+  let reads = 0;
+  (globalThis as any).IOUtils = {
+    async exists(path: string) {
+      return files.has(path);
+    },
+    async read(path: string) {
+      reads += 1;
+      return new TextEncoder().encode(files.get(path) || "");
+    },
+    async write(path: string, data: Uint8Array) {
+      if (path === sourcesPath && pauseSourcesWrite) {
+        pauseSourcesWrite = false;
+        notifyResetStarted();
+        await resetPaused;
+      }
+      files.set(path, new TextDecoder().decode(data));
+    },
+  };
+  const context = {
+    paperDir,
+    mineruCacheDir,
+    fullMdPath,
+    fullMdSha256,
+    background,
+    identity: {
+      libraryID: 1,
+      parentItemKey: "ABCD1234",
+      attachmentID: 42,
+      attachmentKey: "WXYZ5678",
+      title: "Paper",
+    },
+  } as any;
+  beginKnowledgeOperationsSession();
+  try {
+    const retry = startPaperLearningRetry(context, "external");
+    await resetStarted;
+    const readsBeforeCompetingRefresh = reads;
+    await continuePaperLearning(context);
+    assert.equal(reads, readsBeforeCompetingRefresh);
+    releaseReset();
+
+    const { attemptId, learning } = await retry;
+    assert.equal(attemptId, 2);
+    await learning;
+    const completed = JSON.parse(files.get(preparationPath) || "{}");
+    assert.equal(completed.attemptId, 2);
+    assert.equal(
+      completed.stages.find((stage: { id: string }) => stage.id === "external")
+        .status,
+      "skipped",
+    );
+  } finally {
+    releaseReset?.();
+    endKnowledgeOperationsSession();
+    (globalThis as any).IOUtils = previousIO;
+  }
+});
+
+test("stops a paper between core completion and external registration", async () => {
+  const previousIO = (globalThis as any).IOUtils;
+  const paperDir = "E:\\ZoteroData\\paper-translate-for-zotero\\ABCD1234";
+  const mineruCacheDir = "E:\\ZoteroData\\llm-for-zotero-mineru\\42";
+  const fullMdPath = `${mineruCacheDir}\\full.md`;
+  const sourcePath = `${paperDir}\\_paper_source.json`;
+  const preparationPath = `${paperDir}\\_preparation.json`;
+  const markdown = "# Paper\nValidated Markdown";
+  const fullMdSha256 = createHash("sha256").update(markdown).digest("hex");
+  let preparation = createPreparationRecord("ABCD1234", fullMdSha256);
+  preparation = updatePreparationStages(preparation, [
+    { id: "source", status: "complete" },
+    { id: "index", status: "complete" },
+    { id: "background", status: "complete" },
+    { id: "terminology", status: "complete" },
+  ]);
+  const files = new Map<string, string>([
+    [
+      sourcePath,
+      JSON.stringify({
+        schemaVersion: 3,
+        libraryID: 1,
+        parentItemKey: "ABCD1234",
+        attachmentID: 42,
+        attachmentKey: "WXYZ5678",
+        mineruCacheDir,
+        fullMdPath,
+        fullMdSha256,
+      }),
+    ],
+    [preparationPath, JSON.stringify(preparation)],
+    [fullMdPath, markdown],
+  ]);
+  let preparationReads = 0;
+  let notifyGapReached!: () => void;
+  const gapReached = new Promise<void>((resolve) => {
+    notifyGapReached = resolve;
+  });
+  let releaseGap!: () => void;
+  const gapRelease = new Promise<void>((resolve) => {
+    releaseGap = resolve;
+  });
+  (globalThis as any).IOUtils = {
+    async exists(path: string) {
+      return files.has(path);
+    },
+    async read(path: string) {
+      if (path === preparationPath) {
+        preparationReads += 1;
+        if (preparationReads === 2) {
+          notifyGapReached();
+          await gapRelease;
+        }
+      }
+      return new TextEncoder().encode(files.get(path) || "");
+    },
+    async write(path: string, data: Uint8Array) {
+      files.set(path, new TextDecoder().decode(data));
+    },
+  };
+  const context = {
+    paperDir,
+    mineruCacheDir,
+    fullMdPath,
+    fullMdSha256,
+    identity: {
+      libraryID: 1,
+      parentItemKey: "ABCD1234",
+      attachmentID: 42,
+      attachmentKey: "WXYZ5678",
+    },
+  } as any;
+  beginKnowledgeOperationsSession();
+  try {
+    const learning = continuePaperLearning(context);
+    await gapReached;
+    await stopPaperLearning(context);
+    releaseGap();
+    await learning;
+
+    const stopped = JSON.parse(files.get(preparationPath) || "{}");
+    const external = stopped.stages.find(
+      (stage: { id: string }) => stage.id === "external",
+    );
+    assert.equal(external.status, "error");
+    assert.equal(external.failureKind, "user-stopped");
+  } finally {
+    releaseGap?.();
+    endKnowledgeOperationsSession();
+    (globalThis as any).IOUtils = previousIO;
+  }
 });
 
 test("requests the sample EDA terminology and canonical typo mapping", () => {

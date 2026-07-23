@@ -1,9 +1,18 @@
 import { config } from "../../package.json";
-import { continuePaperLearning } from "../context/research";
 import {
+  continuePaperLearning,
+  startPaperLearningRetry,
+  stopPaperLearning,
+} from "../context/research";
+import {
+  MINERU_TOKEN_URL,
+  MineruMarkdownUnavailableError,
   PreparationRecord,
+  PreparationRetryScope,
   ValidatedPaperContext,
   createPreparationRecord,
+  getPreparationRetryScope,
+  preparationHasRunningKnowledge,
   preparePaperContext,
   readPreparationRecord,
 } from "../context/runtime";
@@ -21,14 +30,22 @@ import { FluentMessageId } from "../../typings/i10n";
 
 const activeBodies = new Set<HTMLElement>();
 const preparationJobs = new Map<number, Promise<void>>();
+const preparationActionJobs = new Map<number, Promise<void>>();
 const preparationAttempts = new Set<number>();
 type ContextErrorRecord = { fullMdSha256?: string; error: Error };
+type LearningErrorRecord = ContextErrorRecord & { attemptId: number };
 const preparationErrors = new Map<number, ContextErrorRecord>();
-const learningErrors = new Map<number, ContextErrorRecord>();
+const learningErrors = new Map<number, LearningErrorRecord>();
 const learningMonitors = new Map<string, Promise<void>>();
 const paperContexts = new Map<number, ValidatedPaperContext>();
 const preparationRefreshVersions = new WeakMap<HTMLElement, number>();
 let registeredPaneKey: string | null = null;
+
+export type SidebarPreparationAction =
+  | "stop"
+  | "retry-core"
+  | "retry-external"
+  | null;
 
 export function registerReaderSidebar(): void {
   if (registeredPaneKey) return;
@@ -106,6 +123,7 @@ export function unregisterReaderSidebar(): void {
   preparationErrors.clear();
   learningErrors.clear();
   learningMonitors.clear();
+  preparationActionJobs.clear();
   paperContexts.clear();
 }
 
@@ -128,6 +146,7 @@ export function synchronizeReaderSidebarContext(
 export function monitorReaderSidebarLearning(
   context: ValidatedPaperContext,
   learning: Promise<void>,
+  attemptId: number,
 ): void {
   if (!hasActiveBodyForItem(context.identity.attachmentID)) {
     void learning.catch((error) =>
@@ -137,7 +156,7 @@ export function monitorReaderSidebarLearning(
     );
     return;
   }
-  void observePaperLearning(context, learning).catch((error) =>
+  void observePaperLearning(context, learning, attemptId).catch((error) =>
     publishPreparationError(
       context.identity.attachmentID,
       error,
@@ -209,6 +228,7 @@ function buildSidebar(body: HTMLElement): void {
   Object.assign(preparationHeader.style, {
     display: "flex",
     alignItems: "center",
+    flexWrap: "wrap",
     gap: "8px",
     marginBottom: "6px",
   });
@@ -222,17 +242,17 @@ function buildSidebar(body: HTMLElement): void {
   openDirectory.type = "button";
   openDirectory.disabled = true;
   openDirectory.textContent = getString("sidebar-open-knowledge-directory");
-  Object.assign(openDirectory.style, {
-    padding: "2px 8px",
-    border: "1px solid #77ad99",
-    borderRadius: "10px",
-    color: "#276553",
-    background: "transparent",
-    font: "inherit",
-    fontSize: "0.82em",
-    lineHeight: "1.5",
-  });
+  applyCompactActionStyle(openDirectory);
   openDirectory.addEventListener("click", () => openKnowledgeDirectory(body));
+  const preparationAction = element(
+    doc,
+    "button",
+    `${config.addonRef}-preparation-action`,
+  );
+  preparationAction.type = "button";
+  preparationAction.hidden = true;
+  applyCompactActionStyle(preparationAction);
+  preparationAction.addEventListener("click", () => runPreparationAction(body));
   const files = element(doc, "div", `${config.addonRef}-preparation-files`);
   Object.assign(files.style, {
     display: "flex",
@@ -240,8 +260,20 @@ function buildSidebar(body: HTMLElement): void {
     gap: "4px",
     fontSize: "0.9em",
   });
-  preparationHeader.append(summary, openDirectory);
-  preparation.append(preparationHeader, files);
+  const mineruReminder = element(
+    doc,
+    "div",
+    `${config.addonRef}-mineru-reminder`,
+  );
+  mineruReminder.hidden = true;
+  Object.assign(mineruReminder.style, {
+    marginTop: "7px",
+    color: "var(--fill-secondary)",
+    fontSize: "0.85em",
+    lineHeight: "1.45",
+  });
+  preparationHeader.append(summary, preparationAction, openDirectory);
+  preparation.append(preparationHeader, files, mineruReminder);
 
   const source = element(doc, "textarea", `${config.addonRef}-sidebar-source`);
   source.rows = 5;
@@ -321,6 +353,12 @@ function resetSidebarBody(body: HTMLElement): void {
   const openDirectory = body.querySelector(
     `.${config.addonRef}-open-directory`,
   ) as HTMLButtonElement | null;
+  const preparationAction = body.querySelector(
+    `.${config.addonRef}-preparation-action`,
+  ) as HTMLButtonElement | null;
+  const mineruReminder = body.querySelector(
+    `.${config.addonRef}-mineru-reminder`,
+  ) as HTMLElement | null;
   if (title) title.textContent = "";
   if (meta) meta.textContent = "";
   if (badge) badge.hidden = true;
@@ -328,6 +366,15 @@ function resetSidebarBody(body: HTMLElement): void {
   if (result) result.value = "";
   if (translate) translate.disabled = true;
   if (openDirectory) openDirectory.disabled = true;
+  if (preparationAction) {
+    preparationAction.hidden = true;
+    preparationAction.disabled = false;
+    delete preparationAction.dataset.action;
+  }
+  if (mineruReminder) {
+    mineruReminder.hidden = true;
+    mineruReminder.replaceChildren();
+  }
   if (body.querySelector(`.${config.addonRef}-preparation-files`)) {
     renderPreparation(body, createPreparationRecord("AAAAAAAA", "pending"));
   }
@@ -336,6 +383,7 @@ function resetSidebarBody(body: HTMLElement): void {
 function releaseUnusedPaperContext(itemID: number): void {
   if (!Number.isInteger(itemID) || itemID <= 0) return;
   if (preparationJobs.has(itemID)) return;
+  if (preparationActionJobs.has(itemID)) return;
   if (hasActiveBodyForItem(itemID)) return;
   paperContexts.delete(itemID);
   preparationAttempts.delete(itemID);
@@ -376,9 +424,120 @@ export function openPaperContextDirectory(
   Zotero.launchFile(context.paperDir);
 }
 
+export function getSidebarPreparationAction(
+  record: PreparationRecord,
+): SidebarPreparationAction {
+  if (preparationHasRunningKnowledge(record)) return "stop";
+  const scope = getPreparationRetryScope(record);
+  return scope === "core"
+    ? "retry-core"
+    : scope === "external"
+      ? "retry-external"
+      : null;
+}
+
+function runPreparationAction(body: HTMLElement): void {
+  const itemID = Number(body.dataset.itemId);
+  if (!Number.isInteger(itemID) || itemID <= 0) return;
+  if (preparationActionJobs.has(itemID)) return;
+  const button = body.querySelector(
+    `.${config.addonRef}-preparation-action`,
+  ) as HTMLButtonElement | null;
+  const action = button?.dataset.action;
+  if (!action) return;
+  button.disabled = true;
+  const job =
+    action === "recheck"
+      ? recheckPaperPreparation(itemID)
+      : runKnowledgePreparationAction(
+          itemID,
+          action as Exclude<SidebarPreparationAction, null>,
+        );
+  const tracked = job
+    .catch(async (error) => {
+      const context = paperContexts.get(itemID);
+      if (context) {
+        try {
+          const preparation = await readPreparationRecord(context);
+          publishLearningError(
+            itemID,
+            context.fullMdSha256,
+            preparation.attemptId,
+            error,
+          );
+        } catch (readError) {
+          publishPreparationError(
+            itemID,
+            new AggregateError(
+              [error, readError],
+              "Knowledge action failed and preparation state could not be read",
+            ),
+            context.fullMdSha256,
+          );
+        }
+      } else {
+        publishPreparationError(itemID, error);
+      }
+    })
+    .finally(() => {
+      if (preparationActionJobs.get(itemID) === tracked) {
+        preparationActionJobs.delete(itemID);
+      }
+      const cached = preparationErrors.get(itemID);
+      if (cached && !paperContexts.has(itemID)) {
+        publishPreparationError(itemID, cached.error, cached.fullMdSha256);
+      } else {
+        refreshMatchingBodies(itemID).catch((error) =>
+          publishPreparationError(
+            itemID,
+            error,
+            paperContexts.get(itemID)?.fullMdSha256,
+          ),
+        );
+      }
+      releaseUnusedPaperContext(itemID);
+    });
+  preparationActionJobs.set(itemID, tracked);
+}
+
+async function recheckPaperPreparation(itemID: number): Promise<void> {
+  await preparationJobs.get(itemID)?.catch(() => undefined);
+  preparationAttempts.delete(itemID);
+  preparationErrors.delete(itemID);
+  learningErrors.delete(itemID);
+  preparationAttempts.add(itemID);
+  const context = await preparePaperContext(itemID, "");
+  storePaperContext(context);
+  await refreshMatchingBodies(itemID);
+  const preparation = await readPreparationRecord(context);
+  monitorReaderSidebarLearning(
+    context,
+    continuePaperLearning(context),
+    preparation.attemptId,
+  );
+}
+
+async function runKnowledgePreparationAction(
+  itemID: number,
+  action: Exclude<SidebarPreparationAction, null>,
+): Promise<void> {
+  const context = paperContexts.get(itemID);
+  if (!context) throw new Error("Paper context is unavailable");
+  learningErrors.delete(itemID);
+  if (action === "stop") {
+    await stopPaperLearning(context);
+    return;
+  }
+  const scope: PreparationRetryScope =
+    action === "retry-core" ? "core" : "external";
+  const { attemptId, learning } = await startPaperLearningRetry(context, scope);
+  monitorReaderSidebarLearning(context, learning, attemptId);
+}
+
 function ensurePaperPreparation(attachmentItemID: number): void {
   if (
     preparationJobs.has(attachmentItemID) ||
+    preparationActionJobs.has(attachmentItemID) ||
     preparationAttempts.has(attachmentItemID)
   )
     return;
@@ -396,8 +555,9 @@ async function preparePaper(attachmentItemID: number): Promise<void> {
   const context = await preparePaperContext(attachmentItemID, "");
   storePaperContext(context);
   await refreshMatchingBodies(attachmentItemID);
+  const preparation = await readPreparationRecord(context);
   const learning = continuePaperLearning(context);
-  await observePaperLearning(context, learning);
+  await observePaperLearning(context, learning, preparation.attemptId);
 }
 
 function storePaperContext(context: ValidatedPaperContext): void {
@@ -411,19 +571,21 @@ function storePaperContext(context: ValidatedPaperContext): void {
 function observePaperLearning(
   context: ValidatedPaperContext,
   learning: Promise<void>,
+  attemptId: number,
 ): Promise<void> {
   const itemID = context.identity.attachmentID;
-  const key = `${itemID}:${context.fullMdSha256}`;
+  const key = getLearningMonitorKey(itemID, context.fullMdSha256, attemptId);
   const active = learningMonitors.get(key);
   if (active) {
     void learning.catch((error) =>
-      publishLearningError(itemID, context.fullMdSha256, error),
+      publishLearningError(itemID, context.fullMdSha256, attemptId, error),
     );
     return active;
   }
   const job = observePaperLearningNow(
     itemID,
     context.fullMdSha256,
+    attemptId,
     learning,
   ).finally(() => {
     if (learningMonitors.get(key) === job) learningMonitors.delete(key);
@@ -432,9 +594,18 @@ function observePaperLearning(
   return job;
 }
 
+export function getLearningMonitorKey(
+  itemID: number,
+  fullMdSha256: string,
+  attemptId: number,
+): string {
+  return `${itemID}:${fullMdSha256}:${attemptId}`;
+}
+
 async function observePaperLearningNow(
   attachmentItemID: number,
   fullMdSha256: string,
+  attemptId: number,
   learning: Promise<void>,
 ): Promise<void> {
   let finished = false;
@@ -453,11 +624,16 @@ async function observePaperLearningNow(
     await refreshMatchingBodies(attachmentItemID);
   }
   const error = await outcome;
-  if (error) publishLearningError(attachmentItemID, fullMdSha256, error);
-  else if (
-    learningErrors.get(attachmentItemID)?.fullMdSha256 === fullMdSha256
-  ) {
-    learningErrors.delete(attachmentItemID);
+  if (error) {
+    publishLearningError(attachmentItemID, fullMdSha256, attemptId, error);
+  } else {
+    const current = learningErrors.get(attachmentItemID);
+    if (
+      current?.fullMdSha256 === fullMdSha256 &&
+      current.attemptId <= attemptId
+    ) {
+      learningErrors.delete(attachmentItemID);
+    }
   }
   await refreshMatchingBodies(attachmentItemID);
 }
@@ -639,7 +815,11 @@ function renderPreparation(body: HTMLElement, record: PreparationRecord): void {
   const currentHash = paperContexts.get(
     Number(body.dataset.itemId),
   )?.fullMdSha256;
-  if (learningError && learningError.fullMdSha256 === currentHash) {
+  if (
+    learningError &&
+    learningError.fullMdSha256 === currentHash &&
+    learningError.attemptId === record.attemptId
+  ) {
     summary.textContent += ` · ${getString("sidebar-preparation-error")}: ${conciseError(learningError.error)}`;
   }
   files.replaceChildren(
@@ -655,6 +835,82 @@ function renderPreparation(body: HTMLElement, record: PreparationRecord): void {
     }),
   );
   body.dataset.paperReady = String(isTranslationReady(record));
+  renderPreparationAction(body, getSidebarPreparationAction(record));
+  hideMineruReminder(body);
+}
+
+function renderPreparationAction(
+  body: HTMLElement,
+  action: SidebarPreparationAction | "recheck",
+): void {
+  const button = body.querySelector(
+    `.${config.addonRef}-preparation-action`,
+  ) as HTMLButtonElement | null;
+  if (!button) return;
+  if (!action) {
+    button.hidden = true;
+    button.disabled = false;
+    delete button.dataset.action;
+    return;
+  }
+  const messageID: FluentMessageId =
+    action === "stop"
+      ? "sidebar-preparation-stop"
+      : action === "retry-external"
+        ? "sidebar-preparation-retry-external"
+        : action === "retry-core"
+          ? "sidebar-preparation-retry"
+          : "sidebar-preparation-recheck";
+  button.dataset.action = action;
+  button.textContent = getString(messageID);
+  button.hidden = false;
+  button.disabled = preparationActionJobs.has(Number(body.dataset.itemId));
+}
+
+function hideMineruReminder(body: HTMLElement): void {
+  const reminder = body.querySelector(
+    `.${config.addonRef}-mineru-reminder`,
+  ) as HTMLElement | null;
+  if (!reminder) return;
+  reminder.hidden = true;
+  reminder.replaceChildren();
+}
+
+function renderMineruReminder(
+  body: HTMLElement,
+  error: MineruMarkdownUnavailableError,
+): void {
+  const reminder = body.querySelector(
+    `.${config.addonRef}-mineru-reminder`,
+  ) as HTMLElement | null;
+  if (!reminder) return;
+  const doc = body.ownerDocument;
+  const text = element(doc, "span", `${config.addonRef}-mineru-reminder-text`);
+  text.textContent =
+    error.reason === "not-generated"
+      ? getString("sidebar-mineru-not-generated")
+      : getString("sidebar-mineru-incomplete", {
+          args: { files: error.missingFiles.join(", ") },
+        });
+  reminder.replaceChildren(text);
+  if (error.reason === "not-generated") {
+    const link = element(doc, "button", `${config.addonRef}-mineru-token-link`);
+    link.type = "button";
+    link.textContent = getString("sidebar-mineru-token-link");
+    Object.assign(link.style, {
+      marginInlineStart: "4px",
+      padding: "0",
+      border: "0",
+      color: "#168c68",
+      background: "transparent",
+      textDecoration: "underline",
+      font: "inherit",
+      cursor: "pointer",
+    });
+    link.addEventListener("click", () => Zotero.launchURL(MINERU_TOKEN_URL));
+    reminder.append(link);
+  }
+  reminder.hidden = false;
 }
 
 function publishPreparationError(
@@ -678,6 +934,13 @@ function publishPreparationError(
     );
     if (summary)
       summary.textContent = `${getString("sidebar-preparation-error")}: ${conciseError(reported)}`;
+    if (reported instanceof MineruMarkdownUnavailableError) {
+      renderPreparationAction(body, "recheck");
+      renderMineruReminder(body, reported);
+    } else {
+      renderPreparationAction(body, null);
+      hideMineruReminder(body);
+    }
     const openDirectory = body.querySelector(
       `.${config.addonRef}-open-directory`,
     ) as HTMLButtonElement | null;
@@ -690,6 +953,7 @@ function publishPreparationError(
 function publishLearningError(
   itemID: number,
   fullMdSha256: string,
+  attemptId: number,
   error: unknown,
 ): void {
   const reported = error instanceof Error ? error : new Error(String(error));
@@ -697,10 +961,21 @@ function publishLearningError(
     Zotero.logError(reported);
     return;
   }
-  if (learningErrors.get(itemID)?.error.message !== reported.message) {
+  const existing = learningErrors.get(itemID);
+  if (
+    existing?.fullMdSha256 === fullMdSha256 &&
+    existing.attemptId > attemptId
+  ) {
+    Zotero.logError(reported);
+    return;
+  }
+  if (
+    existing?.error.message !== reported.message ||
+    existing.attemptId !== attemptId
+  ) {
     Zotero.logError(reported);
   }
-  learningErrors.set(itemID, { fullMdSha256, error: reported });
+  learningErrors.set(itemID, { fullMdSha256, attemptId, error: reported });
   for (const body of activeBodies) {
     if (Number(body.dataset.itemId) !== itemID) continue;
     refreshPreparationSafely(body);
@@ -823,6 +1098,20 @@ function conciseStageDetail(detail?: string): string {
   return String(detail || "")
     .replace(/https?:\/\/\S+/g, "[URL omitted]")
     .slice(0, 80);
+}
+
+function applyCompactActionStyle(button: HTMLButtonElement): void {
+  Object.assign(button.style, {
+    padding: "2px 8px",
+    border: "1px solid #77ad99",
+    borderRadius: "10px",
+    color: "#276553",
+    background: "transparent",
+    font: "inherit",
+    fontSize: "0.82em",
+    lineHeight: "1.5",
+    whiteSpace: "nowrap",
+  });
 }
 
 function applyTextareaStyle(textarea: HTMLTextAreaElement): void {
