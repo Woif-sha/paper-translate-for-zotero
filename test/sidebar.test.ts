@@ -3,12 +3,19 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 import {
   formatPreparationRows,
+  getLearningMonitorKey,
+  getSidebarPreparationAction,
   getSidebarResultPlaceholderKey,
   isTranslationReady,
   openPaperContextDirectory,
   preparationRefreshIsCurrent,
   registerReaderSidebar,
 } from "../src/modules/sidebar";
+import {
+  MINERU_TOKEN_URL,
+  createPreparationRecord,
+  updatePreparationStages,
+} from "../src/context/runtime";
 
 test("does not claim to translate before a task starts", () => {
   assert.equal(getSidebarResultPlaceholderKey(), "sidebar-result-placeholder");
@@ -46,6 +53,57 @@ test("keeps translation ready when background preparation reports an error", () 
     } as any),
     true,
   );
+});
+
+test("shows only explicit stop and retry actions for knowledge attempts", () => {
+  let running = createPreparationRecord("ABCD1234", "hash");
+  running = updatePreparationStages(running, [
+    { id: "source", status: "complete" },
+    { id: "index", status: "complete" },
+    { id: "background", status: "running" },
+  ]);
+  assert.equal(getSidebarPreparationAction(running), "stop");
+
+  let failed = createPreparationRecord("ABCD1234", "hash");
+  failed = updatePreparationStages(failed, [
+    { id: "source", status: "complete" },
+    { id: "index", status: "complete" },
+    {
+      id: "background",
+      status: "error",
+      failureKind: "request",
+    },
+    { id: "terminology", status: "skipped" },
+    { id: "external", status: "skipped" },
+  ]);
+  assert.equal(getSidebarPreparationAction(failed), "retry-core");
+
+  let external = createPreparationRecord("ABCD1234", "hash");
+  external = updatePreparationStages(external, [
+    { id: "source", status: "complete" },
+    { id: "index", status: "complete" },
+    { id: "background", status: "complete" },
+    { id: "terminology", status: "complete" },
+    {
+      id: "external",
+      status: "warning",
+      failureKind: "request",
+    },
+  ]);
+  assert.equal(getSidebarPreparationAction(external), "retry-external");
+
+  let persistenceFailure = createPreparationRecord("ABCD1234", "hash");
+  persistenceFailure = updatePreparationStages(persistenceFailure, [
+    { id: "source", status: "complete" },
+    { id: "index", status: "complete" },
+    {
+      id: "background",
+      status: "error",
+      failureKind: "persistence",
+    },
+  ]);
+  assert.equal(getSidebarPreparationAction(persistenceFailure), null);
+  assert.equal(MINERU_TOKEN_URL, "https://mineru.net/apiManage/token");
 });
 
 test("rejects late preparation reads after progress or paper changes", () => {
@@ -174,6 +232,25 @@ test("keeps the directory button available after a progress read error", async (
   assert.match(
     source,
     /openDirectory\.disabled = !paperContexts\.has\(itemID\)/,
+  );
+});
+
+test("does not hold the action lock for the full retry learning task", async () => {
+  const source = await readFile(
+    new URL("../src/modules/sidebar.ts", import.meta.url),
+    "utf8",
+  );
+  assert.match(
+    source,
+    /const \{ attemptId, learning \} = await startPaperLearningRetry\(context, scope\);\s+monitorReaderSidebarLearning\(context, learning, attemptId\);/u,
+  );
+  assert.doesNotMatch(source, /await retryPaperLearning/u);
+});
+
+test("isolates learning monitors by preparation attempt", () => {
+  assert.notEqual(
+    getLearningMonitorKey(42, "hash", 1),
+    getLearningMonitorKey(42, "hash", 2),
   );
 });
 

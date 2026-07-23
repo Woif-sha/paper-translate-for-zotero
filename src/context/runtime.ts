@@ -14,6 +14,8 @@ import {
 
 const MINERU_ROOT_NAME = "llm-for-zotero-mineru";
 const CONTEXT_ROOT_NAME = "paper-translate-for-zotero";
+const PREPARATION_SCHEMA_VERSION = 2;
+export const MINERU_TOKEN_URL = "https://mineru.net/apiManage/token";
 const textEncoder = new TextEncoder();
 const textDecoder = new TextDecoder("utf-8", { fatal: true });
 
@@ -84,27 +86,83 @@ export type PreparationStageStatus =
   | "error"
   | "skipped";
 
+export type PreparationFailureKind =
+  | "request"
+  | "response"
+  | "timeout"
+  | "user-stopped"
+  | "interrupted"
+  | "persistence"
+  | "integrity"
+  | "legacy-unclassified";
+
+export type PreparationStage = {
+  id: PreparationStageId;
+  file: string;
+  required: boolean;
+  status: PreparationStageStatus;
+  startedAt?: string;
+  completedAt?: string;
+  detail?: string;
+  failureKind?: PreparationFailureKind;
+};
+
+export type PreparationAttemptTrigger =
+  | "automatic"
+  | "retry-core"
+  | "retry-external";
+
+export type PreparationIntegrityIssue = {
+  stage: "background" | "terminology" | "external";
+  detail: string;
+  detectedAt: string;
+};
+
+export type PreparationAttemptSnapshot = {
+  id: number;
+  trigger: PreparationAttemptTrigger;
+  startedAt: string;
+  closedAt: string;
+  stages: PreparationStage[];
+  integrityIssues: PreparationIntegrityIssue[];
+};
+
 export type PreparationRecord = {
   schemaVersion: typeof PAPER_CONTEXT_SCHEMA_VERSION;
+  preparationSchemaVersion: typeof PREPARATION_SCHEMA_VERSION;
   parentItemKey: string;
   fullMdSha256: string;
   overall: "preparing" | "core-ready" | "ready" | "error";
-  stages: Array<{
-    id: PreparationStageId;
-    file: string;
-    required: boolean;
-    status: PreparationStageStatus;
-    startedAt?: string;
-    completedAt?: string;
-    detail?: string;
-  }>;
-  integrityIssues?: Array<{
-    stage: "background" | "terminology" | "external";
-    detail: string;
-    detectedAt: string;
-  }>;
+  attemptId: number;
+  attemptTrigger: PreparationAttemptTrigger;
+  attemptStartedAt: string;
+  attemptHistory: PreparationAttemptSnapshot[];
+  stages: PreparationStage[];
+  integrityIssues?: PreparationIntegrityIssue[];
   updatedAt: string;
 };
+
+export type PreparationRetryScope = "core" | "external";
+
+export class MineruMarkdownUnavailableError extends Error {
+  readonly name = "MineruMarkdownUnavailableError";
+
+  constructor(
+    readonly reason: "not-generated" | "incomplete-cache",
+    readonly missingFiles: string[],
+    readonly cacheDirectory: string,
+  ) {
+    super(
+      reason === "not-generated"
+        ? "llm-for-zotero 尚未为当前附件生成 MinerU Markdown"
+        : `llm-for-zotero MinerU 缓存不完整：缺少 ${missingFiles.join("、")}`,
+    );
+  }
+}
+
+export class PreparationAttemptSupersededError extends Error {
+  readonly name = "PreparationAttemptSupersededError";
+}
 
 export type BackgroundResearchRecord = {
   schemaVersion: typeof PAPER_CONTEXT_SCHEMA_VERSION;
@@ -150,6 +208,26 @@ export async function preparePaperContext(
   const provenancePath = joinPath(mineruCacheDir, "_llm_source.json");
   const fullMdPath = joinPath(mineruCacheDir, "full.md");
   const manifestPath = joinPath(mineruCacheDir, "manifest.json");
+  const mineruFiles = [
+    { name: "_llm_source.json", path: provenancePath },
+    { name: "full.md", path: fullMdPath },
+    { name: "manifest.json", path: manifestPath },
+  ];
+  const mineruFileExists = await Promise.all(
+    mineruFiles.map((file) => io.exists(file.path)),
+  );
+  const missingMineruFiles = mineruFiles
+    .filter((_file, index) => !mineruFileExists[index])
+    .map((file) => file.name);
+  if (missingMineruFiles.length) {
+    throw new MineruMarkdownUnavailableError(
+      missingMineruFiles.length === mineruFiles.length
+        ? "not-generated"
+        : "incomplete-cache",
+      missingMineruFiles,
+      mineruCacheDir,
+    );
+  }
 
   const [provenanceRaw, markdown, manifestRaw] = await Promise.all([
     readRequiredText(io, provenancePath),
@@ -460,20 +538,10 @@ async function recoverOptionalKnowledge(params: {
       params.parentItemKey,
       params.fullMdSha256,
     );
-    const hasSources = backgroundResearch.sources.length > 0;
-    if (hasSources !== Boolean(externalSummary)) {
-      throw new Error(
-        "External background summary and source record are inconsistent",
-      );
-    }
-    if (
-      hasSources &&
-      (await sha256(externalSummary)) !== backgroundResearch.summarySha256
-    ) {
-      throw new Error(
-        "External background summary does not match its source record",
-      );
-    }
+    const hasSources = await validateExternalBackgroundPair(
+      externalSummary,
+      backgroundResearch,
+    );
     if (hasSources && background) {
       background = `${background.trimEnd()}\n\n${EXTERNAL_BACKGROUND_MARKER}\n\n${externalSummary}\n`;
     }
@@ -495,7 +563,11 @@ async function recoverOptionalKnowledge(params: {
       backgroundResearch.status === "empty"
     ) {
       preparation = updatePreparationStages(preparation, [
-        { id: "external", status: "warning" },
+        {
+          id: "external",
+          status: "warning",
+          failureKind: "legacy-unclassified",
+        },
       ]);
     } else if (stageStatusOf(preparation, "external") === "running") {
       preparation = recordOptionalKnowledgeFailure(
@@ -547,11 +619,13 @@ function recordOptionalKnowledgeFailure(
       id: PreparationStageId;
       status: PreparationStageStatus;
       detail?: string;
+      failureKind?: PreparationFailureKind;
     }> = [
       {
         id: stage,
         status: stage === "external" ? "warning" : "error",
         detail,
+        failureKind: "integrity",
       },
     ];
     if (stage === "background") {
@@ -761,6 +835,24 @@ function validateBackgroundResearchRecord(
   }
 }
 
+async function validateExternalBackgroundPair(
+  externalSummary: string,
+  record: BackgroundResearchRecord,
+): Promise<boolean> {
+  const hasSources = record.sources.length > 0;
+  if (hasSources !== Boolean(externalSummary)) {
+    throw new Error(
+      "External background summary and source record are inconsistent",
+    );
+  }
+  if (hasSources && (await sha256(externalSummary)) !== record.summarySha256) {
+    throw new Error(
+      "External background summary does not match its source record",
+    );
+  }
+  return hasSources;
+}
+
 function validateBackgroundSource(source: BackgroundSource): void {
   if (
     !source ||
@@ -803,6 +895,7 @@ function createBackgroundResearchRecord(
 
 export async function persistCoreBackground(params: {
   context: ValidatedPaperContext;
+  expectedAttempt: number;
   markdown: string;
   assertActive?: () => void;
 }): Promise<void> {
@@ -817,7 +910,7 @@ export async function persistCoreBackground(params: {
   ].join("\n");
   await withPaperFileLock(params.context.paperDir, async () => {
     const io = getIOUtils();
-    await assertCurrentPaperContext(io, params.context);
+    await assertCurrentPaperContext(io, params.context, params.expectedAttempt);
     params.assertActive?.();
     await writeText(
       io,
@@ -830,6 +923,7 @@ export async function persistCoreBackground(params: {
 
 export async function persistBackgroundResearch(params: {
   context: ValidatedPaperContext;
+  expectedAttempt: number;
   summary: string;
   queries: string[];
   sources: BackgroundSource[];
@@ -879,7 +973,7 @@ export async function persistBackgroundResearch(params: {
   );
   await withPaperFileLock(params.context.paperDir, async () => {
     const io = getIOUtils();
-    await assertCurrentPaperContext(io, params.context);
+    await assertCurrentPaperContext(io, params.context, params.expectedAttempt);
     params.assertActive?.();
     const backgroundPath = joinPath(params.context.paperDir, "background.md");
     const current = await readRequiredText(io, backgroundPath);
@@ -910,15 +1004,27 @@ export async function persistBackgroundResearch(params: {
     let sourcesWritten = false;
     let backgroundWritten = false;
     try {
-      await assertCurrentPaperContext(io, params.context);
+      await assertCurrentPaperContext(
+        io,
+        params.context,
+        params.expectedAttempt,
+      );
       params.assertActive?.();
       await writeJson(io, sourcesPath, record);
       sourcesWritten = true;
-      await assertCurrentPaperContext(io, params.context);
+      await assertCurrentPaperContext(
+        io,
+        params.context,
+        params.expectedAttempt,
+      );
       params.assertActive?.();
       await writeText(io, backgroundPath, merged);
       backgroundWritten = true;
-      await assertCurrentPaperContext(io, params.context);
+      await assertCurrentPaperContext(
+        io,
+        params.context,
+        params.expectedAttempt,
+      );
       params.assertActive?.();
     } catch (error) {
       const rollbackErrors: unknown[] = [];
@@ -950,6 +1056,7 @@ export async function persistBackgroundResearch(params: {
 
 export async function persistTerminology(params: {
   context: ValidatedPaperContext;
+  expectedAttempt: number;
   entries: TerminologyEntry[];
   assertActive?: () => void;
 }): Promise<void> {
@@ -961,11 +1068,12 @@ export async function persistTerminology(params: {
 
 async function persistTerminologyNow(params: {
   context: ValidatedPaperContext;
+  expectedAttempt: number;
   entries: TerminologyEntry[];
   assertActive?: () => void;
 }): Promise<void> {
   const io = getIOUtils();
-  await assertCurrentPaperContext(io, params.context);
+  await assertCurrentPaperContext(io, params.context, params.expectedAttempt);
   params.assertActive?.();
   const path = joinPath(params.context.paperDir, "terminology.md");
   let markdown = await readRequiredText(io, path);
@@ -998,7 +1106,7 @@ async function persistTerminologyNow(params: {
     existingSources.add(canonical.toLocaleLowerCase());
   }
   parseTerminologyRows(markdown, params.context.markdown);
-  await assertCurrentPaperContext(io, params.context);
+  await assertCurrentPaperContext(io, params.context, params.expectedAttempt);
   params.assertActive?.();
   await writeText(io, path, markdown);
   params.context.terminology = markdown;
@@ -1007,14 +1115,30 @@ async function persistTerminologyNow(params: {
 async function assertCurrentPaperContext(
   io: IOUtilsLike,
   context: ValidatedPaperContext,
-): Promise<void> {
+  expectedAttempt?: number,
+): Promise<PreparationRecord> {
   await assertCurrentPaperSource(io, context);
-  await readPreparationRecordFromPath(
+  const preparation = await readPreparationRecordFromPath(
     io,
     joinPath(context.paperDir, "_preparation.json"),
     context.identity.parentItemKey,
     context.fullMdSha256,
   );
+  if (expectedAttempt !== undefined) {
+    assertPreparationAttempt(preparation, expectedAttempt);
+  }
+  return preparation;
+}
+
+function assertPreparationAttempt(
+  preparation: PreparationRecord,
+  expectedAttempt: number,
+): void {
+  if (preparation.attemptId !== expectedAttempt) {
+    throw new PreparationAttemptSupersededError(
+      `Knowledge preparation attempt ${expectedAttempt} was superseded by attempt ${preparation.attemptId}`,
+    );
+  }
 }
 
 async function assertCurrentPaperSource(
@@ -1084,12 +1208,19 @@ export async function readCurrentPaperBackground(
 
 export async function setPreparationStage(params: {
   context: ValidatedPaperContext;
+  expectedAttempt: number;
   id: PreparationStageId;
   status: PreparationStageStatus;
   detail?: string;
+  failureKind?: PreparationFailureKind;
   assertActive?: () => void;
 }): Promise<PreparationRecord> {
-  return setPreparationStages(params.context, [params], params.assertActive);
+  return setPreparationStages(
+    params.context,
+    [params],
+    params.expectedAttempt,
+    params.assertActive,
+  );
 }
 
 export async function setPreparationStages(
@@ -1098,7 +1229,9 @@ export async function setPreparationStages(
     id: PreparationStageId;
     status: PreparationStageStatus;
     detail?: string;
+    failureKind?: PreparationFailureKind;
   }>,
+  expectedAttempt: number,
   assertActive?: () => void,
 ): Promise<PreparationRecord> {
   return withPaperFileLock(context.paperDir, async () => {
@@ -1111,15 +1244,260 @@ export async function setPreparationStages(
       context.identity.parentItemKey,
       context.fullMdSha256,
     );
+    assertPreparationAttempt(current, expectedAttempt);
     assertActive?.();
     const next = updatePreparationStages(current, updates);
     if (next !== current) {
       await assertCurrentPaperSource(io, context);
+      assertPreparationAttempt(
+        await readPreparationRecordFromPath(
+          io,
+          path,
+          context.identity.parentItemKey,
+          context.fullMdSha256,
+        ),
+        expectedAttempt,
+      );
       assertActive?.();
       await writePreparationRecord(io, path, next);
     }
     return next;
   });
+}
+
+export function preparationHasRunningKnowledge(
+  record: PreparationRecord,
+): boolean {
+  return record.stages.some(
+    (stage) =>
+      ["background", "terminology", "external"].includes(stage.id) &&
+      stage.status === "running",
+  );
+}
+
+export function getPreparationRetryScope(
+  record: PreparationRecord,
+): PreparationRetryScope | null {
+  if (preparationHasRunningKnowledge(record)) return null;
+  if ((record.integrityIssues?.length ?? 0) > 0) return null;
+  for (const id of ["background", "terminology"] as const) {
+    const stage = record.stages.find((candidate) => candidate.id === id);
+    if (
+      stage &&
+      ["warning", "error"].includes(stage.status) &&
+      preparationFailureIsRetryable(stage.failureKind)
+    ) {
+      return "core";
+    }
+  }
+  const coreComplete = (["background", "terminology"] as const).every(
+    (id) =>
+      record.stages.find((stage) => stage.id === id)?.status === "complete",
+  );
+  const external = record.stages.find((stage) => stage.id === "external");
+  if (
+    coreComplete &&
+    external &&
+    ["warning", "error"].includes(external.status) &&
+    preparationFailureIsRetryable(external.failureKind)
+  ) {
+    return "external";
+  }
+  return null;
+}
+
+function preparationFailureIsRetryable(kind?: PreparationFailureKind): boolean {
+  return (
+    kind === "request" ||
+    kind === "response" ||
+    kind === "timeout" ||
+    kind === "user-stopped" ||
+    kind === "interrupted" ||
+    kind === "legacy-unclassified"
+  );
+}
+
+export async function beginPreparationAttempt(
+  context: ValidatedPaperContext,
+  scope: PreparationRetryScope,
+): Promise<PreparationRecord> {
+  return withPaperFileLock(context.paperDir, async () => {
+    const io = getIOUtils();
+    await assertCurrentPaperSource(io, context);
+    const preparationPath = joinPath(context.paperDir, "_preparation.json");
+    const current = await readPreparationRecordFromPath(
+      io,
+      preparationPath,
+      context.identity.parentItemKey,
+      context.fullMdSha256,
+    );
+    if (preparationHasRunningKnowledge(current)) {
+      throw new Error(
+        "Cannot start a new knowledge preparation attempt while one is running",
+      );
+    }
+    const availableScope = getPreparationRetryScope(current);
+    if (availableScope !== scope) {
+      throw new Error(
+        availableScope
+          ? `Knowledge preparation requires a ${availableScope} retry`
+          : "Knowledge preparation is not retryable",
+      );
+    }
+    const now = new Date().toISOString();
+    const archived: PreparationAttemptSnapshot = {
+      id: current.attemptId,
+      trigger: current.attemptTrigger,
+      startedAt: current.attemptStartedAt,
+      closedAt: now,
+      stages: current.stages
+        .filter((stage) =>
+          ["background", "terminology", "external"].includes(stage.id),
+        )
+        .map((stage) => ({ ...stage })),
+      integrityIssues: (current.integrityIssues ?? []).map((issue) => ({
+        ...issue,
+      })),
+    };
+    let stages = current.stages.map((stage) => ({ ...stage }));
+    if (scope === "core") {
+      const background = stages.find((stage) => stage.id === "background");
+      const resetFrom = background?.status === "complete" ? 3 : 2;
+      stages = stages.map((stage, index) =>
+        index >= resetFrom ? resetPreparationStage(stage) : stage,
+      );
+    } else {
+      stages = stages.map((stage) =>
+        stage.id === "external" ? resetPreparationStage(stage) : stage,
+      );
+    }
+    const next: PreparationRecord = {
+      ...current,
+      attemptId: current.attemptId + 1,
+      attemptTrigger: scope === "core" ? "retry-core" : "retry-external",
+      attemptStartedAt: now,
+      attemptHistory: [...current.attemptHistory, archived],
+      stages,
+      integrityIssues: (current.integrityIssues ?? []).filter((issue) =>
+        scope === "core"
+          ? !["background", "terminology", "external"].includes(issue.stage)
+          : issue.stage !== "external",
+      ),
+      overall: derivePreparationOverall(stages),
+      updatedAt: now,
+    };
+    await assertCurrentPaperSource(io, context);
+    if (scope === "external") {
+      await resetExternalPreparationFiles(
+        io,
+        context,
+        preparationPath,
+        current,
+        next,
+      );
+    } else {
+      await writePreparationRecord(io, preparationPath, next);
+    }
+    return next;
+  });
+}
+
+function resetPreparationStage(stage: PreparationStage): PreparationStage {
+  return {
+    id: stage.id,
+    file: stage.file,
+    required: stage.required,
+    status: "pending",
+  };
+}
+
+async function resetExternalPreparationFiles(
+  io: IOUtilsLike,
+  context: ValidatedPaperContext,
+  preparationPath: string,
+  currentPreparation: PreparationRecord,
+  nextPreparation: PreparationRecord,
+): Promise<void> {
+  const backgroundPath = joinPath(context.paperDir, "background.md");
+  const sourcesPath = joinPath(context.paperDir, "background-sources.json");
+  const [previousBackground, previousSources, previousPreparation] =
+    await Promise.all([
+      readRequiredText(io, backgroundPath),
+      readRequiredText(io, sourcesPath),
+      readRequiredText(io, preparationPath),
+    ]);
+  const markerIndex = previousBackground.indexOf(EXTERNAL_BACKGROUND_MARKER);
+  const coreBackground = (
+    markerIndex >= 0
+      ? previousBackground.slice(0, markerIndex)
+      : previousBackground
+  ).trimEnd();
+  const externalSummary =
+    markerIndex >= 0
+      ? previousBackground
+          .slice(markerIndex + EXTERNAL_BACKGROUND_MARKER.length)
+          .trim()
+      : "";
+  validateCoreBackgroundMarkdown(coreBackground);
+  const previousResearch = JSON.parse(
+    previousSources,
+  ) as BackgroundResearchRecord;
+  validateBackgroundResearchRecord(
+    previousResearch,
+    context.identity.parentItemKey,
+    context.fullMdSha256,
+  );
+  await validateExternalBackgroundPair(externalSummary, previousResearch);
+  assertPreparationAttempt(currentPreparation, nextPreparation.attemptId - 1);
+  const pendingResearch = createBackgroundResearchRecord(
+    context.identity.parentItemKey,
+    context.fullMdSha256,
+  );
+  let sourcesWritten = false;
+  let backgroundWritten = false;
+  let preparationWritten = false;
+  try {
+    await assertCurrentPaperContext(io, context, currentPreparation.attemptId);
+    await writeJson(io, sourcesPath, pendingResearch);
+    sourcesWritten = true;
+    await assertCurrentPaperContext(io, context, currentPreparation.attemptId);
+    await writeText(io, backgroundPath, `${coreBackground}\n`);
+    backgroundWritten = true;
+    await assertCurrentPaperContext(io, context, currentPreparation.attemptId);
+    await writePreparationRecord(io, preparationPath, nextPreparation);
+    preparationWritten = true;
+    context.background = `${coreBackground}\n`;
+  } catch (error) {
+    const rollbackErrors: unknown[] = [];
+    if (preparationWritten) {
+      try {
+        await writeText(io, preparationPath, previousPreparation);
+      } catch (rollbackError) {
+        rollbackErrors.push(rollbackError);
+      }
+    }
+    if (backgroundWritten) {
+      try {
+        await writeText(io, backgroundPath, previousBackground);
+      } catch (rollbackError) {
+        rollbackErrors.push(rollbackError);
+      }
+    }
+    if (sourcesWritten) {
+      try {
+        await writeText(io, sourcesPath, previousSources);
+      } catch (rollbackError) {
+        rollbackErrors.push(rollbackError);
+      }
+    }
+    if (rollbackErrors.length) {
+      throw new AggregateError(
+        [error, ...rollbackErrors],
+        "External retry reset failed and rollback also failed",
+      );
+    }
+    throw error;
+  }
 }
 
 export async function cleanupPermanentlyDeletedPaperContexts(): Promise<void> {
@@ -1345,9 +1723,14 @@ export function createPreparationRecord(
   const required = new Set<PreparationStageId>(["source", "index"]);
   return {
     schemaVersion: PAPER_CONTEXT_SCHEMA_VERSION,
+    preparationSchemaVersion: PREPARATION_SCHEMA_VERSION,
     parentItemKey,
     fullMdSha256,
     overall: "preparing",
+    attemptId: 1,
+    attemptTrigger: "automatic",
+    attemptStartedAt: now,
+    attemptHistory: [],
     stages: (Object.keys(PREPARATION_STAGE_FILES) as PreparationStageId[]).map(
       (id) => ({
         id,
@@ -1367,9 +1750,21 @@ export function updatePreparationStages(
     id: PreparationStageId;
     status: PreparationStageStatus;
     detail?: string;
+    failureKind?: PreparationFailureKind;
   }>,
   now = new Date().toISOString(),
 ): PreparationRecord {
+  if (
+    updates.some(
+      (update) =>
+        update.failureKind !== undefined &&
+        !["warning", "error"].includes(update.status),
+    )
+  ) {
+    throw new Error(
+      "Preparation failure kind requires a warning or error stage",
+    );
+  }
   const updateMap = new Map(updates.map((update) => [update.id, update]));
   const stages = record.stages.map((stage) => ({ ...stage }));
   let changed = false;
@@ -1397,6 +1792,7 @@ export function updatePreparationStages(
     stage.detail =
       update.detail?.trim() ||
       (previousStatus === update.status ? stage.detail : undefined);
+    stage.failureKind = update.failureKind;
   }
   if (!changed) return record;
   const overall = derivePreparationOverall(stages);
@@ -1444,9 +1840,9 @@ async function readPreparationRecordFromPath(
   parentItemKey: string,
   fullMdSha256: string,
 ): Promise<PreparationRecord> {
-  const record = JSON.parse(
-    await readRequiredText(io, path),
-  ) as PreparationRecord;
+  const record = migratePreparationRecord(
+    JSON.parse(await readRequiredText(io, path)),
+  );
   const expectedIds = Object.keys(
     PREPARATION_STAGE_FILES,
   ) as PreparationStageId[];
@@ -1464,10 +1860,45 @@ async function readPreparationRecordFromPath(
     "ready",
     "error",
   ]);
+  const validFailureKinds = new Set<PreparationFailureKind>([
+    "request",
+    "response",
+    "timeout",
+    "user-stopped",
+    "interrupted",
+    "persistence",
+    "integrity",
+    "legacy-unclassified",
+  ]);
+  const validAttemptTriggers = new Set<PreparationAttemptTrigger>([
+    "automatic",
+    "retry-core",
+    "retry-external",
+  ]);
   if (
     record.schemaVersion !== PAPER_CONTEXT_SCHEMA_VERSION ||
+    record.preparationSchemaVersion !== PREPARATION_SCHEMA_VERSION ||
     record.parentItemKey !== parentItemKey ||
     record.fullMdSha256 !== fullMdSha256 ||
+    !Number.isInteger(record.attemptId) ||
+    record.attemptId <= 0 ||
+    !validAttemptTriggers.has(record.attemptTrigger) ||
+    typeof record.attemptStartedAt !== "string" ||
+    Number.isNaN(Date.parse(record.attemptStartedAt)) ||
+    !Array.isArray(record.attemptHistory) ||
+    record.attemptHistory.length !== record.attemptId - 1 ||
+    record.attemptHistory.some(
+      (attempt, index) =>
+        !attempt ||
+        attempt.id !== index + 1 ||
+        !validAttemptTriggers.has(attempt.trigger) ||
+        typeof attempt.startedAt !== "string" ||
+        Number.isNaN(Date.parse(attempt.startedAt)) ||
+        typeof attempt.closedAt !== "string" ||
+        Number.isNaN(Date.parse(attempt.closedAt)) ||
+        !validHistoricalStages(attempt.stages, validFailureKinds) ||
+        !validIntegrityIssues(attempt.integrityIssues),
+    ) ||
     !Array.isArray(record.stages) ||
     record.stages.length !== expectedIds.length ||
     record.stages.some((stage, index) => {
@@ -1481,7 +1912,10 @@ async function readPreparationRecordFromPath(
           typeof stage.startedAt !== "string") ||
         (stage.completedAt !== undefined &&
           typeof stage.completedAt !== "string") ||
-        (stage.detail !== undefined && typeof stage.detail !== "string")
+        (stage.detail !== undefined && typeof stage.detail !== "string") ||
+        (stage.failureKind !== undefined &&
+          (!validFailureKinds.has(stage.failureKind) ||
+            !["warning", "error"].includes(stage.status)))
       );
     }) ||
     record.stages.some(
@@ -1490,19 +1924,7 @@ async function readPreparationRecordFromPath(
         (stage.status === "running" || stage.status === "complete") &&
         record.stages[index - 1]?.status !== "complete",
     ) ||
-    (record.integrityIssues !== undefined &&
-      (!Array.isArray(record.integrityIssues) ||
-        record.integrityIssues.some(
-          (issue) =>
-            !issue ||
-            !["background", "terminology", "external"].includes(issue.stage) ||
-            typeof issue.detail !== "string" ||
-            !issue.detail.trim() ||
-            typeof issue.detectedAt !== "string" ||
-            Number.isNaN(Date.parse(issue.detectedAt)),
-        ) ||
-        new Set(record.integrityIssues.map((issue) => issue.stage)).size !==
-          record.integrityIssues.length)) ||
+    !validIntegrityIssues(record.integrityIssues ?? []) ||
     !validOverall.has(record.overall) ||
     typeof record.updatedAt !== "string" ||
     Number.isNaN(Date.parse(record.updatedAt))
@@ -1513,6 +1935,107 @@ async function readPreparationRecordFromPath(
     throw new Error("Preparation record overall status is inconsistent");
   }
   return { ...record, integrityIssues: record.integrityIssues ?? [] };
+}
+
+function migratePreparationRecord(value: unknown): PreparationRecord {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error("Preparation record does not match the paper context");
+  }
+  const record = value as Partial<PreparationRecord>;
+  if (record.preparationSchemaVersion === PREPARATION_SCHEMA_VERSION) {
+    return record as PreparationRecord;
+  }
+  if (record.preparationSchemaVersion !== undefined) {
+    throw new Error("Preparation record does not match the paper context");
+  }
+  const integrityIssues = Array.isArray(record.integrityIssues)
+    ? record.integrityIssues
+    : [];
+  const stages = Array.isArray(record.stages)
+    ? record.stages.map((stage) => {
+        const migrated = { ...stage };
+        if (
+          !migrated.failureKind &&
+          (migrated.status === "error" ||
+            (migrated.id === "external" && migrated.status === "warning")) &&
+          !integrityIssues.some((issue) => issue.stage === migrated.id)
+        ) {
+          migrated.failureKind = "legacy-unclassified";
+        }
+        return migrated;
+      })
+    : [];
+  return {
+    ...(record as PreparationRecord),
+    preparationSchemaVersion: PREPARATION_SCHEMA_VERSION,
+    attemptId: record.attemptId ?? 1,
+    attemptTrigger: record.attemptTrigger ?? "automatic",
+    attemptStartedAt:
+      record.attemptStartedAt ??
+      (typeof record.updatedAt === "string"
+        ? record.updatedAt
+        : new Date(0).toISOString()),
+    attemptHistory: record.attemptHistory ?? [],
+    stages,
+    integrityIssues,
+  };
+}
+
+function validHistoricalStages(
+  stages: PreparationStage[],
+  validFailureKinds: Set<PreparationFailureKind>,
+): boolean {
+  const expectedIds: PreparationStageId[] = [
+    "background",
+    "terminology",
+    "external",
+  ];
+  const validHistoricalStatuses = new Set<PreparationStageStatus>([
+    "pending",
+    "complete",
+    "warning",
+    "error",
+    "skipped",
+  ]);
+  return (
+    Array.isArray(stages) &&
+    stages.length === expectedIds.length &&
+    stages.every((stage, index) => {
+      const id = expectedIds[index];
+      return (
+        stage.id === id &&
+        stage.file === PREPARATION_STAGE_FILES[id] &&
+        stage.required === false &&
+        validHistoricalStatuses.has(stage.status) &&
+        (stage.startedAt === undefined ||
+          (typeof stage.startedAt === "string" &&
+            !Number.isNaN(Date.parse(stage.startedAt)))) &&
+        (stage.completedAt === undefined ||
+          (typeof stage.completedAt === "string" &&
+            !Number.isNaN(Date.parse(stage.completedAt)))) &&
+        (stage.detail === undefined || typeof stage.detail === "string") &&
+        (stage.failureKind === undefined ||
+          (validFailureKinds.has(stage.failureKind) &&
+            ["warning", "error"].includes(stage.status)))
+      );
+    })
+  );
+}
+
+function validIntegrityIssues(issues: PreparationIntegrityIssue[]): boolean {
+  return (
+    Array.isArray(issues) &&
+    issues.every(
+      (issue) =>
+        issue &&
+        ["background", "terminology", "external"].includes(issue.stage) &&
+        typeof issue.detail === "string" &&
+        Boolean(issue.detail.trim()) &&
+        typeof issue.detectedAt === "string" &&
+        !Number.isNaN(Date.parse(issue.detectedAt)),
+    ) &&
+    new Set(issues.map((issue) => issue.stage)).size === issues.length
+  );
 }
 
 async function writePreparationRecord(

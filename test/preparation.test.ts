@@ -2,9 +2,13 @@ import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import test from "node:test";
 import {
+  MineruMarkdownUnavailableError,
+  PreparationAttemptSupersededError,
+  beginPreparationAttempt,
   createPreparationRecord,
   countTerminologyEntries,
   migrateTerminologyMarkdown,
+  getPreparationRetryScope,
   paperIndexMatches,
   persistBackgroundResearch,
   persistCoreBackground,
@@ -146,6 +150,188 @@ test("keeps completed stages monotonic and enforces stage order", () => {
   );
 });
 
+test("classifies absent and partial MinerU caches without exposing paths", async () => {
+  const previousIO = (globalThis as any).IOUtils;
+  const previousZotero = (globalThis as any).Zotero;
+  const dataDir = "E:\\ZoteroData";
+  const cacheDir = `${dataDir}\\llm-for-zotero-mineru\\42`;
+  const attachment = {
+    id: 42,
+    key: "WXYZ5678",
+    parentItemID: 7,
+    isAttachment: () => true,
+  };
+  const parent = {
+    id: 7,
+    key: "ABCD1234",
+    libraryID: 1,
+    isAttachment: () => false,
+    getField: () => "",
+  };
+  (globalThis as any).Zotero = {
+    DataDirectory: { dir: dataDir },
+    Items: {
+      get(id: number) {
+        return id === 42 ? attachment : parent;
+      },
+    },
+  };
+  try {
+    (globalThis as any).IOUtils = {
+      async exists() {
+        return false;
+      },
+    };
+    await assert.rejects(preparePaperContext(42, ""), (error: unknown) => {
+      assert.ok(error instanceof MineruMarkdownUnavailableError);
+      assert.equal(error.reason, "not-generated");
+      assert.deepEqual(error.missingFiles, [
+        "_llm_source.json",
+        "full.md",
+        "manifest.json",
+      ]);
+      assert.doesNotMatch(error.message, /E:\\/);
+      return true;
+    });
+
+    (globalThis as any).IOUtils = {
+      async exists(path: string) {
+        return path === `${cacheDir}\\_llm_source.json`;
+      },
+    };
+    await assert.rejects(preparePaperContext(42, ""), (error: unknown) => {
+      assert.ok(error instanceof MineruMarkdownUnavailableError);
+      assert.equal(error.reason, "incomplete-cache");
+      assert.deepEqual(error.missingFiles, ["full.md", "manifest.json"]);
+      assert.doesNotMatch(error.message, /E:\\/);
+      return true;
+    });
+  } finally {
+    (globalThis as any).IOUtils = previousIO;
+    (globalThis as any).Zotero = previousZotero;
+  }
+});
+
+test("archives a failed attempt and fences late knowledge writes", async () => {
+  const previousIO = (globalThis as any).IOUtils;
+  const paperDir = "E:\\ZoteroData\\paper-translate-for-zotero\\ABCD1234";
+  const mineruCacheDir = "E:\\ZoteroData\\llm-for-zotero-mineru\\42";
+  const fullMdPath = `${mineruCacheDir}\\full.md`;
+  const sourcePath = `${paperDir}\\_paper_source.json`;
+  const preparationPath = `${paperDir}\\_preparation.json`;
+  const markdown = "# Paper\nValidated Markdown";
+  const fullMdSha256 = createHash("sha256").update(markdown).digest("hex");
+  let preparation = createPreparationRecord(
+    "ABCD1234",
+    fullMdSha256,
+    "2026-07-20T00:00:00.000Z",
+  );
+  preparation = updatePreparationStages(preparation, [
+    { id: "source", status: "complete" },
+    { id: "index", status: "complete" },
+    {
+      id: "background",
+      status: "error",
+      detail: "Codex quota exhausted",
+      failureKind: "request",
+    },
+    {
+      id: "terminology",
+      status: "skipped",
+      detail: "论文背景阶段未完成",
+    },
+    {
+      id: "external",
+      status: "skipped",
+      detail: "核心知识阶段未完成",
+    },
+  ]);
+  const files = new Map<string, string>([
+    [
+      sourcePath,
+      JSON.stringify({
+        schemaVersion: 3,
+        libraryID: 1,
+        parentItemKey: "ABCD1234",
+        attachmentID: 42,
+        attachmentKey: "WXYZ5678",
+        title: "Paper",
+        doi: "",
+        mineruCacheDir,
+        fullMdPath,
+        fullMdSha256,
+        updatedAt: "2026-07-20T00:00:00.000Z",
+      }),
+    ],
+    [preparationPath, JSON.stringify(preparation)],
+    [fullMdPath, markdown],
+  ]);
+  (globalThis as any).IOUtils = {
+    async exists(path: string) {
+      return files.has(path);
+    },
+    async read(path: string) {
+      return new TextEncoder().encode(files.get(path) || "");
+    },
+    async write(path: string, data: Uint8Array) {
+      files.set(path, new TextDecoder().decode(data));
+    },
+  };
+  const context = {
+    paperDir,
+    mineruCacheDir,
+    fullMdPath,
+    fullMdSha256,
+    identity: {
+      libraryID: 1,
+      parentItemKey: "ABCD1234",
+      attachmentID: 42,
+      attachmentKey: "WXYZ5678",
+    },
+  } as any;
+  try {
+    assert.equal(getPreparationRetryScope(preparation), "core");
+    const retried = await beginPreparationAttempt(context, "core");
+    assert.equal(retried.attemptId, 2);
+    assert.equal(retried.attemptHistory.length, 1);
+    assert.equal(retried.attemptHistory[0].stages[0].status, "error");
+    assert.equal(
+      retried.stages.find((stage) => stage.id === "background")?.status,
+      "pending",
+    );
+    assert.equal(
+      retried.stages.find((stage) => stage.id === "source")?.status,
+      "complete",
+    );
+    const corruptedHistory = structuredClone(retried) as any;
+    corruptedHistory.attemptHistory[0].stages[0].status = "corrupt-status";
+    files.set(preparationPath, JSON.stringify(corruptedHistory));
+    await assert.rejects(readPreparationRecord(context), /does not match/);
+    files.set(preparationPath, JSON.stringify(retried));
+    await assert.rejects(
+      setPreparationStage({
+        context,
+        expectedAttempt: 1,
+        id: "background",
+        status: "running",
+      }),
+      PreparationAttemptSupersededError,
+    );
+    const running = await setPreparationStage({
+      context,
+      expectedAttempt: 2,
+      id: "background",
+      status: "running",
+    });
+    assert.equal(
+      running.stages.find((stage) => stage.id === "background")?.status,
+      "running",
+    );
+  } finally {
+    (globalThis as any).IOUtils = previousIO;
+  }
+});
+
 test("rejects damaged persisted indexes instead of marking them complete", () => {
   const markdown = "# Method\nA timing arc is characterized.";
   const expected = buildPaperIndex({
@@ -262,6 +448,7 @@ test("refuses a late knowledge write after the full Markdown hash changes", asyn
             attachmentKey: "WXYZ5678",
           },
         } as any,
+        expectedAttempt: 1,
         markdown: [
           "## 论文依据",
           "### 所属领域",
@@ -339,6 +526,7 @@ test("refuses a knowledge write when the physical MinerU Markdown changed", asyn
             attachmentKey: "WXYZ5678",
           },
         } as any,
+        expectedAttempt: 1,
         markdown: validCoreBackground(),
       }),
       /MinerU full\.md changed/,
@@ -412,8 +600,18 @@ test("serializes concurrent preparation writes without losing completion", async
   } as any;
   try {
     await Promise.all([
-      setPreparationStage({ context, id: "background", status: "running" }),
-      setPreparationStage({ context, id: "background", status: "complete" }),
+      setPreparationStage({
+        context,
+        expectedAttempt: 1,
+        id: "background",
+        status: "running",
+      }),
+      setPreparationStage({
+        context,
+        expectedAttempt: 1,
+        id: "background",
+        status: "complete",
+      }),
     ]);
     const final = JSON.parse(files.get(preparationPath) || "{}");
     assert.equal(
@@ -607,6 +805,90 @@ test("rejects duplicate or extra preparation stages", async () => {
   }
 });
 
+test("migrates a legacy terminal failure without reopening it", async () => {
+  const previousIO = (globalThis as any).IOUtils;
+  const paperDir = "E:\\ZoteroData\\paper-translate-for-zotero\\ABCD1234";
+  const path = `${paperDir}\\_preparation.json`;
+  let legacy: any = createPreparationRecord("ABCD1234", "hash");
+  legacy = updatePreparationStages(legacy, [
+    { id: "source", status: "complete" },
+    { id: "index", status: "complete" },
+    { id: "background", status: "error", detail: "legacy 400" },
+    { id: "terminology", status: "skipped" },
+    { id: "external", status: "skipped" },
+  ]);
+  delete legacy.preparationSchemaVersion;
+  delete legacy.attemptId;
+  delete legacy.attemptTrigger;
+  delete legacy.attemptStartedAt;
+  delete legacy.attemptHistory;
+  (globalThis as any).IOUtils = {
+    async exists(value: string) {
+      return value === path;
+    },
+    async read() {
+      return new TextEncoder().encode(JSON.stringify(legacy));
+    },
+  };
+  try {
+    const migrated = await readPreparationRecord({
+      paperDir,
+      identity: { parentItemKey: "ABCD1234" },
+      fullMdSha256: "hash",
+    } as any);
+    assert.equal(migrated.attemptId, 1);
+    assert.equal(migrated.attemptHistory.length, 0);
+    assert.equal(
+      migrated.stages.find((stage) => stage.id === "background")?.status,
+      "error",
+    );
+    assert.equal(
+      migrated.stages.find((stage) => stage.id === "background")?.failureKind,
+      "legacy-unclassified",
+    );
+    assert.equal(getPreparationRetryScope(migrated), "core");
+  } finally {
+    (globalThis as any).IOUtils = previousIO;
+  }
+});
+
+test("rejects current preparation records with missing attempt metadata", async () => {
+  const previousIO = (globalThis as any).IOUtils;
+  const paperDir = "E:\\ZoteroData\\paper-translate-for-zotero\\ABCD1234";
+  const path = `${paperDir}\\_preparation.json`;
+  const context = {
+    paperDir,
+    identity: { parentItemKey: "ABCD1234" },
+    fullMdSha256: "hash",
+  } as any;
+  try {
+    for (const field of [
+      "attemptId",
+      "attemptTrigger",
+      "attemptStartedAt",
+      "attemptHistory",
+    ] as const) {
+      const invalid: any = createPreparationRecord("ABCD1234", "hash");
+      delete invalid[field];
+      (globalThis as any).IOUtils = {
+        async exists(value: string) {
+          return value === path;
+        },
+        async read() {
+          return new TextEncoder().encode(JSON.stringify(invalid));
+        },
+      };
+      await assert.rejects(
+        readPreparationRecord(context),
+        /does not match/,
+        `missing ${field} must not be silently migrated`,
+      );
+    }
+  } finally {
+    (globalThis as any).IOUtils = previousIO;
+  }
+});
+
 test("rejects an inconsistent preparation overall value", async () => {
   const previousIO = (globalThis as any).IOUtils;
   const paperDir = "E:\\ZoteroData\\paper-translate-for-zotero\\ABCD1234";
@@ -717,6 +999,7 @@ test("rolls back the source record when external background writing fails", asyn
     await assert.rejects(
       persistBackgroundResearch({
         context,
+        expectedAttempt: 1,
         summary: "用于术语消歧的官方背景。",
         queries: ["official timing arc definition"],
         sources: [
@@ -734,6 +1017,123 @@ test("rolls back the source record when external background writing fails", asyn
     assert.equal(backgroundWrites, 1);
     assert.equal(files.get(backgroundPath), background);
     assert.equal(files.get(sourcesPath), previousSources);
+    assert.equal(context.background, background);
+  } finally {
+    (globalThis as any).IOUtils = previousIO;
+  }
+});
+
+test("retries only external knowledge and resets its paired files", async () => {
+  const previousIO = (globalThis as any).IOUtils;
+  const paperDir = "E:\\ZoteroData\\paper-translate-for-zotero\\ABCD1234";
+  const mineruCacheDir = "E:\\ZoteroData\\llm-for-zotero-mineru\\42";
+  const fullMdPath = `${mineruCacheDir}\\full.md`;
+  const sourcePath = `${paperDir}\\_paper_source.json`;
+  const preparationPath = `${paperDir}\\_preparation.json`;
+  const backgroundPath = `${paperDir}\\background.md`;
+  const sourcesPath = `${paperDir}\\background-sources.json`;
+  const markdown = "# Paper\nValidated source";
+  const fullMdSha256 = createHash("sha256").update(markdown).digest("hex");
+  let preparation = createPreparationRecord("ABCD1234", fullMdSha256);
+  preparation = updatePreparationStages(preparation, [
+    { id: "source", status: "complete" },
+    { id: "index", status: "complete" },
+    { id: "background", status: "complete" },
+    { id: "terminology", status: "complete" },
+    {
+      id: "external",
+      status: "warning",
+      detail: "1 个来源受限",
+      failureKind: "request",
+    },
+  ]);
+  const background = `# Background: Paper\n\n${validCoreBackground()}\n`;
+  const files = new Map<string, string>([
+    [
+      sourcePath,
+      JSON.stringify({
+        schemaVersion: 3,
+        libraryID: 1,
+        parentItemKey: "ABCD1234",
+        attachmentID: 42,
+        attachmentKey: "WXYZ5678",
+        title: "Paper",
+        doi: "",
+        mineruCacheDir,
+        fullMdPath,
+        fullMdSha256,
+        updatedAt: "2026-07-20T00:00:00.000Z",
+      }),
+    ],
+    [preparationPath, JSON.stringify(preparation)],
+    [fullMdPath, markdown],
+    [backgroundPath, background],
+    [
+      sourcesPath,
+      JSON.stringify({
+        schemaVersion: 3,
+        parentItemKey: "ABCD1234",
+        fullMdSha256,
+        status: "warning",
+        researchedAt: "2026-07-20T00:00:00.000Z",
+        queries: ["official definition"],
+        sources: [],
+        failures: [{ provider: "web-search", message: "quota" }],
+      }),
+    ],
+  ]);
+  (globalThis as any).IOUtils = {
+    async exists(path: string) {
+      return files.has(path);
+    },
+    async read(path: string) {
+      return new TextEncoder().encode(files.get(path) || "");
+    },
+    async write(path: string, data: Uint8Array) {
+      files.set(path, new TextDecoder().decode(data));
+    },
+  };
+  const context = {
+    paperDir,
+    mineruCacheDir,
+    fullMdPath,
+    fullMdSha256,
+    background,
+    identity: {
+      libraryID: 1,
+      parentItemKey: "ABCD1234",
+      attachmentID: 42,
+      attachmentKey: "WXYZ5678",
+    },
+  } as any;
+  try {
+    assert.equal(getPreparationRetryScope(preparation), "external");
+    const inconsistentBackground = `${background.trimEnd()}\n\n## 外部背景补充\n\nunpaired summary\n`;
+    files.set(backgroundPath, inconsistentBackground);
+    context.background = inconsistentBackground;
+    await assert.rejects(
+      beginPreparationAttempt(context, "external"),
+      /summary and source record are inconsistent/,
+    );
+    assert.equal(JSON.parse(files.get(preparationPath) || "{}").attemptId, 1);
+    files.set(backgroundPath, background);
+    context.background = background;
+    const retried = await beginPreparationAttempt(context, "external");
+    assert.equal(retried.attemptId, 2);
+    assert.equal(
+      retried.stages.find((stage) => stage.id === "background")?.status,
+      "complete",
+    );
+    assert.equal(
+      retried.stages.find((stage) => stage.id === "terminology")?.status,
+      "complete",
+    );
+    assert.equal(
+      retried.stages.find((stage) => stage.id === "external")?.status,
+      "pending",
+    );
+    assert.equal(JSON.parse(files.get(sourcesPath) || "{}").status, "pending");
+    assert.equal(files.get(backgroundPath), background);
     assert.equal(context.background, background);
   } finally {
     (globalThis as any).IOUtils = previousIO;
