@@ -17,6 +17,7 @@ import {
   readPreparationRecord,
 } from "../context/runtime";
 import { getLocaleID, getString } from "../utils/locale";
+import { getPref } from "../utils/prefs";
 import {
   addTranslateTask,
   dispatchTranslateTask,
@@ -26,6 +27,12 @@ import {
 } from "../utils/task";
 import { PREFERENCES_PANE_ID } from "./preferenceWindow";
 import { cancelActiveTranslation } from "../backends/translator";
+import {
+  cancelImageTextRecognition,
+  imageTextRecognitionIsActive,
+  startImageTextRecognition,
+  type ImageTextRecognitionState,
+} from "../ocr/controller";
 import { FluentMessageId } from "../../typings/i10n";
 
 const activeBodies = new Set<HTMLElement>();
@@ -38,6 +45,7 @@ const preparationErrors = new Map<number, ContextErrorRecord>();
 const learningErrors = new Map<number, LearningErrorRecord>();
 const learningMonitors = new Map<string, Promise<void>>();
 const paperContexts = new Map<number, ValidatedPaperContext>();
+const imageRecognitionStates = new Map<number, ImageTextRecognitionState>();
 const preparationRefreshVersions = new WeakMap<HTMLElement, number>();
 let registeredPaneKey: string | null = null;
 
@@ -65,7 +73,11 @@ export function registerReaderSidebar(): void {
       const itemID = Number(body.dataset.itemId);
       activeBodies.delete(body);
       invalidatePreparationRefresh(body);
-      if (!hasActiveBodyForItem(itemID)) cancelActiveTranslation(itemID);
+      if (!hasActiveBodyForItem(itemID)) {
+        cancelActiveTranslation(itemID);
+        cancelImageTextRecognition(itemID);
+        imageRecognitionStates.delete(itemID);
+      }
       releaseUnusedPaperContext(itemID);
     },
     onItemChange: ({ body, item, tabType, setEnabled }) => {
@@ -125,6 +137,8 @@ export function unregisterReaderSidebar(): void {
   learningMonitors.clear();
   preparationActionJobs.clear();
   paperContexts.clear();
+  imageRecognitionStates.clear();
+  cancelImageTextRecognition();
 }
 
 export function updateReaderSidebar(): void {
@@ -291,6 +305,9 @@ function buildSidebar(body: HTMLElement): void {
   translate.textContent = getString("readerpopup-translate-label");
   translate.addEventListener("click", () => {
     const itemId = Number(body.dataset.itemId);
+    if (Number.isInteger(itemId) && itemId > 0) {
+      cancelImageTextRecognition(itemId);
+    }
     const input = normalizeTaskText(source.value);
     if (
       !Number.isInteger(itemId) ||
@@ -311,7 +328,32 @@ function buildSidebar(body: HTMLElement): void {
   result.readOnly = true;
   result.placeholder = getString(getSidebarResultPlaceholderKey());
   applyTextareaStyle(result);
-  container.append(card, preparation, source, translate, result);
+  const imageTools = element(doc, "div", `${config.addonRef}-image-tools`);
+  Object.assign(imageTools.style, {
+    display: "flex",
+    alignItems: "center",
+    gap: "8px",
+    minHeight: "28px",
+  });
+  const imageSelect = element(doc, "button", `${config.addonRef}-image-select`);
+  imageSelect.type = "button";
+  imageSelect.disabled = true;
+  imageSelect.title = getString("sidebar-image-select-title");
+  imageSelect.textContent = `▧ ${getString("sidebar-image-select")}`;
+  applyCompactActionStyle(imageSelect);
+  imageSelect.addEventListener("click", () => runImageTextSelection(body));
+  const imageStatus = element(doc, "span", `${config.addonRef}-image-status`);
+  imageStatus.hidden = true;
+  Object.assign(imageStatus.style, {
+    flex: "1",
+    minWidth: "0",
+    color: "var(--fill-secondary)",
+    fontSize: "0.82em",
+    lineHeight: "1.35",
+    overflowWrap: "anywhere",
+  });
+  imageTools.append(imageSelect, imageStatus);
+  container.append(card, preparation, imageTools, source, translate, result);
   body.append(container);
   renderPreparation(body, createPreparationRecord("AAAAAAAA", "pending"));
   resetSidebarBody(body);
@@ -327,8 +369,11 @@ function setSidebarAttachment(
   invalidatePreparationRefresh(body);
   body.dataset.itemId = nextItemID;
   resetSidebarBody(body);
-  if (!hasActiveBodyForItem(previousItemID))
+  if (!hasActiveBodyForItem(previousItemID)) {
     cancelActiveTranslation(previousItemID);
+    cancelImageTextRecognition(previousItemID);
+    imageRecognitionStates.delete(previousItemID);
+  }
   releaseUnusedPaperContext(previousItemID);
 }
 
@@ -350,6 +395,12 @@ function resetSidebarBody(body: HTMLElement): void {
   const translate = body.querySelector(
     `.${config.addonRef}-sidebar-translate`,
   ) as HTMLButtonElement | null;
+  const imageSelect = body.querySelector(
+    `.${config.addonRef}-image-select`,
+  ) as HTMLButtonElement | null;
+  const imageStatus = body.querySelector(
+    `.${config.addonRef}-image-status`,
+  ) as HTMLElement | null;
   const openDirectory = body.querySelector(
     `.${config.addonRef}-open-directory`,
   ) as HTMLButtonElement | null;
@@ -365,6 +416,11 @@ function resetSidebarBody(body: HTMLElement): void {
   if (source) source.value = "";
   if (result) result.value = "";
   if (translate) translate.disabled = true;
+  if (imageSelect) imageSelect.disabled = true;
+  if (imageStatus) {
+    imageStatus.hidden = true;
+    imageStatus.textContent = "";
+  }
   if (openDirectory) openDirectory.disabled = true;
   if (preparationAction) {
     preparationAction.hidden = true;
@@ -395,6 +451,122 @@ function hasActiveBodyForItem(itemID: number): boolean {
   return [...activeBodies].some(
     (body) => Number(body.dataset.itemId) === itemID,
   );
+}
+
+function runImageTextSelection(body: HTMLElement): void {
+  const itemID = Number(body.dataset.itemId);
+  if (
+    !Number.isInteger(itemID) ||
+    itemID <= 0 ||
+    body.dataset.paperReady !== "true" ||
+    !paperContexts.has(itemID) ||
+    imageTextRecognitionIsActive(itemID)
+  ) {
+    return;
+  }
+  let reader: unknown;
+  try {
+    reader = resolveActiveReaderForAttachment(itemID);
+  } catch (error) {
+    publishImageRecognitionError(itemID, error);
+    return;
+  }
+  cancelActiveTranslation(itemID);
+  void startImageTextRecognition({
+    attachmentItemID: itemID,
+    reader,
+    instruction: getString("sidebar-image-selecting"),
+    cancelLabel: getString("sidebar-image-cancel"),
+    onStateChange: (state) => setImageRecognitionState(itemID, state),
+  })
+    .then((text) => {
+      if (!text) return;
+      const task = addTranslateTask(text, itemID);
+      if (!task) {
+        throw new Error("Image OCR produced no translatable text");
+      }
+      for (const currentBody of activeBodies) {
+        if (Number(currentBody.dataset.itemId) !== itemID) continue;
+        currentBody.dataset.sourceDirty = "false";
+        currentBody.dataset.sidebarTaskId = task.id;
+      }
+      updateReaderSidebar();
+      if (getPref("enableAuto")) dispatchTranslateTask(task);
+    })
+    .catch((error) => {
+      if (isAbortError(error)) return;
+      Zotero.logError(
+        error instanceof Error ? error : new Error(String(error)),
+      );
+      if (imageRecognitionStates.get(itemID)?.phase !== "error") {
+        publishImageRecognitionError(itemID, error);
+      }
+    });
+}
+
+function setImageRecognitionState(
+  itemID: number,
+  state: ImageTextRecognitionState,
+): void {
+  if (state.phase === "idle") {
+    imageRecognitionStates.delete(itemID);
+  } else {
+    imageRecognitionStates.set(itemID, state);
+  }
+  for (const body of activeBodies) {
+    if (Number(body.dataset.itemId) !== itemID) continue;
+    updateSidebarBody(body);
+  }
+}
+
+function publishImageRecognitionError(itemID: number, error: unknown): void {
+  setImageRecognitionState(itemID, {
+    phase: "error",
+    detail: conciseError(error),
+  });
+}
+
+function renderImageRecognition(
+  body: HTMLElement,
+  state: ImageTextRecognitionState = { phase: "idle" },
+): void {
+  const status = body.querySelector(
+    `.${config.addonRef}-image-status`,
+  ) as HTMLElement | null;
+  if (!status) return;
+  if (state.phase === "idle") {
+    status.hidden = true;
+    status.textContent = "";
+    return;
+  }
+  status.hidden = false;
+  status.dataset.phase = state.phase;
+  status.style.color =
+    state.phase === "error" ? "#a32626" : "var(--fill-secondary)";
+  status.textContent =
+    state.phase === "selecting"
+      ? getString("sidebar-image-selecting")
+      : state.phase === "recognizing"
+        ? getString("sidebar-image-recognizing")
+        : getString("sidebar-image-error-detail", {
+            args: { detail: formatImageRecognitionError(state.detail) },
+          });
+}
+
+function formatImageRecognitionError(detail?: string): string {
+  return detail === "Codex OCR response contained no visible text"
+    ? getString("sidebar-image-no-text")
+    : detail || getString("sidebar-stage-error-default");
+}
+
+function resolveActiveReaderForAttachment(attachmentItemID: number): unknown {
+  const tabs = ztoolkit.getGlobal("Zotero_Tabs") as { selectedID?: string };
+  if (!tabs.selectedID) throw new Error("No active Zotero Reader tab");
+  const reader = Zotero.Reader.getByTabID(tabs.selectedID);
+  if (Number(reader?.itemID) !== attachmentItemID) {
+    throw new Error("The active Reader does not match this paper");
+  }
+  return reader;
 }
 
 function openKnowledgeDirectory(body: HTMLElement): void {
@@ -794,6 +966,23 @@ export function isTranslationReady(record: PreparationRecord): boolean {
   );
 }
 
+export function getCompletedPreparationStageCount(
+  record: PreparationRecord,
+): number {
+  const issueStages = new Set(
+    (record.integrityIssues ?? []).map((issue) => issue.stage),
+  );
+  const hasError =
+    issueStages.size > 0 ||
+    record.stages.some((stage) => stage.status === "error");
+  return record.stages.filter(
+    (stage) =>
+      !issueStages.has(stage.id as "background" | "terminology" | "external") &&
+      (stage.status === "complete" ||
+        (!hasError && stage.status === "skipped")),
+  ).length;
+}
+
 function renderPreparation(body: HTMLElement, record: PreparationRecord): void {
   const summary = body.querySelector(`.${config.addonRef}-preparation-summary`);
   const files = body.querySelector(`.${config.addonRef}-preparation-files`);
@@ -804,12 +993,7 @@ function renderPreparation(body: HTMLElement, record: PreparationRecord): void {
   const hasError =
     issueStages.size > 0 ||
     record.stages.some((stage) => stage.status === "error");
-  const completed = record.stages.filter(
-    (stage) =>
-      !issueStages.has(stage.id as "background" | "terminology" | "external") &&
-      (["complete", "warning"].includes(stage.status) ||
-        (!hasError && stage.status === "skipped")),
-  ).length;
+  const completed = getCompletedPreparationStageCount(record);
   summary.textContent = `${getString("sidebar-preparation-title")} ${completed}/${record.stages.length}${hasError ? ` · ${getString("sidebar-preparation-stopped")}` : ""}`;
   const learningError = learningErrors.get(Number(body.dataset.itemId));
   const currentHash = paperContexts.get(
@@ -1010,11 +1194,19 @@ function updateSidebarBody(body: HTMLElement): void {
   const translate = body.querySelector(
     `.${config.addonRef}-sidebar-translate`,
   ) as HTMLButtonElement | null;
+  const imageSelect = body.querySelector(
+    `.${config.addonRef}-image-select`,
+  ) as HTMLButtonElement | null;
   if (!source || !result || !translate) return;
   result.placeholder = getString(getSidebarResultPlaceholderKey());
+  renderImageRecognition(
+    body,
+    imageRecognitionStates.get(itemId) || { phase: "idle" },
+  );
   if (!Number.isInteger(itemId) || itemId <= 0) {
     result.value = getString("sidebar-no-attachment");
     translate.disabled = true;
+    if (imageSelect) imageSelect.disabled = true;
     return;
   }
   const task = getLastTranslateTask({ itemId });
@@ -1026,6 +1218,12 @@ function updateSidebarBody(body: HTMLElement): void {
   }
   if (!sourceDirty && task) body.dataset.sidebarTaskId = task.id;
   const paperReady = body.dataset.paperReady === "true";
+  if (imageSelect) {
+    imageSelect.disabled =
+      !paperReady ||
+      !paperContexts.has(itemId) ||
+      imageTextRecognitionIsActive(itemId);
+  }
   if (sourceDirty) {
     result.value = "";
     translate.disabled = !paperReady || !normalizeTaskText(source.value);
@@ -1045,6 +1243,9 @@ function updateSidebarBody(body: HTMLElement): void {
 
 function handleSidebarSourceInput(body: HTMLElement, value: string): void {
   const itemId = Number(body.dataset.itemId);
+  if (Number.isInteger(itemId) && itemId > 0) {
+    cancelImageTextRecognition(itemId);
+  }
   const task = Number.isInteger(itemId)
     ? getLastTranslateTask({ itemId })
     : undefined;
@@ -1092,6 +1293,10 @@ function conciseError(error: unknown): string {
   return (error instanceof Error ? error.message : String(error))
     .replace(/https?:\/\/\S+/g, "[URL omitted]")
     .slice(0, 180);
+}
+
+function isAbortError(error: unknown): boolean {
+  return error instanceof Error && error.name === "AbortError";
 }
 
 function conciseStageDetail(detail?: string): string {

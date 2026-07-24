@@ -50,6 +50,72 @@ test("builds the legacy Codex Responses streaming payload", () => {
   });
 });
 
+test("adds one high-detail image without public Responses limit fields", () => {
+  const payload = buildLegacyCodexPayload({
+    model: "gpt-5.4",
+    effort: "medium",
+    instructions: "Transcribe only.",
+    prompt: "Read the crop.",
+    image: {
+      dataUrl: "data:image/png;base64,iVBORw==",
+      detail: "high",
+    },
+  });
+  assert.deepEqual(payload, {
+    model: "gpt-5.4",
+    instructions: "Transcribe only.",
+    input: [
+      {
+        type: "message",
+        role: "user",
+        content: [
+          { type: "input_text", text: "Read the crop." },
+          {
+            type: "input_image",
+            image_url: "data:image/png;base64,iVBORw==",
+            detail: "high",
+          },
+        ],
+      },
+    ],
+    store: false,
+    stream: true,
+    reasoning: { effort: "medium" },
+  });
+  assert.equal(payload.max_output_tokens, undefined);
+  assert.equal(payload.max_tool_calls, undefined);
+});
+
+test("rejects malformed or web-enabled image requests before authentication", async () => {
+  await assert.rejects(
+    runLegacyCodexRequest({
+      apiUrl: DEFAULT_CODEX_API_URL,
+      model: "gpt-5.4",
+      instructions: "Transcribe.",
+      prompt: "Read.",
+      image: {
+        dataUrl: "https://example.test/image.png",
+        detail: "high",
+      },
+    }),
+    /base64 PNG, JPEG, or WebP data URL/,
+  );
+  await assert.rejects(
+    runLegacyCodexRequest({
+      apiUrl: DEFAULT_CODEX_API_URL,
+      model: "gpt-5.4",
+      instructions: "Transcribe.",
+      prompt: "Read.",
+      image: {
+        dataUrl: "data:image/png;base64,iVBORw==",
+        detail: "high",
+      },
+      webSearch: true,
+    }),
+    /image requests cannot enable web search/,
+  );
+});
+
 test("connection test does not spend its response budget on reasoning", async () => {
   const previousServices = (globalThis as any).Services;
   const previousIO = (globalThis as any).IOUtils;

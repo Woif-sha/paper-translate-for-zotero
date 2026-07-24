@@ -1023,6 +1023,100 @@ test("rolls back the source record when external background writing fails", asyn
   }
 });
 
+test("persists a successful zero-source research pass as complete", async () => {
+  const previousIO = (globalThis as any).IOUtils;
+  const paperDir = "E:\\ZoteroData\\paper-translate-for-zotero\\ABCD1234";
+  const mineruCacheDir = "E:\\ZoteroData\\llm-for-zotero-mineru\\42";
+  const fullMdPath = `${mineruCacheDir}\\full.md`;
+  const sourcePath = `${paperDir}\\_paper_source.json`;
+  const preparationPath = `${paperDir}\\_preparation.json`;
+  const backgroundPath = `${paperDir}\\background.md`;
+  const sourcesPath = `${paperDir}\\background-sources.json`;
+  const markdown = "# Paper\nValidated source";
+  const fullMdSha256 = createHash("sha256").update(markdown).digest("hex");
+  let preparation = createPreparationRecord("ABCD1234", fullMdSha256);
+  preparation = updatePreparationStages(preparation, [
+    { id: "source", status: "complete" },
+    { id: "index", status: "complete" },
+    { id: "background", status: "complete" },
+    { id: "terminology", status: "complete" },
+    { id: "external", status: "running" },
+  ]);
+  const background = `# Background: Paper\n\n${validCoreBackground()}\n`;
+  const files = new Map<string, string>([
+    [
+      sourcePath,
+      JSON.stringify({
+        schemaVersion: 3,
+        libraryID: 1,
+        parentItemKey: "ABCD1234",
+        attachmentID: 42,
+        attachmentKey: "WXYZ5678",
+        mineruCacheDir,
+        fullMdPath,
+        fullMdSha256,
+      }),
+    ],
+    [preparationPath, JSON.stringify(preparation)],
+    [fullMdPath, markdown],
+    [backgroundPath, background],
+    [
+      sourcesPath,
+      JSON.stringify({
+        schemaVersion: 3,
+        parentItemKey: "ABCD1234",
+        fullMdSha256,
+        status: "pending",
+        queries: [],
+        sources: [],
+        failures: [],
+      }),
+    ],
+  ]);
+  (globalThis as any).IOUtils = {
+    async exists(path: string) {
+      return files.has(path);
+    },
+    async read(path: string) {
+      return new TextEncoder().encode(files.get(path) || "");
+    },
+    async write(path: string, data: Uint8Array) {
+      files.set(path, new TextDecoder().decode(data));
+    },
+  };
+  const context = {
+    paperDir,
+    mineruCacheDir,
+    fullMdPath,
+    fullMdSha256,
+    markdown,
+    background,
+    identity: {
+      libraryID: 1,
+      parentItemKey: "ABCD1234",
+      attachmentID: 42,
+      attachmentKey: "WXYZ5678",
+      title: "Paper",
+    },
+  } as any;
+  try {
+    await persistBackgroundResearch({
+      context,
+      expectedAttempt: 1,
+      summary: "",
+      queries: ["question already resolved by the paper"],
+      sources: [],
+    });
+    const stored = JSON.parse(files.get(sourcesPath) || "{}");
+    assert.equal(stored.status, "complete");
+    assert.deepEqual(stored.sources, []);
+    assert.deepEqual(stored.failures, []);
+    assert.equal(files.get(backgroundPath), background);
+  } finally {
+    (globalThis as any).IOUtils = previousIO;
+  }
+});
+
 test("retries only external knowledge and resets its paired files", async () => {
   const previousIO = (globalThis as any).IOUtils;
   const paperDir = "E:\\ZoteroData\\paper-translate-for-zotero\\ABCD1234";
@@ -1206,4 +1300,203 @@ test("validates the persisted minimum knowledge instead of file markers", () => 
       ),
     /incomplete table row/,
   );
+});
+
+test("migrates legacy empty external results without reviving research", async () => {
+  const previousIO = (globalThis as any).IOUtils;
+  const previousZotero = (globalThis as any).Zotero;
+  const dataDir = "E:\\ZoteroData";
+  const mineruCacheDir = `${dataDir}\\llm-for-zotero-mineru\\42`;
+  const paperDir = `${dataDir}\\paper-translate-for-zotero\\ABCD1234`;
+  const fullMdPath = `${mineruCacheDir}\\full.md`;
+  const provenancePath = `${mineruCacheDir}\\_llm_source.json`;
+  const manifestPath = `${mineruCacheDir}\\manifest.json`;
+  const sourcePath = `${paperDir}\\_paper_source.json`;
+  const preparationPath = `${paperDir}\\_preparation.json`;
+  const backgroundPath = `${paperDir}\\background.md`;
+  const terminologyPath = `${paperDir}\\terminology.md`;
+  const sourcesPath = `${paperDir}\\background-sources.json`;
+  const markdown = "# Paper\nterm-1 term-2 term-3 term-4 term-5 term-6";
+  const fullMdSha256 = createHash("sha256").update(markdown).digest("hex");
+  const terminologyRows = Array.from({ length: 6 }, (_, index) => {
+    const term = `term-${index + 1}`;
+    return `| ${term} | ${term} | 术语${index + 1} | domain | definition | Paper; chars ${index}-${index + 1} | paper | high | 2026-07-24T00:00:00.000Z |`;
+  });
+  const terminology = [
+    "# Terminology: Paper",
+    "",
+    "| Observed expression | Canonical English | Preferred Chinese | Category | Definition | Paper evidence | Source level | Confidence | Updated at |",
+    "| --- | --- | --- | --- | --- | --- | --- | --- | --- |",
+    ...terminologyRows,
+    "",
+  ].join("\n");
+  const background = `# Background: Paper\n\n${validCoreBackground()}\n`;
+  const legacyPreparation = (detail: string) =>
+    updatePreparationStages(createPreparationRecord("ABCD1234", fullMdSha256), [
+      { id: "source", status: "complete" },
+      { id: "index", status: "complete" },
+      { id: "background", status: "complete" },
+      { id: "terminology", status: "complete" },
+      {
+        id: "external",
+        status: "warning",
+        detail,
+        failureKind: "legacy-unclassified",
+      },
+    ]);
+  const legacyEmptyResearch = (queries: string[]) => ({
+    schemaVersion: 3,
+    parentItemKey: "ABCD1234",
+    fullMdSha256,
+    status: "empty",
+    researchedAt: "2026-07-24T00:00:00.000Z",
+    queries,
+    sources: [],
+    failures: [],
+  });
+  const files = new Map<string, string>([
+    [
+      provenancePath,
+      JSON.stringify({
+        kind: "llm-for-zotero/mineru-cache-source",
+        version: 2,
+        attachmentId: 42,
+        attachmentKey: "WXYZ5678",
+        parentItemKey: "ABCD1234",
+        origin: "parsed",
+        recordedAt: "2026-07-24T00:00:00.000Z",
+      }),
+    ],
+    [fullMdPath, markdown],
+    [
+      manifestPath,
+      JSON.stringify({ noSections: true, totalChars: markdown.length }),
+    ],
+    [
+      sourcePath,
+      JSON.stringify({
+        schemaVersion: 3,
+        libraryID: 1,
+        parentItemKey: "ABCD1234",
+        attachmentID: 42,
+        attachmentKey: "WXYZ5678",
+        title: "Paper",
+        doi: "",
+        mineruCacheDir,
+        fullMdPath,
+        fullMdSha256,
+        updatedAt: "2026-07-24T00:00:00.000Z",
+      }),
+    ],
+    [preparationPath, JSON.stringify(legacyPreparation("未找到可用外部来源"))],
+    [backgroundPath, background],
+    [terminologyPath, terminology],
+    [
+      sourcesPath,
+      JSON.stringify(legacyEmptyResearch(["unresolved terminology"])),
+    ],
+  ]);
+  (globalThis as any).IOUtils = {
+    async exists(path: string) {
+      return files.has(path);
+    },
+    async read(path: string) {
+      return new TextEncoder().encode(files.get(path) || "");
+    },
+    async write(path: string, data: Uint8Array) {
+      files.set(path, new TextDecoder().decode(data));
+    },
+    async makeDirectory() {},
+    async getChildren() {
+      return [];
+    },
+  };
+  const attachment = {
+    id: 42,
+    key: "WXYZ5678",
+    parentItemID: 7,
+    isAttachment: () => true,
+  };
+  const parent = {
+    id: 7,
+    key: "ABCD1234",
+    libraryID: 1,
+    isAttachment: () => false,
+    getField: (field: string) => (field === "title" ? "Paper" : ""),
+  };
+  (globalThis as any).Zotero = {
+    DataDirectory: { dir: dataDir },
+    Items: { get: (id: number) => (id === 42 ? attachment : parent) },
+  };
+  try {
+    await preparePaperContext(42, "");
+    let recovered = JSON.parse(files.get(preparationPath) || "{}");
+    assert.equal(
+      recovered.stages.find((stage: { id: string }) => stage.id === "external")
+        .status,
+      "complete",
+    );
+
+    files.set(
+      preparationPath,
+      JSON.stringify(legacyPreparation("1 个来源受限")),
+    );
+    files.set(sourcesPath, JSON.stringify(legacyEmptyResearch([])));
+    await preparePaperContext(42, "");
+    recovered = JSON.parse(files.get(preparationPath) || "{}");
+    const external = recovered.stages.find(
+      (stage: { id: string }) => stage.id === "external",
+    );
+    assert.equal(external.status, "skipped");
+    assert.equal(external.detail, "论文分析未提出外部检索问题");
+    assert.equal(external.failureKind, undefined);
+
+    const legacyFailurePreparation = updatePreparationStages(
+      createPreparationRecord("ABCD1234", fullMdSha256),
+      [
+        { id: "source", status: "complete" },
+        { id: "index", status: "complete" },
+        { id: "background", status: "complete" },
+        { id: "terminology", status: "complete" },
+        {
+          id: "external",
+          status: "warning",
+          detail: "1 个来源受限",
+          failureKind: "request",
+        },
+      ],
+    );
+    files.set(preparationPath, JSON.stringify(legacyFailurePreparation));
+    files.set(
+      sourcesPath,
+      JSON.stringify({
+        schemaVersion: 3,
+        parentItemKey: "ABCD1234",
+        fullMdSha256,
+        status: "warning",
+        researchedAt: "2026-07-24T00:00:00.000Z",
+        queries: ["unresolved terminology"],
+        sources: [],
+        failures: [
+          {
+            provider: "web-search",
+            message:
+              "Codex legacy request failed at https://example.org/private",
+          },
+        ],
+      }),
+    );
+    await preparePaperContext(42, "");
+    recovered = JSON.parse(files.get(preparationPath) || "{}");
+    const warning = recovered.stages.find(
+      (stage: { id: string }) => stage.id === "external",
+    );
+    assert.equal(warning.status, "warning");
+    assert.equal(warning.failureKind, "request");
+    assert.match(warning.detail, /^外部知识请求失败：/);
+    assert.doesNotMatch(warning.detail, /来源受限|https:\/\//);
+  } finally {
+    (globalThis as any).IOUtils = previousIO;
+    (globalThis as any).Zotero = previousZotero;
+  }
 });

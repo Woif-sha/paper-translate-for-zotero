@@ -32,6 +32,7 @@ import {
   endKnowledgeOperationsSession,
 } from "./context/research";
 import { cancelActiveCodexAuthRefreshes } from "./codex/legacyClient";
+import { cancelImageTextRecognition } from "./ocr/controller";
 
 async function onStartup() {
   await Promise.all([
@@ -82,6 +83,7 @@ async function onMainWindowUnload(win: Window): Promise<void> {
 
 async function onShutdown(): Promise<void> {
   cancelActiveTranslation();
+  cancelImageTextRecognition();
   endKnowledgeOperationsSession();
   cancelActiveCodexAuthRefreshes();
   unregisterNotify();
@@ -148,6 +150,7 @@ async function onTranslate(...data: any) {
 function onReaderPopupShow(
   event: _ZoteroTypes.Reader.EventParams<"renderTextSelectionPopup">,
 ) {
+  cancelImageTextRecognition(Number(event.reader.itemID));
   const selection = addon.data.translate.selectedText;
   const task = getLastTranslateTask({
     type: "text",

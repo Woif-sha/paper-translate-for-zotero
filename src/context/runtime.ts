@@ -547,28 +547,16 @@ async function recoverOptionalKnowledge(params: {
     }
     if (backgroundResearch.status === "complete") {
       preparation = completeRecoveredStage(preparation, "external");
-    } else if (
-      backgroundResearch.status === "empty" &&
-      !backgroundResearch.queries.length
-    ) {
-      preparation = updatePreparationStages(preparation, [
-        {
-          id: "external",
-          status: "skipped",
-          detail: "论文分析未提出外部检索问题",
-        },
-      ]);
-    } else if (
-      backgroundResearch.status === "warning" ||
-      backgroundResearch.status === "empty"
-    ) {
-      preparation = updatePreparationStages(preparation, [
-        {
-          id: "external",
-          status: "warning",
-          failureKind: "legacy-unclassified",
-        },
-      ]);
+    } else if (backgroundResearch.status === "empty") {
+      preparation = recoverLegacyEmptyExternalStage(
+        preparation,
+        backgroundResearch.queries.length === 0,
+      );
+    } else if (backgroundResearch.status === "warning") {
+      preparation = recoverExternalProcessWarning(
+        preparation,
+        backgroundResearch,
+      );
     } else if (stageStatusOf(preparation, "external") === "running") {
       preparation = recordOptionalKnowledgeFailure(
         preparation,
@@ -604,6 +592,116 @@ function completeRecoveredStage(
   id: "background" | "terminology" | "external",
 ): PreparationRecord {
   return updatePreparationStages(preparation, [{ id, status: "complete" }]);
+}
+
+function recoverLegacyEmptyExternalStage(
+  preparation: PreparationRecord,
+  skipped: boolean,
+): PreparationRecord {
+  const update = {
+    id: "external" as const,
+    status: skipped ? ("skipped" as const) : ("complete" as const),
+    detail: skipped ? "论文分析未提出外部检索问题" : undefined,
+  };
+  const current = preparation.stages.find((stage) => stage.id === "external");
+  if (
+    current?.status !== "warning" ||
+    (current.detail &&
+      !/来源受限|未找到可用外部来源/u.test(current.detail) &&
+      current.failureKind !== "legacy-unclassified")
+  ) {
+    return updatePreparationStages(preparation, [update]);
+  }
+  // Older versions persisted a successful zero-source result as a warning.
+  // This deterministic schema correction changes no active attempt or file data.
+  const stages = preparation.stages.map((stage) =>
+    stage.id === "external"
+      ? {
+          ...stage,
+          status: update.status,
+          detail: update.detail,
+          failureKind: undefined,
+        }
+      : stage,
+  );
+  return {
+    ...preparation,
+    stages,
+    overall: derivePreparationOverall(stages),
+    updatedAt: new Date().toISOString(),
+  };
+}
+
+function recoverExternalProcessWarning(
+  preparation: PreparationRecord,
+  research: BackgroundResearchRecord,
+): PreparationRecord {
+  const current = preparation.stages.find((stage) => stage.id === "external");
+  const firstFailure = research.failures?.[0];
+  if (!firstFailure) return preparation;
+  const failureKind = recoveredExternalFailureKind(
+    firstFailure.provider,
+    current?.failureKind,
+  );
+  const detail = recoveredExternalFailureSummary(
+    failureKind,
+    firstFailure.message,
+  );
+  if (current?.status !== "warning") {
+    return updatePreparationStages(preparation, [
+      { id: "external", status: "warning", detail, failureKind },
+    ]);
+  }
+  const needsLegacyCorrection =
+    !current.detail ||
+    /来源受限/u.test(current.detail) ||
+    !current.failureKind ||
+    current.failureKind === "legacy-unclassified";
+  if (!needsLegacyCorrection) return preparation;
+  const stages = preparation.stages.map((stage) =>
+    stage.id === "external" ? { ...stage, detail, failureKind } : stage,
+  );
+  return { ...preparation, stages, updatedAt: new Date().toISOString() };
+}
+
+function recoveredExternalFailureKind(
+  provider: string,
+  existing?: PreparationFailureKind,
+): PreparationFailureKind {
+  if (existing && existing !== "legacy-unclassified") return existing;
+  switch (provider) {
+    case "codex-request":
+      return "request";
+    case "codex-response":
+      return "response";
+    case "knowledge-timeout":
+      return "timeout";
+    case "knowledge-interruption":
+      return "interrupted";
+    case "knowledge-persistence":
+      return "persistence";
+    default:
+      return "legacy-unclassified";
+  }
+}
+
+function recoveredExternalFailureSummary(
+  kind: PreparationFailureKind,
+  message: string,
+): string {
+  const detail = message
+    .replace(/https?:\/\/\S+/giu, "[URL omitted]")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 200);
+  const prefix: Partial<Record<PreparationFailureKind, string>> = {
+    request: "外部知识请求失败",
+    response: "外部知识响应无效",
+    timeout: "外部知识请求超时",
+    interrupted: "外部知识任务中断",
+    persistence: "外部知识文件写入失败",
+  };
+  return `${prefix[kind] ?? "外部知识流程失败"}：${detail}`;
 }
 
 function recordOptionalKnowledgeFailure(
@@ -810,11 +908,17 @@ function validateBackgroundResearchRecord(
       throw new Error("Background research record has an invalid failure");
     }
   }
-  if (record.status === "complete" && !record.sources.length) {
-    throw new Error("Completed background research has no sources");
-  }
   if (record.status === "empty" && record.sources.length) {
     throw new Error("Empty background research unexpectedly has sources");
+  }
+  const failureCount = record.failures?.length ?? 0;
+  if (record.status === "warning" && failureCount === 0) {
+    throw new Error("Background research warning has no process failure");
+  }
+  if (record.status !== "warning" && failureCount > 0) {
+    throw new Error(
+      "Background research process failures require warning status",
+    );
   }
   if (record.sources.length > 0 !== Boolean(record.summarySha256)) {
     throw new Error(
@@ -953,13 +1057,7 @@ export async function persistBackgroundResearch(params: {
     schemaVersion: PAPER_CONTEXT_SCHEMA_VERSION,
     parentItemKey: params.context.identity.parentItemKey,
     fullMdSha256: params.context.fullMdSha256,
-    status:
-      params.status ??
-      (params.failures?.length
-        ? "warning"
-        : sources.length > 0
-          ? "complete"
-          : "empty"),
+    status: params.status ?? (params.failures?.length ? "warning" : "complete"),
     researchedAt: new Date().toISOString(),
     summarySha256: summary ? await sha256(summary) : undefined,
     queries: params.queries.map((query) => query.trim()).filter(Boolean),
@@ -1144,7 +1242,7 @@ function assertPreparationAttempt(
 async function assertCurrentPaperSource(
   io: IOUtilsLike,
   context: ValidatedPaperContext,
-): Promise<void> {
+): Promise<string> {
   const sourcePath = joinPath(context.paperDir, "_paper_source.json");
   const source = JSON.parse(
     await readRequiredText(io, sourcePath),
@@ -1172,6 +1270,43 @@ async function assertCurrentPaperSource(
     throw new Error(
       "MinerU full.md changed before knowledge files could be written",
     );
+  }
+  return currentMarkdown;
+}
+
+export async function assertValidatedPaperContextCurrent(
+  context: ValidatedPaperContext,
+): Promise<void> {
+  const identity = resolvePaperIdentity(context.identity.attachmentID);
+  if (
+    identity.libraryID !== context.identity.libraryID ||
+    identity.parentItemKey !== context.identity.parentItemKey ||
+    identity.attachmentID !== context.identity.attachmentID ||
+    identity.attachmentKey !== context.identity.attachmentKey
+  ) {
+    throw new Error("Zotero paper identity changed during image OCR");
+  }
+  const expectedCacheDir = joinPath(
+    resolveZoteroDataDir(),
+    MINERU_ROOT_NAME,
+    String(identity.attachmentID),
+  );
+  if (
+    normalizeAbsolutePath(expectedCacheDir) !==
+    normalizeAbsolutePath(context.mineruCacheDir)
+  ) {
+    throw new Error("MinerU cache directory changed during image OCR");
+  }
+  const io = getIOUtils();
+  const markdown = await assertCurrentPaperSource(io, context);
+  const [provenanceRaw, manifestRaw] = await Promise.all([
+    readRequiredText(io, joinPath(context.mineruCacheDir, "_llm_source.json")),
+    readRequiredText(io, joinPath(context.mineruCacheDir, "manifest.json")),
+  ]);
+  parseAndValidateProvenance(provenanceRaw, identity);
+  parseAndValidateManifest(manifestRaw, markdown);
+  if ((await sha256(manifestRaw)) !== context.index.manifestSha256) {
+    throw new Error("MinerU manifest changed during image OCR");
   }
 }
 
@@ -2065,6 +2200,13 @@ async function withPaperFileLock<T>(
     release();
     if (paperFileWrites.get(key) === tail) paperFileWrites.delete(key);
   }
+}
+
+export function withPaperContextWriteLock<T>(
+  context: ValidatedPaperContext,
+  operation: () => Promise<T>,
+): Promise<T> {
+  return withPaperFileLock(context.paperDir, operation);
 }
 
 export function migrateTerminologyMarkdown(

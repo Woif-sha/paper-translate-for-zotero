@@ -2,8 +2,12 @@ import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import test from "node:test";
 import { buildPaperIndex } from "../src/context/paperContext";
-import { buildCoreKnowledgePrompt } from "../src/context/prompts";
 import {
+  buildCoreKnowledgePrompt,
+  buildExternalResearchPrompt,
+} from "../src/context/prompts";
+import {
+  EXTERNAL_RESEARCH_LIMITS,
   assertMinimumCoreKnowledge,
   beginKnowledgeOperationsSession,
   cancelActiveKnowledgeOperations,
@@ -193,6 +197,24 @@ test("caps one knowledge pass at 12 terms, 3 questions, and 3 sources", () => {
     }),
   );
   assert.equal(external.sources.length, 3);
+});
+
+test("plans two searches, allows three observed calls, and requires no source quota", () => {
+  assert.deepEqual(EXTERNAL_RESEARCH_LIMITS, {
+    maximumQuestions: 3,
+    plannedSearchCalls: 2,
+    maximumObservedSearchCalls: 3,
+  });
+  const prompt = buildExternalResearchPrompt({
+    context: { identity: { title: "Paper" } } as any,
+    queries: ["first ambiguity", "second ambiguity", "third ambiguity"],
+  });
+  assert.match(prompt, /at most two planned searches/i);
+  assert.match(prompt, /Do not try to fill a source quota/i);
+  assert.match(
+    parseResearchResult(JSON.stringify({ summary: "", sources: [] })).summary,
+    /^$/,
+  );
 });
 
 test("shares one terminal core decision and never starts a model request", async () => {
@@ -497,11 +519,12 @@ test("closes a stale external stage even when its source record is damaged", asy
       /Unexpected token|not valid JSON|JSON/,
     );
     const stopped = JSON.parse(files.get(preparationPath) || "{}");
-    assert.equal(
-      stopped.stages.find((stage: { id: string }) => stage.id === "external")
-        .status,
-      "error",
+    const external = stopped.stages.find(
+      (stage: { id: string }) => stage.id === "external",
     );
+    assert.equal(external.status, "warning");
+    assert.equal(external.failureKind, "persistence");
+    assert.match(external.detail, /^外部知识文件写入失败：/);
     assert.equal(files.get(sourcesPath), "{damaged");
   } finally {
     endKnowledgeOperationsSession();
@@ -606,13 +629,15 @@ test("reloads persisted search questions instead of using a stale caller snapsho
     const persisted = JSON.parse(files.get(sourcesPath) || "{}");
     assert.deepEqual(persisted.queries, ["timing arc official definition"]);
     assert.equal(persisted.status, "warning");
+    assert.equal(persisted.failures[0].provider, "knowledge-interruption");
     assert.equal(staleContext.background, background);
     const stopped = JSON.parse(files.get(preparationPath) || "{}");
-    assert.equal(
-      stopped.stages.find((stage: { id: string }) => stage.id === "external")
-        .status,
-      "warning",
+    const external = stopped.stages.find(
+      (stage: { id: string }) => stage.id === "external",
     );
+    assert.equal(external.status, "warning");
+    assert.equal(external.failureKind, "interrupted");
+    assert.doesNotMatch(external.detail, /来源受限/);
   } finally {
     endKnowledgeOperationsSession();
     (globalThis as any).IOUtils = previousIO;
@@ -1015,6 +1040,9 @@ test("keeps the retry handoff gated until the new attempt job is registered", as
         .status,
       "skipped",
     );
+    const externalRecord = JSON.parse(files.get(sourcesPath) || "{}");
+    assert.equal(externalRecord.status, "empty");
+    assert.deepEqual(externalRecord.failures, []);
   } finally {
     releaseReset?.();
     endKnowledgeOperationsSession();
