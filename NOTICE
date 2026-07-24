@@ -19,12 +19,24 @@ This project contains and adapts code from:
    Copyright (C) Yile Wang and contributors
    License: AGPL-3.0-or-later
    Source: https://github.com/yilewang/llm-for-zotero
-   Pinned revision: f8dbbd863b021368c07efe0f61c67f3503d79bc9 (v3.8.27)
+   Pinned revision: 258c9d326bad1ec64c9ac166f45c0e2e2aea675b (v3.8.30)
 
    The legacy Codex authentication client and MinerU cache validation design
    were adapted from the upstream implementation patterns, notably
    src/utils/llmClient.ts, src/agent/model/codexResponses.ts,
    src/utils/providerTransport.ts, and its MinerU provenance/cache code.
+   Version 1.2.0 also consults the Responses input_image conversion and data
+   URL handling in src/utils/llmClient.ts, Reader document discovery in
+   src/modules/contextPanel/readerSelection.ts, page-location conventions in
+   src/modules/contextPanel/livePdfSelectionLocator.ts, MinerU figure metadata
+   handling in src/modules/contextPanel/mineruFigureBlocks.ts, and the overlay
+   interaction pattern in src/modules/contextPanel/screenshot.ts.
+
+   Only the Reader interaction and coordinate-mapping patterns are reused for
+   OCR. This project does not reuse screenshot.ts captureRegion, PDF canvas
+   capture, drawWindow fallback, or PDF page rendering. It crops the local
+   MinerU image asset that the validated cache metadata maps to the user's
+   selected region.
 
 No upstream runtime object, conversation, prompt, thread, or private source
 file is accessed at runtime. Both plugins may read the user's Codex CLI login

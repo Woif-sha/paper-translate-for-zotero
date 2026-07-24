@@ -37,12 +37,18 @@ export type LegacyCodexResult = {
   citedUrls: string[];
 };
 
+export type LegacyCodexImageInput = {
+  dataUrl: string;
+  detail: "high";
+};
+
 export type LegacyCodexRequest = {
   apiUrl: string;
   model: string;
   effort?: string;
   instructions: string;
   prompt: string;
+  image?: LegacyCodexImageInput;
   signal?: AbortSignal;
   onDelta?: (delta: string, accumulated: string) => void;
   webSearch?: boolean;
@@ -316,10 +322,20 @@ export async function testLegacyCodexConnection(params: {
 export function buildLegacyCodexPayload(
   params: Pick<
     LegacyCodexRequest,
-    "model" | "effort" | "instructions" | "prompt" | "webSearch"
+    "model" | "effort" | "instructions" | "prompt" | "image" | "webSearch"
   >,
 ): Record<string, unknown> {
   const effort = normalizeEffort(params.effort);
+  const content: Record<string, unknown>[] = [
+    { type: "input_text", text: params.prompt },
+  ];
+  if (params.image) {
+    content.push({
+      type: "input_image",
+      image_url: params.image.dataUrl,
+      detail: params.image.detail,
+    });
+  }
   return {
     model: params.model.trim(),
     instructions: params.instructions,
@@ -327,7 +343,7 @@ export function buildLegacyCodexPayload(
       {
         type: "message",
         role: "user",
-        content: [{ type: "input_text", text: params.prompt }],
+        content,
       },
     ],
     store: false,
@@ -355,6 +371,12 @@ function validateRequest(params: LegacyCodexRequest): void {
     throw new Error("Codex developer instructions are required");
   }
   if (!params.prompt.trim()) throw new Error("Codex prompt is required");
+  if (params.image) {
+    validateImageInput(params.image);
+    if (params.webSearch || params.requireWebSearch) {
+      throw new Error("Codex image requests cannot enable web search");
+    }
+  }
   for (const [name, value] of [
     ["maxOutputCharacters", params.maxOutputCharacters],
     ["maxResponseBytes", params.maxResponseBytes],
@@ -366,6 +388,23 @@ function validateRequest(params: LegacyCodexRequest): void {
   }
   if (params.maxObservedWebSearchCalls !== undefined && !params.webSearch) {
     throw new Error("maxObservedWebSearchCalls requires webSearch");
+  }
+}
+
+function validateImageInput(image: LegacyCodexImageInput): void {
+  if (image.detail !== "high") {
+    throw new Error("Codex image detail must be high");
+  }
+  const match =
+    /^data:image\/(png|jpeg|webp);base64,([A-Za-z0-9+/]+={0,2})$/.exec(
+      image.dataUrl,
+    );
+  if (!match) {
+    throw new Error("Codex image must be a base64 PNG, JPEG, or WebP data URL");
+  }
+  const base64 = match[2];
+  if (base64.length % 4 !== 0) {
+    throw new Error("Codex image data URL contains invalid base64");
   }
 }
 

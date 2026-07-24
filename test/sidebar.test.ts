@@ -3,6 +3,7 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 import {
   formatPreparationRows,
+  getCompletedPreparationStageCount,
   getLearningMonitorKey,
   getSidebarPreparationAction,
   getSidebarResultPlaceholderKey,
@@ -37,6 +38,21 @@ test("allows translation as soon as source and index files are complete", () => 
       ],
     } as any),
     true,
+  );
+});
+
+test("does not count a failed external process warning as a completed file", () => {
+  assert.equal(
+    getCompletedPreparationStageCount({
+      stages: [
+        { id: "source", status: "complete" },
+        { id: "index", status: "complete" },
+        { id: "background", status: "complete" },
+        { id: "terminology", status: "complete" },
+        { id: "external", status: "warning" },
+      ],
+    } as any),
+    4,
   );
 });
 
@@ -140,8 +156,9 @@ test("renders file progress without background text or full error URLs", () => {
     "papertranslateforzotero-sidebar-stage-background": "论文背景",
     "papertranslateforzotero-sidebar-stage-external": "外部补充",
     "papertranslateforzotero-sidebar-stage-row": "{label}：{file}{suffix}",
-    "papertranslateforzotero-sidebar-stage-warning": "（完成，{detail}）",
-    "papertranslateforzotero-sidebar-stage-warning-default": "有来源受限",
+    "papertranslateforzotero-sidebar-stage-warning": "（警告：{detail}）",
+    "papertranslateforzotero-sidebar-stage-warning-default":
+      "外部补充流程未完成",
     "papertranslateforzotero-sidebar-stage-error": "（错误：{detail}）",
     "papertranslateforzotero-sidebar-stage-error-default": "文件无效",
   };
@@ -180,7 +197,7 @@ test("renders file progress without background text or full error URLs", () => {
           file: "background-sources.json",
           required: false,
           status: "warning",
-          detail: "1 个来源受限",
+          detail: "Codex 请求未完成",
         },
       ],
       integrityIssues: [
@@ -199,7 +216,7 @@ test("renders file progress without background text or full error URLs", () => {
       },
       {
         status: "warning",
-        text: "外部补充：background-sources.json（完成，1 个来源受限）",
+        text: "外部补充：background-sources.json（警告：Codex 请求未完成）",
       },
     ]);
     assert.doesNotMatch(
@@ -317,4 +334,38 @@ test("registers a visible Reader pane and binds a parent item to the active atta
 
   options.sectionButtons[0].onClick();
   assert.equal(openedPane, "papertranslateforzotero-preferences");
+});
+
+test("provides explicit MinerU image selection without PDF pixel capture", async () => {
+  const source = await readFile(
+    new URL("../src/modules/sidebar.ts", import.meta.url),
+    "utf8",
+  );
+  assert.match(source, /sidebar-image-select/);
+  assert.match(source, /startImageTextRecognition/);
+  assert.match(source, /sourceDirty = "false"/);
+  assert.doesNotMatch(source, /drawWindow|captureRegion/);
+});
+
+test("manual source and translation actions cancel in-flight image recognition", async () => {
+  const sidebarSource = await readFile(
+    new URL("../src/modules/sidebar.ts", import.meta.url),
+    "utf8",
+  );
+  const controllerSource = await readFile(
+    new URL("../src/ocr/controller.ts", import.meta.url),
+    "utf8",
+  );
+  assert.match(
+    sidebarSource,
+    /translate\.addEventListener\("click",[\s\S]*?cancelImageTextRecognition\(itemId\);[\s\S]*?addTranslateTask/u,
+  );
+  assert.match(
+    sidebarSource,
+    /function handleSidebarSourceInput[\s\S]*?cancelImageTextRecognition\(itemId\);[\s\S]*?getLastTranslateTask/u,
+  );
+  assert.match(
+    controllerSource,
+    /await persistCachedOcrText\([\s\S]*?assertRecognitionCurrent[\s\S]*?\);\s+assertActive\(params\.attachmentItemID, active\);\s+return text;/u,
+  );
 });

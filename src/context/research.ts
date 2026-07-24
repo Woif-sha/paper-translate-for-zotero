@@ -59,7 +59,12 @@ const activeKnowledgeCancellations = new Map<
 const MAXIMUM_CORE_TERMS = MAXIMUM_TERMINOLOGY_ENTRIES;
 const MAXIMUM_TRANSLATION_RISKS = 4;
 const MAXIMUM_OPEN_QUESTIONS = 3;
-const MAXIMUM_SEARCH_QUERIES = 3;
+export const EXTERNAL_RESEARCH_LIMITS = Object.freeze({
+  maximumQuestions: 3,
+  plannedSearchCalls: 2,
+  maximumObservedSearchCalls: 3,
+});
+const MAXIMUM_SEARCH_QUERIES = EXTERNAL_RESEARCH_LIMITS.maximumQuestions;
 const MAXIMUM_EXTERNAL_SOURCES = 3;
 const CORE_MAX_OUTPUT_CHARACTERS = 16_000;
 const EXTERNAL_MAX_OUTPUT_CHARACTERS = 8_000;
@@ -624,6 +629,7 @@ async function runExternalResearch(
     return;
   }
   let parsed: ReturnType<typeof parseResearchResult>;
+  let failurePhase: PreparationFailureKind = "request";
   try {
     const result = await runBoundedKnowledgeOperation({
       label: "论文外部知识补充",
@@ -642,9 +648,11 @@ async function runExternalResearch(
           requireWebSearch: false,
           maxOutputCharacters: EXTERNAL_MAX_OUTPUT_CHARACTERS,
           maxResponseBytes: EXTERNAL_MAX_RESPONSE_BYTES,
-          maxObservedWebSearchCalls: MAXIMUM_SEARCH_QUERIES,
+          maxObservedWebSearchCalls:
+            EXTERNAL_RESEARCH_LIMITS.maximumObservedSearchCalls,
         }),
     });
+    failurePhase = "response";
     assertKnowledgeRun(session, signal);
     parsed = parseResearchResult(result.text);
     if (parsed.sources.length && !result.usedWebSearch) {
@@ -663,7 +671,11 @@ async function runExternalResearch(
     }
   } catch (error) {
     if (!knowledgeSessionIsCurrent(session)) throw error;
-    const failureKind = classifyKnowledgeFailure(error, "request", signal);
+    const failureKind = classifyKnowledgeFailure(
+      error,
+      externalResponseFailure(error) ? "response" : failurePhase,
+      signal,
+    );
     if (failureKind === "user-stopped") {
       await setKnowledgeStage(context, session, attempt, undefined, {
         id: "external",
@@ -717,13 +729,12 @@ async function runExternalResearch(
       summary: parsed.summary,
       queries,
       sources: parsed.sources,
+      status: "complete",
       assertActive: () => assertKnowledgeRun(session, signal),
     });
     await setKnowledgeStage(context, session, attempt, signal, {
       id: "external",
-      status: parsed.sources.length ? "complete" : "warning",
-      detail: parsed.sources.length ? undefined : "未找到可用外部来源",
-      failureKind: parsed.sources.length ? undefined : "request",
+      status: "complete",
     });
   } catch (error) {
     if (!knowledgeSessionIsCurrent(session)) throw error;
@@ -767,7 +778,7 @@ async function markExternalPersistenceFailure(
   try {
     await setKnowledgeStage(context, session, attempt, signal, {
       id: "external",
-      status: "error",
+      status: "warning",
       detail: `外部知识文件写入失败：${detail}`,
       failureKind: "persistence",
     });
@@ -789,20 +800,21 @@ async function persistExternalWarning(
   failureKind: PreparationFailureKind,
 ): Promise<void> {
   const detail = conciseError(error);
+  const failure = externalProcessFailure(failureKind, detail);
   await persistBackgroundResearch({
     context,
     expectedAttempt: attempt,
     summary: "",
     queries,
     sources: [],
-    failures: [{ provider: "web-search", message: detail }],
+    failures: [{ provider: failure.provider, message: detail }],
     status: "warning",
     assertActive: () => assertKnowledgeRun(session, signal),
   });
   await setKnowledgeStage(context, session, attempt, signal, {
     id: "external",
     status: "warning",
-    detail: "1 个来源受限",
+    detail: failure.summary,
     failureKind,
   });
 }
@@ -822,7 +834,7 @@ async function stopStaleExternalPreparation(
       summary: "",
       queries,
       sources: [],
-      failures: [{ provider: "web-search", message: detail }],
+      failures: [{ provider: "knowledge-interruption", message: detail }],
       status: "warning",
       assertActive: () => assertKnowledgeRun(session, signal),
     });
@@ -830,7 +842,7 @@ async function stopStaleExternalPreparation(
       id: "external",
       status: "warning",
       detail,
-      failureKind: "legacy-unclassified",
+      failureKind: "interrupted",
     });
   } catch (error) {
     if (!knowledgeSessionIsCurrent(session)) throw error;
@@ -1430,6 +1442,51 @@ function classifyKnowledgeFailure(
   if (signal?.aborted || /用户已停止/u.test(message)) return "user-stopped";
   if (/秒内未结束/u.test(message)) return "timeout";
   return phase;
+}
+
+function externalProcessFailure(
+  kind: PreparationFailureKind,
+  detail: string,
+): { provider: string; summary: string } {
+  switch (kind) {
+    case "request":
+      return {
+        provider: "codex-request",
+        summary: `外部知识请求失败：${detail}`,
+      };
+    case "response":
+      return {
+        provider: "codex-response",
+        summary: `外部知识响应无效：${detail}`,
+      };
+    case "timeout":
+      return {
+        provider: "knowledge-timeout",
+        summary: `外部知识请求超时：${detail}`,
+      };
+    case "interrupted":
+      return {
+        provider: "knowledge-interruption",
+        summary: `外部知识任务中断：${detail}`,
+      };
+    case "persistence":
+      return {
+        provider: "knowledge-persistence",
+        summary: `外部知识文件写入失败：${detail}`,
+      };
+    default:
+      return {
+        provider: "knowledge-preparation",
+        summary: `外部知识流程失败：${detail}`,
+      };
+  }
+}
+
+function externalResponseFailure(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return /Codex (?:legacy response|visible output|web search|URL citation|streaming response|background research)|invalid JSON|without (?:a matching URL citation|sources)|missing summary or sources|invalid sourceLevel|invalid URL|must use HTTPS/u.test(
+    message,
+  );
 }
 
 function normalizeUrl(value: string): string {
