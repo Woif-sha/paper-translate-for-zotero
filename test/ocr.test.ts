@@ -510,6 +510,31 @@ test("reflows visual OCR wrapping without flattening semantic structure", () => 
   );
 });
 
+test("releases failed OCR ownership before publishing the retryable error state", async () => {
+  const source = await readFile(
+    new URL("../src/ocr/controller.ts", import.meta.url),
+    "utf8",
+  );
+  const start = source.indexOf(
+    "export async function startImageTextRecognition",
+  );
+  const end = source.indexOf(
+    "export function cancelImageTextRecognition",
+    start,
+  );
+  const lifecycle = source.slice(start, end);
+  const release = lifecycle.indexOf(
+    "activeRecognitions.delete(params.attachmentItemID)",
+  );
+  const terminalError = lifecycle.lastIndexOf('phase: "error"');
+
+  assert.ok(release >= 0 && terminalError >= 0);
+  assert.ok(
+    release < terminalError,
+    "the error refresh must observe that OCR is no longer active",
+  );
+});
+
 test("strictly parses OCR JSON while preserving meaningful line breaks", () => {
   assert.equal(
     parseCodexOcrResponse('{"text":"first line\\nE = mc²"}'),
