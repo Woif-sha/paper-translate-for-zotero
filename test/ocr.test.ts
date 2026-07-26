@@ -490,6 +490,26 @@ test("builds a fixed legacy OCR request with one high-detail image", () => {
   assert.equal((request as Record<string, unknown>).max_tool_calls, undefined);
 });
 
+test("reflows visual OCR wrapping without flattening semantic structure", () => {
+  assert.equal(OCR_PROMPT_VERSION, "2");
+  assert.match(
+    OCR_DEVELOPER_INSTRUCTIONS,
+    /Return text in semantic reading units, not raw visual rows/u,
+  );
+  assert.match(
+    OCR_DEVELOPER_INSTRUCTIONS,
+    /Join line breaks caused only by visual wrapping inside one coherent label, phrase, or sentence with a single space/u,
+  );
+  assert.match(
+    OCR_DEVELOPER_INSTRUCTIONS,
+    /Preserve line breaks only between distinct labels, list items, table rows or cells, paragraphs, captions, and formula lines/u,
+  );
+  assert.doesNotMatch(
+    OCR_DEVELOPER_INSTRUCTIONS,
+    /Preserve visible line breaks/u,
+  );
+});
+
 test("strictly parses OCR JSON while preserving meaningful line breaks", () => {
   assert.equal(
     parseCodexOcrResponse('{"text":"first line\\nE = mc²"}'),
