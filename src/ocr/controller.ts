@@ -60,7 +60,7 @@ export async function startImageTextRecognition(params: {
   };
   activeRecognitions.set(params.attachmentItemID, active);
   publishState(params.attachmentItemID, active, { phase: "selecting" });
-  let failed = false;
+  let failureDetail: string | undefined;
   try {
     const context = await preparePaperContext(params.attachmentItemID, "");
     assertReaderMatchesContext(params.reader, context);
@@ -122,18 +122,18 @@ export async function startImageTextRecognition(params: {
     return text;
   } catch (error) {
     if (!isCancellation(error, controller.signal)) {
-      failed = true;
-      publishState(params.attachmentItemID, active, {
-        phase: "error",
-        detail: conciseError(error),
-      });
+      failureDetail = conciseError(error);
     }
     throw error;
   } finally {
     if (activeRecognitions.get(params.attachmentItemID) === active) {
       activeRecognitions.delete(params.attachmentItemID);
-      if (!controller.signal.aborted && !failed) {
-        active.notify({ phase: "idle" });
+      if (!controller.signal.aborted) {
+        active.notify(
+          failureDetail
+            ? { phase: "error", detail: failureDetail }
+            : { phase: "idle" },
+        );
       }
     }
   }

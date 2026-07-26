@@ -490,6 +490,51 @@ test("builds a fixed legacy OCR request with one high-detail image", () => {
   assert.equal((request as Record<string, unknown>).max_tool_calls, undefined);
 });
 
+test("reflows visual OCR wrapping without flattening semantic structure", () => {
+  assert.equal(OCR_PROMPT_VERSION, "2");
+  assert.match(
+    OCR_DEVELOPER_INSTRUCTIONS,
+    /Return text in semantic reading units, not raw visual rows/u,
+  );
+  assert.match(
+    OCR_DEVELOPER_INSTRUCTIONS,
+    /Join line breaks caused only by visual wrapping inside one coherent label, phrase, or sentence with a single space/u,
+  );
+  assert.match(
+    OCR_DEVELOPER_INSTRUCTIONS,
+    /Preserve line breaks only between distinct labels, list items, table rows or cells, paragraphs, captions, and formula lines/u,
+  );
+  assert.doesNotMatch(
+    OCR_DEVELOPER_INSTRUCTIONS,
+    /Preserve visible line breaks/u,
+  );
+});
+
+test("releases failed OCR ownership before publishing the retryable error state", async () => {
+  const source = await readFile(
+    new URL("../src/ocr/controller.ts", import.meta.url),
+    "utf8",
+  );
+  const start = source.indexOf(
+    "export async function startImageTextRecognition",
+  );
+  const end = source.indexOf(
+    "export function cancelImageTextRecognition",
+    start,
+  );
+  const lifecycle = source.slice(start, end);
+  const release = lifecycle.indexOf(
+    "activeRecognitions.delete(params.attachmentItemID)",
+  );
+  const terminalError = lifecycle.lastIndexOf('phase: "error"');
+
+  assert.ok(release >= 0 && terminalError >= 0);
+  assert.ok(
+    release < terminalError,
+    "the error refresh must observe that OCR is no longer active",
+  );
+});
+
 test("strictly parses OCR JSON while preserving meaningful line breaks", () => {
   assert.equal(
     parseCodexOcrResponse('{"text":"first line\\nE = mc²"}'),
