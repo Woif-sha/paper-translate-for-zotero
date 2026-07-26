@@ -20,9 +20,9 @@ export async function selectReaderImageRegion(params: {
 }): Promise<ReaderImageRegion | null> {
   const view = resolveActiveReaderView(params.reader);
   const doc = resolveReaderViewDocument(view);
-  const pages = collectRenderedPages(doc);
+  const pages = collectPageContainers(doc);
   if (!pages.length) {
-    throw new Error("The active Reader view has no rendered PDF pages");
+    throw new Error("The active Reader view has no PDF page containers");
   }
   const rotationForPage = (pageIndex: number) =>
     resolvePageRotation(view, pageIndex);
@@ -106,7 +106,7 @@ function resolveReaderViewDocument(view: any): Document {
   throw new Error("Cannot access the active PDF Reader document");
 }
 
-function collectRenderedPages(doc: Document): HTMLElement[] {
+function collectPageContainers(doc: Document): HTMLElement[] {
   const seen = new Set<number>();
   const pages: HTMLElement[] = [];
   for (const page of doc.querySelectorAll(PAGE_SELECTOR)) {
@@ -303,13 +303,13 @@ function createRegionSelectionOverlay(params: {
   });
 }
 
-function findContainingPage(
-  pages: HTMLElement[],
+export function findContainingPage(
+  pages: readonly HTMLElement[],
   selection: [number, number, number, number],
 ): HTMLElement {
   const tolerance = 1;
   const matches = pages.filter((page) => {
-    const rect = getRenderedPageSurfaceRect(page);
+    const rect = getPageContainerRect(page);
     return (
       selection[0] >= rect.left - tolerance &&
       selection[1] >= rect.top - tolerance &&
@@ -323,16 +323,22 @@ function findContainingPage(
   return matches[0];
 }
 
-function getRenderedPageSurfaceRect(page: HTMLElement): DOMRect {
-  const surface = page.querySelector(
-    ".canvasWrapper canvas, canvas",
-  ) as HTMLElement | null;
+function getPageContainerRect(page: HTMLElement): DOMRect {
+  const rect = page.getBoundingClientRect();
+  if (rect.width <= 0 || rect.height <= 0) {
+    throw new Error("Reader page container has invalid geometry");
+  }
+  return rect;
+}
+
+export function getRenderedPageSurfaceRect(page: HTMLElement): DOMRect {
+  const surface = page.querySelector(".canvasWrapper") as HTMLElement | null;
   if (!surface) {
-    throw new Error("The selected PDF page has no rendered canvas geometry");
+    throw new Error("The selected PDF page has not finished rendering");
   }
   const rect = surface.getBoundingClientRect();
   if (rect.width <= 0 || rect.height <= 0) {
-    throw new Error("The selected PDF page has invalid canvas geometry");
+    throw new Error("The selected PDF page has invalid surface geometry");
   }
   return rect;
 }
