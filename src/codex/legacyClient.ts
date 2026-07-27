@@ -548,8 +548,22 @@ async function refreshCodexAccessTokenNow(
     signal,
   });
   if (!response.ok) {
+    const detail = await response.text();
+    if (refreshTokenWasRejected(response.status, detail)) {
+      const currentAfterFailure = await readCodexAuthDocument(auth.authPath);
+      assertSignalActive(signal);
+      const changed = codexAuthStateIfAccessChanged(
+        auth.authPath,
+        currentAfterFailure,
+        currentAccessToken,
+      );
+      if (changed) return changed;
+      throw new Error(
+        `Codex token refresh failed: ${response.status} ${response.statusText} - ${detail}. Run codex login again.`,
+      );
+    }
     throw new Error(
-      `Codex token refresh failed: ${response.status} ${response.statusText} - ${await response.text()}`,
+      `Codex token refresh failed: ${response.status} ${response.statusText} - ${detail}`,
     );
   }
   const payload = (await response.json()) as {
@@ -608,6 +622,28 @@ async function refreshCodexAccessTokenNow(
     { tmpPath: `${auth.authPath}.paper-translate.tmp` },
   );
   return { authPath: auth.authPath, accessToken, refreshToken, document };
+}
+
+function refreshTokenWasRejected(status: number, detail: string): boolean {
+  if (status !== 400 && status !== 401) return false;
+  return /refresh_token_reused|invalid_grant|refresh token.{0,80}(?:already been used|invalid|expired)/iu.test(
+    detail,
+  );
+}
+
+function codexAuthStateIfAccessChanged(
+  authPath: string,
+  document: CodexAuthJson,
+  previousAccessToken: string,
+): CodexAuthState | null {
+  const accessToken = tokenValue(document.tokens?.access_token);
+  if (!accessToken || accessToken === previousAccessToken) return null;
+  return {
+    authPath,
+    accessToken,
+    refreshToken: tokenValue(document.tokens?.refresh_token),
+    document,
+  };
 }
 
 function assertSignalActive(signal: AbortSignal): void {
