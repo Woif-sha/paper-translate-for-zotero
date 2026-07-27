@@ -3,6 +3,7 @@ import test from "node:test";
 import {
   createProviderGroup,
   flattenRuntimeModels,
+  getModelProviderConfiguration,
   migrateLegacyModelConfiguration,
   resolveDraftRuntimeModel,
   setActiveModelId,
@@ -21,7 +22,7 @@ test("migrates the existing Codex preferences into the active Codex provider", (
   assert.equal(migrated.providers.length, 1);
   assert.deepEqual(migrated.providers[0], {
     id: "provider-codex",
-    name: "Codex",
+    name: "服务商 A",
     authMode: "codex_auth",
     apiBase: "https://chatgpt.com/backend-api/codex/responses",
     apiKey: "",
@@ -34,6 +35,7 @@ test("migrates the existing Codex preferences into the active Codex provider", (
     ],
   });
   assert.equal(migrated.activeModelId, "model-codex-gpt-5-4");
+  assert.equal(migrated.schemaVersion, 2);
 });
 
 test("flattens multiple providers while preserving one explicit active model", () => {
@@ -167,4 +169,68 @@ test("notifies both model-selection interfaces from the shared active model pref
   unsubscribe();
   setActiveModelId(codex.activeModelId);
   assert.equal(notifications, 1);
+});
+
+test("upgrades the first saved provider name without changing user providers", () => {
+  const preferences = new Map<string, unknown>();
+  const prefix = "extensions.zotero.PaperTranslateForZotero";
+  preferences.set(
+    `${prefix}.paper.modelProviders`,
+    JSON.stringify({
+      schemaVersion: 1,
+      providers: [
+        {
+          id: "provider-codex",
+          name: "Codex",
+          authMode: "codex_auth",
+          apiBase: "https://chatgpt.com/backend-api/codex/responses",
+          apiKey: "",
+          models: [
+            {
+              id: "model-codex",
+              model: "gpt-5.4",
+              effort: "medium",
+            },
+          ],
+        },
+        {
+          id: "provider-custom",
+          name: "我的服务商",
+          authMode: "openai_compatible",
+          apiBase: "https://api.example.com/v1",
+          apiKey: "secret",
+          models: [
+            {
+              id: "model-custom",
+              model: "custom-model",
+              effort: "",
+            },
+          ],
+        },
+      ],
+    }),
+  );
+  preferences.set(`${prefix}.paper.activeModelId`, "model-codex");
+  (globalThis as any).Zotero = {
+    Prefs: {
+      get(key: string) {
+        return preferences.get(key);
+      },
+      set(key: string, value: unknown) {
+        preferences.set(key, value);
+      },
+    },
+  };
+
+  const upgraded = getModelProviderConfiguration();
+
+  assert.equal(upgraded.schemaVersion, 2);
+  assert.deepEqual(
+    upgraded.providers.map((provider) => provider.name),
+    ["服务商 A", "我的服务商"],
+  );
+  assert.match(
+    String(preferences.get(`${prefix}.paper.modelProviders`)),
+    /"schemaVersion":2/u,
+  );
 });

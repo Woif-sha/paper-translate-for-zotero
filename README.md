@@ -52,7 +52,7 @@ full.md
 3. 点击右上角齿轮，选择“从文件安装插件”，然后选中 XPI。
 4. 重启 Zotero。
 
-首次安装会把原有 Codex 设置迁移为一个名为 `Codex` 的服务商，默认使用：
+首次安装会把原有 Codex 设置迁移为“服务商 A”，默认使用：
 
 ```text
 认证模式：Codex Auth
@@ -61,7 +61,7 @@ API URL：https://chatgpt.com/backend-api/codex/responses
 推理强度：medium
 ```
 
-设置页可以添加多个服务商，每个服务商选择 `Codex Auth` 或 `OpenAI Compatible`，并添加多个模型 ID。`OpenAI Compatible` 服务商必须填写名称、HTTPS API Base、API Key 和至少一个模型，缺少任何一项都不能保存。API Base 可以填写版本根地址或完整的 `/chat/completions` 地址。
+设置页可以添加多个服务商，默认依次命名为“服务商 A”“服务商 B”等，名称可以直接修改。每个服务商选择 `Codex Auth` 或 `OpenAI Compatible`，并添加多个模型 ID。`OpenAI Compatible` 服务商必须填写名称、HTTPS API Base、API Key 和至少一个模型，缺少任何一项都不能保存。API Base 可以填写版本根地址或完整的 `/chat/completions` 地址。
 
 所有已保存模型中始终只有一个“当前模型”。设置页和 Reader 侧栏共用这项选择；切换后，翻译、论文背景、术语、外部补充和图片 OCR 都只使用这个模型，不会混用其他服务商，也不会在请求失败时自动回退。连接测试只用于帮助用户检查配置，不是保存或选择模型的前置条件。
 

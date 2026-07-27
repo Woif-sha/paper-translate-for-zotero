@@ -14,7 +14,7 @@ function configuration(
   activeModelId = "model-codex",
 ): ModelProviderConfiguration {
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     activeModelId,
     providers: [
       {
@@ -77,7 +77,7 @@ function dependencies(current: ModelProviderConfiguration): {
       setConfiguration(providers, activeModelId) {
         calls.push(`save:${activeModelId}`);
         return {
-          schemaVersion: 1,
+          schemaVersion: 2,
           providers,
           activeModelId,
         };
