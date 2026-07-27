@@ -12,6 +12,7 @@
 
 ### 调整
 
+- 修复 Codex CLI 或其他插件与本插件同时轮换单次 refresh token 时，本插件直接暴露 `refresh_token_reused` 的竞态。刷新被认证服务器拒绝后，本插件会重新读取同一个 `auth.json`：仅在发现外部已写入不同的新 access token 时继续原请求；文件未变化时停止并明确提示执行 `codex login`，不会重复使用旧 refresh token。
 - 修复 `Codex Auth` 在插件模块无法取得 XPCOM `nsIFile` 接口时，解析 `auth.json` 路径会抛出 `SyntaxError: An invalid or illegal string was specified` 的问题。认证路径现在按 `llm-for-zotero` 的顺序优先读取环境变量和 Zotero `PathUtils.homeDir`，仅在接口明确可用时调用目录服务。
 - 修复部分 Reader 实例 ID 包含 CSS 保留字符时，Codex Auth 流式译文刷新会触发 `SyntaxError: An invalid or illegal string was specified` 的问题。浮窗控件改为按精确 DOM ID 查找，不再把动态实例 ID 解析为 CSS 选择器。
 - OpenAI-compatible 服务商明确拒绝 `image_url`、多模态或视觉输入时，图片取词改为显示“当前模型不支持图片输入”，不再向用户暴露底层 JSON 反序列化错误。认证、额度和其他请求错误仍保留原始原因。

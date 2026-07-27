@@ -579,6 +579,158 @@ test("preserves a Codex CLI token changed while OAuth refresh is running", async
   }
 });
 
+test("adopts credentials rotated by Codex CLI after a rejected refresh", async () => {
+  const previousServices = (globalThis as any).Services;
+  const previousIO = (globalThis as any).IOUtils;
+  const previousToolkit = (globalThis as any).ztoolkit;
+  let authDocument: Record<string, any> = {
+    tokens: { access_token: "old-access", refresh_token: "old-refresh" },
+  };
+  let authWrites = 0;
+  const requestTokens: string[] = [];
+  const successfulStream = [
+    'data: {"type":"response.output_text.delta","delta":"OK"}',
+    "",
+    'data: {"type":"response.completed","response":{}}',
+    "",
+  ].join("\n");
+  (globalThis as any).Services = {
+    env: { get: (name: string) => (name === "CODEX_HOME" ? "E:\\Codex" : "") },
+  };
+  (globalThis as any).IOUtils = {
+    async read() {
+      return new TextEncoder().encode(JSON.stringify(authDocument));
+    },
+    async write() {
+      authWrites += 1;
+    },
+  };
+  (globalThis as any).ztoolkit = {
+    getGlobal(name: string) {
+      assert.equal(name, "fetch");
+      return async (url: string, init: RequestInit) => {
+        if (url.includes("/oauth/token")) {
+          authDocument = {
+            ...authDocument,
+            tokens: {
+              access_token: "cli-new-access",
+              refresh_token: "cli-new-refresh",
+            },
+          };
+          return Response.json(
+            {
+              error: {
+                message:
+                  "Your refresh token has already been used to generate a new access token.",
+                type: "invalid_request_error",
+                param: null,
+                code: "refresh_token_reused",
+              },
+            },
+            { status: 401, statusText: "Unauthorized" },
+          );
+        }
+        const authorization = (init.headers as Record<string, string>)[
+          "Authorization"
+        ];
+        requestTokens.push(authorization);
+        if (authorization === "Bearer old-access") {
+          return new Response("unauthorized", { status: 401 });
+        }
+        assert.equal(authorization, "Bearer cli-new-access");
+        return new Response(successfulStream, { status: 200 });
+      };
+    },
+  };
+
+  try {
+    const result = await runLegacyCodexRequest({
+      apiUrl: DEFAULT_CODEX_API_URL,
+      model: "gpt-5.4",
+      instructions: "Reply with OK.",
+      prompt: "OK",
+    });
+    assert.equal(result.text, "OK");
+    assert.deepEqual(requestTokens, [
+      "Bearer old-access",
+      "Bearer cli-new-access",
+    ]);
+    assert.equal(authWrites, 0);
+  } finally {
+    cancelActiveCodexAuthRefreshes();
+    (globalThis as any).Services = previousServices;
+    (globalThis as any).IOUtils = previousIO;
+    (globalThis as any).ztoolkit = previousToolkit;
+  }
+});
+
+test("reports a stale reused refresh token without retrying it", async () => {
+  const previousServices = (globalThis as any).Services;
+  const previousIO = (globalThis as any).IOUtils;
+  const previousToolkit = (globalThis as any).ztoolkit;
+  const authDocument = {
+    tokens: { access_token: "old-access", refresh_token: "old-refresh" },
+  };
+  let authWrites = 0;
+  let requestCalls = 0;
+  let refreshCalls = 0;
+  (globalThis as any).Services = {
+    env: { get: (name: string) => (name === "CODEX_HOME" ? "E:\\Codex" : "") },
+  };
+  (globalThis as any).IOUtils = {
+    async read() {
+      return new TextEncoder().encode(JSON.stringify(authDocument));
+    },
+    async write() {
+      authWrites += 1;
+    },
+  };
+  (globalThis as any).ztoolkit = {
+    getGlobal(name: string) {
+      assert.equal(name, "fetch");
+      return async (url: string) => {
+        if (!url.includes("/oauth/token")) {
+          requestCalls += 1;
+          return new Response("unauthorized", { status: 401 });
+        }
+        refreshCalls += 1;
+        return Response.json(
+          {
+            error: {
+              message:
+                "Your refresh token has already been used to generate a new access token.",
+              type: "invalid_request_error",
+              param: null,
+              code: "refresh_token_reused",
+            },
+          },
+          { status: 401, statusText: "Unauthorized" },
+        );
+      };
+    },
+  };
+
+  try {
+    await assert.rejects(
+      runLegacyCodexRequest({
+        apiUrl: DEFAULT_CODEX_API_URL,
+        model: "gpt-5.4",
+        instructions: "Reply with OK.",
+        prompt: "OK",
+      }),
+      /refresh_token_reused.*Run codex login again/su,
+    );
+    assert.equal(requestCalls, 1);
+    assert.equal(refreshCalls, 1);
+    assert.equal(authWrites, 0);
+  } finally {
+    cancelActiveCodexAuthRefreshes();
+    (globalThis as any).Services = previousServices;
+    (globalThis as any).IOUtils = previousIO;
+    (globalThis as any).ztoolkit = previousToolkit;
+  }
+});
+
 test("does not write auth after a resolved refresh response is cancelled", async () => {
   const previousServices = (globalThis as any).Services;
   const previousIO = (globalThis as any).IOUtils;

@@ -67,6 +67,8 @@ API URL：https://chatgpt.com/backend-api/codex/responses
 
 `Codex Auth` 读取 Codex CLI 的登录凭据；默认位置是 `~/.codex/auth.json`，设置 `CODEX_HOME` 后则读取该目录下的 `auth.json`。`OpenAI Compatible` 只发送最小 Chat Completions 请求，不根据模型名称猜测能力，也不自动添加 temperature、reasoning 或 token 参数。API Key 保存在 Zotero 插件偏好中，不写入论文上下文、日志或导出文件。
 
+如果 Codex 模型测试提示 refresh token 已使用，先关闭可能同时调用 Codex Auth 的任务，再在终端重新执行 `codex login`。本插件会接管 Codex CLI 已写回的新 access token，但不会重复使用认证服务器已经拒绝的 refresh token。
+
 ## 使用
 
 打开一篇已经生成 MinerU Markdown 的论文。Reader 侧栏会显示论文标题、`MD` 标记和五个文件阶段：
