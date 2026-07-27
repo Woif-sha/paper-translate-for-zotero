@@ -647,12 +647,27 @@ async function readCodexAuthDocument(authPath: string): Promise<CodexAuthJson> {
 function resolveCodexAuthPath(): string {
   const codexHome = Services.env.get("CODEX_HOME")?.trim();
   if (codexHome) return joinPath(codexHome, "auth.json");
+  const environmentHome =
+    Services.env.get("HOME")?.trim() || Services.env.get("USERPROFILE")?.trim();
+  if (environmentHome) {
+    return joinPath(environmentHome, ".codex", "auth.json");
+  }
+  const pathUtils = (
+    globalThis as unknown as { PathUtils?: { homeDir?: string } }
+  ).PathUtils;
+  const pathUtilsHome = pathUtils?.homeDir?.trim();
+  if (pathUtilsHome) {
+    return joinPath(pathUtilsHome, ".codex", "auth.json");
+  }
   const interfaces = globalThis as unknown as {
     Ci?: { nsIFile?: unknown };
     Components?: { interfaces?: { nsIFile?: unknown } };
   };
   const nsIFile =
     interfaces.Ci?.nsIFile ?? interfaces.Components?.interfaces?.nsIFile;
+  if (!nsIFile) {
+    throw new Error("Unable to resolve the home directory for Codex auth");
+  }
   const homeDir = (
     Services.dirsvc.get("Home", nsIFile as any) as { path?: string }
   ).path?.trim();
