@@ -34,6 +34,10 @@ import {
   type ImageTextRecognitionState,
 } from "../ocr/controller";
 import { FluentMessageId } from "../../typings/i10n";
+import {
+  ensureTranslationDisplayStyles,
+  renderTranslationDisplay,
+} from "./translationDisplay";
 
 const activeBodies = new Set<HTMLElement>();
 const preparationJobs = new Map<number, Promise<void>>();
@@ -182,6 +186,7 @@ export function monitorReaderSidebarLearning(
 function buildSidebar(body: HTMLElement): void {
   if (body.querySelector(`.${config.addonRef}-sidebar`)) return;
   const doc = body.ownerDocument;
+  ensureTranslationDisplayStyles(doc);
   const container = element(doc, "div", `${config.addonRef}-sidebar`);
   Object.assign(container.style, {
     display: "flex",
@@ -323,11 +328,20 @@ function buildSidebar(body: HTMLElement): void {
     updateSidebarBody(body);
     dispatchTranslateTask(task);
   });
-  const result = element(doc, "textarea", `${config.addonRef}-sidebar-result`);
-  result.rows = 8;
-  result.readOnly = true;
-  result.placeholder = getString(getSidebarResultPlaceholderKey());
-  applyTextareaStyle(result);
+  const result = element(
+    doc,
+    "div",
+    `${config.addonRef}-sidebar-result ${config.addonRef}-translation-display`,
+  );
+  result.setAttribute("role", "textbox");
+  result.setAttribute("aria-readonly", "true");
+  result.tabIndex = 0;
+  applyResultStyle(result);
+  renderTranslationDisplay(
+    result,
+    "",
+    getString(getSidebarResultPlaceholderKey()),
+  );
   const imageTools = element(doc, "div", `${config.addonRef}-image-tools`);
   Object.assign(imageTools.style, {
     display: "flex",
@@ -391,7 +405,7 @@ function resetSidebarBody(body: HTMLElement): void {
   ) as HTMLTextAreaElement | null;
   const result = body.querySelector(
     `.${config.addonRef}-sidebar-result`,
-  ) as HTMLTextAreaElement | null;
+  ) as HTMLElement | null;
   const translate = body.querySelector(
     `.${config.addonRef}-sidebar-translate`,
   ) as HTMLButtonElement | null;
@@ -414,7 +428,12 @@ function resetSidebarBody(body: HTMLElement): void {
   if (meta) meta.textContent = "";
   if (badge) badge.hidden = true;
   if (source) source.value = "";
-  if (result) result.value = "";
+  if (result)
+    renderTranslationDisplay(
+      result,
+      "",
+      getString(getSidebarResultPlaceholderKey()),
+    );
   if (translate) translate.disabled = true;
   if (imageSelect) imageSelect.disabled = true;
   if (imageStatus) {
@@ -1190,7 +1209,7 @@ function updateSidebarBody(body: HTMLElement): void {
   ) as HTMLTextAreaElement | null;
   const result = body.querySelector(
     `.${config.addonRef}-sidebar-result`,
-  ) as HTMLTextAreaElement | null;
+  ) as HTMLElement | null;
   const translate = body.querySelector(
     `.${config.addonRef}-sidebar-translate`,
   ) as HTMLButtonElement | null;
@@ -1198,13 +1217,17 @@ function updateSidebarBody(body: HTMLElement): void {
     `.${config.addonRef}-image-select`,
   ) as HTMLButtonElement | null;
   if (!source || !result || !translate) return;
-  result.placeholder = getString(getSidebarResultPlaceholderKey());
+  const placeholder = getString(getSidebarResultPlaceholderKey());
   renderImageRecognition(
     body,
     imageRecognitionStates.get(itemId) || { phase: "idle" },
   );
   if (!Number.isInteger(itemId) || itemId <= 0) {
-    result.value = getString("sidebar-no-attachment");
+    renderTranslationDisplay(
+      result,
+      getString("sidebar-no-attachment"),
+      placeholder,
+    );
     translate.disabled = true;
     if (imageSelect) imageSelect.disabled = true;
     return;
@@ -1225,19 +1248,21 @@ function updateSidebarBody(body: HTMLElement): void {
       imageTextRecognitionIsActive(itemId);
   }
   if (sourceDirty) {
-    result.value = "";
+    renderTranslationDisplay(result, "", placeholder);
     translate.disabled = !paperReady || !normalizeTaskText(source.value);
     return;
   }
   if (!task) {
-    result.value = "";
+    renderTranslationDisplay(result, "", placeholder);
     translate.disabled = !paperReady || !source.value.trim();
     return;
   }
   if (source.ownerDocument.activeElement !== source) source.value = task.raw;
-  result.value = task.result;
-  if (task.status === "processing")
-    result.placeholder = getString(getSidebarResultPlaceholderKey(task.status));
+  renderTranslationDisplay(
+    result,
+    task.result,
+    getString(getSidebarResultPlaceholderKey(task.status)),
+  );
   translate.disabled = !paperReady || task.status === "processing";
 }
 
@@ -1334,6 +1359,24 @@ function applyTextareaStyle(textarea: HTMLTextAreaElement): void {
     color: "var(--fill-primary)",
     background: "var(--material-background)",
     font: "inherit",
+  });
+}
+
+function applyResultStyle(result: HTMLElement): void {
+  Object.assign(result.style, {
+    boxSizing: "border-box",
+    width: "100%",
+    height: "128px",
+    minHeight: "128px",
+    maxHeight: "128px",
+    overflowY: "auto",
+    border: "1px solid var(--fill-quinary)",
+    borderRadius: "6px",
+    padding: "8px",
+    color: "var(--fill-primary)",
+    background: "var(--material-background)",
+    font: "inherit",
+    userSelect: "text",
   });
 }
 

@@ -347,6 +347,22 @@ test("provides explicit MinerU image selection without PDF pixel capture", async
   assert.doesNotMatch(source, /drawWindow|captureRegion/);
 });
 
+test("renders sidebar translations through the shared Markdown and math display", async () => {
+  const source = await readFile(
+    new URL("../src/modules/sidebar.ts", import.meta.url),
+    "utf8",
+  );
+  assert.match(source, /renderTranslationDisplay/);
+  assert.match(
+    source,
+    /element\(\s*doc,\s*"div",\s*`\$\{config\.addonRef\}-sidebar-result/u,
+  );
+  assert.doesNotMatch(
+    source,
+    /element\(doc,\s*"textarea",\s*`\$\{config\.addonRef\}-sidebar-result/u,
+  );
+});
+
 test("manual source and translation actions cancel in-flight image recognition", async () => {
   const sidebarSource = await readFile(
     new URL("../src/modules/sidebar.ts", import.meta.url),

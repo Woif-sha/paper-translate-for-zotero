@@ -8,6 +8,7 @@
 - Keep this plugin's Codex requests, prompts, history, preferences and context directory independent from `llm-for-zotero`.
 - Background may disambiguate translation but the default UI returns only translated text.
 - Reader selection cleanup may remove proven page furniture such as IEEE copyright, download and authorization notices, but must preserve semantic paragraphs, bullets and list order. Translation output must retain those boundaries.
+- Render translation Markdown and LaTeX through the single shared display module. Raw model HTML must stay disabled, KaTeX must remain untrusted and locally bounded, and the task's plain string result remains the only translation source of truth.
 - Never silently switch protocol, provider, model, endpoint or context source. Surface every failure.
 - Never fabricate a web result, citation, successful translation or cache record.
 - Translation readiness depends only on validated source and index files. Paper-derived background, terminology and external research run incrementally in the background and must never delay a translation request.

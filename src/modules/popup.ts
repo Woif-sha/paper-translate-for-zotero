@@ -8,6 +8,10 @@ import {
   normalizeTaskText,
 } from "../utils/task";
 import { cancelActiveTranslation } from "../backends/translator";
+import {
+  ensureTranslationDisplayStyles,
+  renderTranslationDisplay,
+} from "./translationDisplay";
 
 export function updateReaderPopup() {
   const popup = addon.data.popup.currentPopup;
@@ -21,26 +25,30 @@ export function updateReaderPopup() {
   const source = popup.querySelector(
     `#${prefix}-source`,
   ) as HTMLTextAreaElement | null;
-  const result = popup.querySelector(
-    `#${prefix}-result`,
-  ) as HTMLTextAreaElement | null;
+  const result = popup.querySelector(`#${prefix}-result`) as HTMLElement | null;
   const button = popup.querySelector(
     `#${prefix}-translate`,
   ) as HTMLButtonElement | null;
   if (!source || !result || !button) return;
   const task = getPopupTask(popup, itemId);
   if (!task) {
-    result.value = "";
-    result.placeholder = getString("sidebar-result-placeholder");
+    renderTranslationDisplay(
+      result,
+      "",
+      getString("sidebar-result-placeholder"),
+    );
     button.disabled = true;
     return;
   }
   if (source.ownerDocument.activeElement !== source) source.value = task.raw;
-  result.value = task.result;
-  result.placeholder = getString(
-    task.status === "processing"
-      ? "status-translating"
-      : "sidebar-result-placeholder",
+  renderTranslationDisplay(
+    result,
+    task.result,
+    getString(
+      task.status === "processing"
+        ? "status-translating"
+        : "sidebar-result-placeholder",
+    ),
   );
   button.disabled = task.status === "processing" || !task.raw.trim();
 }
@@ -57,6 +65,7 @@ export function buildReaderPopup(
   const popup = doc.querySelector(".selection-popup") as HTMLDivElement;
   const prefix = `${config.addonRef}-${reader._instanceID}`;
   addon.data.popup.currentPopup = popup;
+  ensureTranslationDisplayStyles(doc);
   popup.style.maxWidth = "none";
   popup.setAttribute(`${config.addonRef}-prefix`, prefix);
   popup.setAttribute(`${config.addonRef}-attachment-item-id`, String(itemId));
@@ -161,14 +170,18 @@ export function buildReaderPopup(
               ignoreIfExists: true,
             },
             {
-              tag: "textarea",
+              tag: "div",
+              namespace: "html",
               id: `${prefix}-result`,
               attributes: {
-                rows: "3",
-                readonly: "true",
-                placeholder: getString("sidebar-result-placeholder"),
+                role: "textbox",
+                "aria-readonly": "true",
+                tabindex: "0",
               },
-              classList: [`${config.addonRef}-readerpopup`],
+              classList: [
+                `${config.addonRef}-readerpopup`,
+                `${config.addonRef}-translation-display`,
+              ],
               styles: { ...textStyle, background: "transparent" },
               properties: {
                 spellcheck: false,
