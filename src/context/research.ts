@@ -655,20 +655,7 @@ async function runExternalResearch(
     failurePhase = "response";
     assertKnowledgeRun(session, signal);
     parsed = parseResearchResult(result.text);
-    if (parsed.sources.length && !result.usedWebSearch) {
-      throw new Error(
-        "Codex returned external sources without a web search event",
-      );
-    }
-    const citedUrls = new Set(result.citedUrls.map(normalizeUrl));
-    const uncited = parsed.sources.find(
-      (source) => !citedUrls.has(normalizeUrl(source.url)),
-    );
-    if (uncited) {
-      throw new Error(
-        `Codex returned an external source without a matching URL citation: ${uncited.title}`,
-      );
-    }
+    parsed = retainFullyCitedResearchResult(parsed, result);
   } catch (error) {
     if (!knowledgeSessionIsCurrent(session)) throw error;
     const failureKind = classifyKnowledgeFailure(
@@ -1018,6 +1005,20 @@ export function parseResearchResult(value: string): {
     throw new Error("Background research without sources must have no summary");
   }
   return { summary: boundedText(parsed.summary, 800), sources };
+}
+
+export function retainFullyCitedResearchResult(
+  parsed: ReturnType<typeof parseResearchResult>,
+  evidence: { usedWebSearch: boolean; citedUrls: string[] },
+): ReturnType<typeof parseResearchResult> {
+  if (!parsed.sources.length) return parsed;
+  if (!evidence.usedWebSearch) return { summary: "", sources: [] };
+  const citedUrls = new Set(evidence.citedUrls.map(normalizeUrl));
+  return parsed.sources.every((source) =>
+    citedUrls.has(normalizeUrl(source.url)),
+  )
+    ? parsed
+    : { summary: "", sources: [] };
 }
 
 export function assertMinimumCoreKnowledge(terms: TerminologyEntry[]): void {
@@ -1484,7 +1485,7 @@ function externalProcessFailure(
 
 function externalResponseFailure(error: unknown): boolean {
   const message = error instanceof Error ? error.message : String(error);
-  return /Codex (?:legacy response|visible output|web search|URL citation|streaming response|background research)|invalid JSON|without (?:a matching URL citation|sources)|missing summary or sources|invalid sourceLevel|invalid URL|must use HTTPS/u.test(
+  return /Codex (?:legacy response|visible output|web search|URL citation|streaming response|background research)|invalid JSON|without sources|missing summary or sources|invalid sourceLevel|invalid URL|must use HTTPS/u.test(
     message,
   );
 }

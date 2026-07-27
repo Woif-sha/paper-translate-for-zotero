@@ -17,6 +17,7 @@ import {
   ensureExternalKnowledgeResearch,
   parseCoreKnowledgeResult,
   parseResearchResult,
+  retainFullyCitedResearchResult,
   runBoundedKnowledgeOperation,
   startPaperLearningRetry,
   stopPaperLearning,
@@ -86,6 +87,64 @@ test("rejects uncited model-memory background without sources", () => {
   assert.deepEqual(
     parseResearchResult(JSON.stringify({ summary: "", sources: [] })),
     { summary: "", sources: [] },
+  );
+});
+
+test("discards an uncited external result without turning the pass into a warning", () => {
+  const parsed = parseResearchResult(
+    JSON.stringify({
+      summary: "KAN 可用于学习可解释的一维函数组合。",
+      sources: [
+        {
+          title: "KAN: Kolmogorov-Arnold Networks",
+          url: "https://arxiv.org/abs/2404.19756",
+          snippet:
+            "A neural architecture based on the Kolmogorov-Arnold theorem.",
+          sourceLevel: "academic",
+          purpose: "解释 KAN 的方法背景",
+        },
+      ],
+    }),
+  );
+
+  assert.deepEqual(
+    retainFullyCitedResearchResult(parsed, {
+      usedWebSearch: true,
+      citedUrls: [],
+    }),
+    { summary: "", sources: [] },
+  );
+  assert.deepEqual(
+    retainFullyCitedResearchResult(parsed, {
+      usedWebSearch: false,
+      citedUrls: ["https://arxiv.org/abs/2404.19756"],
+    }),
+    { summary: "", sources: [] },
+  );
+});
+
+test("keeps a research result only when every source has a matching citation", () => {
+  const parsed = parseResearchResult(
+    JSON.stringify({
+      summary: "经过引用核对的外部背景。",
+      sources: [
+        {
+          title: "Official documentation",
+          url: "https://example.org/reference",
+          snippet: "Verified terminology.",
+          sourceLevel: "official",
+          purpose: "术语消歧",
+        },
+      ],
+    }),
+  );
+
+  assert.equal(
+    retainFullyCitedResearchResult(parsed, {
+      usedWebSearch: true,
+      citedUrls: ["https://example.org/reference"],
+    }),
+    parsed,
   );
 });
 
