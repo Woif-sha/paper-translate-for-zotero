@@ -17,7 +17,11 @@ import {
   type ModelOcrRequest,
 } from "./modelOcr";
 import { persistCachedOcrText, readCachedOcrText } from "./cache";
-import { getActiveModelSnapshot, modelCacheIdentity } from "../models/runtime";
+import {
+  getActiveModelSnapshot,
+  modelCacheIdentity,
+  modelErrorMessage,
+} from "../models/runtime";
 
 const OCR_REQUEST_TIMEOUT_MS = 60_000;
 
@@ -238,7 +242,7 @@ async function runOcrWithTimeout(
 }
 
 function conciseError(error: unknown): string {
-  return (error instanceof Error ? error.message : String(error))
+  return modelErrorMessage(error)
     .replace(/https?:\/\/\S+/gu, "[URL omitted]")
     .slice(0, 180);
 }

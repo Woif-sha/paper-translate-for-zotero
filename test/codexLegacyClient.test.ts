@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  CodexLoginRequiredError,
   CodexResponsesStreamParser,
   DEFAULT_CODEX_API_URL,
   buildLegacyCodexPayload,
@@ -718,11 +719,83 @@ test("reports a stale reused refresh token without retrying it", async () => {
         instructions: "Reply with OK.",
         prompt: "OK",
       }),
-      /refresh_token_reused.*Run codex login again/su,
+      (error: unknown) => {
+        assert.ok(error instanceof CodexLoginRequiredError);
+        assert.match(error.message, /codex login/u);
+        assert.match(String(error.cause), /refresh_token_reused/u);
+        return true;
+      },
     );
     assert.equal(requestCalls, 1);
     assert.equal(refreshCalls, 1);
     assert.equal(authWrites, 0);
+  } finally {
+    cancelActiveCodexAuthRefreshes();
+    (globalThis as any).Services = previousServices;
+    (globalThis as any).IOUtils = previousIO;
+    (globalThis as any).ztoolkit = previousToolkit;
+  }
+});
+
+test("turns an auth refresh persistence SyntaxError into a login instruction", async () => {
+  const previousServices = (globalThis as any).Services;
+  const previousIO = (globalThis as any).IOUtils;
+  const previousToolkit = (globalThis as any).ztoolkit;
+  const authDocument = {
+    tokens: { access_token: "expired-access", refresh_token: "refresh" },
+  };
+  let requestCalls = 0;
+  (globalThis as any).Services = {
+    env: { get: (name: string) => (name === "CODEX_HOME" ? "E:\\Codex" : "") },
+  };
+  (globalThis as any).IOUtils = {
+    async read() {
+      return new TextEncoder().encode(JSON.stringify(authDocument));
+    },
+    async write() {
+      throw new DOMException(
+        "An invalid or illegal string was specified",
+        "SyntaxError",
+      );
+    },
+  };
+  (globalThis as any).ztoolkit = {
+    getGlobal() {
+      return async (url: string) => {
+        if (url.includes("/oauth/token")) {
+          return Response.json(
+            {
+              access_token: "new-access",
+              refresh_token: "new-refresh",
+            },
+            { status: 200 },
+          );
+        }
+        requestCalls += 1;
+        return new Response("unauthorized", { status: 401 });
+      };
+    },
+  };
+
+  try {
+    await assert.rejects(
+      runLegacyCodexRequest({
+        apiUrl: DEFAULT_CODEX_API_URL,
+        model: "gpt-5.4",
+        instructions: "Reply with OK.",
+        prompt: "OK",
+      }),
+      (error: unknown) => {
+        assert.ok(error instanceof CodexLoginRequiredError);
+        assert.match(error.message, /codex login/u);
+        assert.match(
+          String(error.cause),
+          /SyntaxError: An invalid or illegal string was specified/u,
+        );
+        return true;
+      },
+    );
+    assert.equal(requestCalls, 1);
   } finally {
     cancelActiveCodexAuthRefreshes();
     (globalThis as any).Services = previousServices;
@@ -912,7 +985,11 @@ test("does not restore credentials removed by Codex CLI during refresh", async (
     await refreshStarted;
     authDocument = { tokens: {} };
     finishRefresh();
-    await assert.rejects(running, /auth changed during token refresh/);
+    await assert.rejects(running, (error: unknown) => {
+      assert.ok(error instanceof CodexLoginRequiredError);
+      assert.match(String(error.cause), /auth changed during token refresh/u);
+      return true;
+    });
     assert.equal(authWrites, 0);
     assert.deepEqual(authDocument.tokens, {});
   } finally {

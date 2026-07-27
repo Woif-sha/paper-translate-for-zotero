@@ -4,6 +4,7 @@ import { getPref } from "./prefs";
 import { config } from "../../package.json";
 import Addon from "../addon";
 import { FIXED_TARGET_LANGUAGE } from "../constants";
+import { modelErrorMessage } from "../models/runtime";
 
 export interface TranslateTask {
   /**
@@ -136,7 +137,7 @@ export class TranslateTaskRunner {
       await this.processor(data as Required<TranslateTask>);
       data.status = "success";
     } catch (e) {
-      data.result = this.makeErrorInfo(data.service, String(e));
+      data.result = this.makeErrorInfo(data.service, modelErrorMessage(e));
       data.status = "fail";
     }
     data.processed = true;
@@ -249,7 +250,7 @@ export function dispatchTranslateTask(task: TranslateTask): void {
     Zotero.logError(reported);
     task.result = `${getString("service-errorPrefix")} ${getString(
       "service-paper-context",
-    )}\n\n${reported}`;
+    )}\n\n${modelErrorMessage(reported)}`;
     task.status = "fail";
     task.processed = true;
     addon.hooks.onReaderPopupRefresh();

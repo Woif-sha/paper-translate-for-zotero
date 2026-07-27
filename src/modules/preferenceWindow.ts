@@ -11,7 +11,7 @@ import {
   type ModelProviderGroup,
   type ProviderModel,
 } from "../models/providers";
-import { testModelConnection } from "../models/runtime";
+import { modelErrorMessage, testModelConnection } from "../models/runtime";
 import type { ModelSelectionActions } from "../models/selection";
 
 export const PREFERENCES_PANE_ID = `${config.addonRef}-preferences`;
@@ -400,7 +400,7 @@ async function testDraftModel(
   } catch (error) {
     showCardStatus(
       card,
-      `${getString("pref-codex-failed")}: ${String(error)}`,
+      `${getString("pref-codex-failed")}: ${modelErrorMessage(error)}`,
       true,
     );
   } finally {

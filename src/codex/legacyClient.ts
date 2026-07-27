@@ -4,6 +4,18 @@ export const DEFAULT_CODEX_API_URL =
 const CODEX_REFRESH_TOKEN_URL = "https://auth.openai.com/oauth/token";
 const CODEX_CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann";
 const CODEX_AUTH_REFRESH_TIMEOUT_MS = 30_000;
+const CODEX_LOGIN_REQUIRED_MESSAGE =
+  "Codex 登录状态已失效或无法自动更新，请在终端运行 codex login 重新登录后再试。";
+
+export class CodexLoginRequiredError extends Error {
+  readonly cause: unknown;
+
+  constructor(cause: unknown) {
+    super(CODEX_LOGIN_REQUIRED_MESSAGE);
+    this.name = "CodexLoginRequiredError";
+    this.cause = cause;
+  }
+}
 
 type IOUtilsLike = {
   read(path: string): Promise<Uint8Array | ArrayBuffer>;
@@ -254,6 +266,12 @@ export async function runLegacyCodexRequest(
     auth = await refreshCodexAccessToken(auth, params.signal);
     response = await postCodexRequest(params, auth.accessToken);
   }
+  if (response.status === 401) {
+    await response.body?.cancel();
+    throw new CodexLoginRequiredError(
+      new Error("Codex rejected the refreshed access token with HTTP 401"),
+    );
+  }
   if (!response.ok) {
     const detail = await response.text();
     throw new Error(
@@ -425,30 +443,13 @@ async function postCodexRequest(
 
 async function loadCodexAuth(signal?: AbortSignal): Promise<CodexAuthState> {
   const authPath = resolveCodexAuthPath();
-  let raw: Uint8Array | ArrayBuffer;
-  try {
-    raw = await getIOUtils().read(authPath);
-  } catch (error) {
-    throw new Error(
-      `Cannot read Codex auth file ${authPath}. Run codex login first: ${String(error)}`,
-    );
-  }
-  let document: CodexAuthJson;
-  try {
-    document = JSON.parse(
-      new TextDecoder("utf-8", { fatal: true }).decode(
-        raw instanceof Uint8Array ? raw : new Uint8Array(raw),
-      ),
-    ) as CodexAuthJson;
-  } catch (error) {
-    throw new Error(
-      `Codex auth file is invalid: ${authPath}: ${String(error)}`,
-    );
-  }
+  const document = await readCodexAuthDocument(authPath);
   const accessToken = tokenValue(document.tokens?.access_token);
   const refreshToken = tokenValue(document.tokens?.refresh_token);
   if (!accessToken && !refreshToken) {
-    throw new Error(`Codex auth tokens are missing: ${authPath}`);
+    throw new CodexLoginRequiredError(
+      new Error(`Codex auth tokens are missing: ${authPath}`),
+    );
   }
   if (!accessToken) {
     return refreshCodexAccessToken(
@@ -527,14 +528,14 @@ async function refreshCodexAccessTokenNow(
         document: currentBeforeRequest,
       };
     }
-    throw new Error(
-      "Codex auth changed during token refresh; run codex login again if needed.",
+    throw new CodexLoginRequiredError(
+      new Error("Codex auth changed during token refresh"),
     );
   }
   const requestRefreshToken = currentRefreshToken;
   if (!requestRefreshToken) {
-    throw new Error(
-      `Codex refresh token is missing: ${auth.authPath}. Run codex login again.`,
+    throw new CodexLoginRequiredError(
+      new Error(`Codex refresh token is missing: ${auth.authPath}`),
     );
   }
   const response = await getFetch()(CODEX_REFRESH_TOKEN_URL, {
@@ -558,8 +559,10 @@ async function refreshCodexAccessTokenNow(
         currentAccessToken,
       );
       if (changed) return changed;
-      throw new Error(
-        `Codex token refresh failed: ${response.status} ${response.statusText} - ${detail}. Run codex login again.`,
+      throw new CodexLoginRequiredError(
+        new Error(
+          `Codex token refresh failed: ${response.status} ${response.statusText} - ${detail}`,
+        ),
       );
     }
     throw new Error(
@@ -573,7 +576,9 @@ async function refreshCodexAccessTokenNow(
   assertSignalActive(signal);
   const accessToken = tokenValue(payload.access_token);
   if (!accessToken) {
-    throw new Error("Codex token refresh returned an empty access token");
+    throw new CodexLoginRequiredError(
+      new Error("Codex token refresh returned an empty access token"),
+    );
   }
   const currentBeforeWrite = await readCodexAuthDocument(auth.authPath);
   assertSignalActive(signal);
@@ -598,8 +603,10 @@ async function refreshCodexAccessTokenNow(
         document: currentBeforeWrite,
       };
     }
-    throw new Error(
-      "Codex auth changed during token refresh; refreshed credentials were not written.",
+    throw new CodexLoginRequiredError(
+      new Error(
+        "Codex auth changed during token refresh; refreshed credentials were not written.",
+      ),
     );
   }
   const refreshToken =
@@ -616,11 +623,15 @@ async function refreshCodexAccessTokenNow(
     last_refresh: new Date().toISOString(),
   };
   assertSignalActive(signal);
-  await getIOUtils().write(
-    auth.authPath,
-    new TextEncoder().encode(`${JSON.stringify(document, null, 2)}\n`),
-    { tmpPath: `${auth.authPath}.paper-translate.tmp` },
-  );
+  try {
+    await getIOUtils().write(
+      auth.authPath,
+      new TextEncoder().encode(`${JSON.stringify(document, null, 2)}\n`),
+      { tmpPath: `${auth.authPath}.paper-translate.tmp` },
+    );
+  } catch (error) {
+    throw new CodexLoginRequiredError(error);
+  }
   return { authPath: auth.authPath, accessToken, refreshToken, document };
 }
 
@@ -668,14 +679,30 @@ function waitForSharedRefresh<T>(
 }
 
 async function readCodexAuthDocument(authPath: string): Promise<CodexAuthJson> {
-  const raw = await getIOUtils().read(authPath);
-  const value = JSON.parse(
-    new TextDecoder("utf-8", { fatal: true }).decode(
-      raw instanceof Uint8Array ? raw : new Uint8Array(raw),
-    ),
-  ) as unknown;
+  let raw: Uint8Array | ArrayBuffer;
+  try {
+    raw = await getIOUtils().read(authPath);
+  } catch (error) {
+    throw new CodexLoginRequiredError(
+      new Error(`Cannot read Codex auth file ${authPath}: ${String(error)}`),
+    );
+  }
+  let value: unknown;
+  try {
+    value = JSON.parse(
+      new TextDecoder("utf-8", { fatal: true }).decode(
+        raw instanceof Uint8Array ? raw : new Uint8Array(raw),
+      ),
+    ) as unknown;
+  } catch (error) {
+    throw new CodexLoginRequiredError(
+      new Error(`Codex auth file is invalid: ${authPath}: ${String(error)}`),
+    );
+  }
   if (!value || typeof value !== "object" || Array.isArray(value)) {
-    throw new Error(`Codex auth file is invalid: ${authPath}`);
+    throw new CodexLoginRequiredError(
+      new Error(`Codex auth file is invalid: ${authPath}`),
+    );
   }
   return value as CodexAuthJson;
 }
