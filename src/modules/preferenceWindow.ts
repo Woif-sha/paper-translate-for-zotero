@@ -79,6 +79,7 @@ export function registerPrefsScripts(
   );
   add.addEventListener("click", () => {
     const provider = createProviderGroup("openai_compatible");
+    provider.name = nextProviderName(drafts);
     provider.models.push(createProviderModel());
     drafts = [...drafts, provider];
     render();
@@ -129,7 +130,7 @@ function createProviderCard(
   const doc = params.doc;
   const card = htmlElement(doc, "section");
   Object.assign(card.style, {
-    padding: "12px",
+    padding: "10px",
     border: "1px solid var(--fill-quinary, #d2d2d2)",
     borderRadius: "8px",
     background: "var(--material-background, #fff)",
@@ -142,10 +143,24 @@ function createProviderCard(
     gap: "8px",
     marginBottom: "10px",
   });
-  const heading = htmlElement(doc, "strong");
-  heading.textContent = provider.name || getString("pref-provider-unnamed");
-  heading.style.flex = "1";
-  const removeProvider = actionButton(doc, getString("pref-provider-remove"));
+  const name = htmlElement(doc, "input");
+  name.type = "text";
+  name.value = provider.name;
+  name.placeholder = getString("pref-provider-unnamed");
+  name.setAttribute("aria-label", getString("pref-provider-name"));
+  Object.assign(name.style, {
+    boxSizing: "border-box",
+    flex: "1",
+    minWidth: "0",
+    padding: "5px 8px",
+    fontWeight: "600",
+  });
+  name.addEventListener("input", () => {
+    provider.name = name.value;
+  });
+  const removeProvider = actionButton(doc, "×");
+  removeProvider.title = getString("pref-provider-remove");
+  removeProvider.setAttribute("aria-label", getString("pref-provider-remove"));
   removeProvider.addEventListener("click", () => {
     if (provider.models.some((model) => model.id === params.activeModelId)) {
       showCardStatus(
@@ -167,17 +182,7 @@ function createProviderCard(
     }
     params.onDraftsChanged(next);
   });
-  header.append(heading, removeProvider);
-
-  const name = labeledInput(
-    doc,
-    getString("pref-provider-name"),
-    provider.name,
-  );
-  name.input.addEventListener("input", () => {
-    provider.name = name.input.value;
-    heading.textContent = provider.name || getString("pref-provider-unnamed");
-  });
+  header.append(name, removeProvider);
 
   const auth = labeledSelect(
     doc,
@@ -199,7 +204,7 @@ function createProviderCard(
     params.onDraftsChanged([...params.drafts]);
   });
 
-  card.append(header, name.wrap, auth.wrap);
+  card.append(header, auth.wrap);
   if (provider.authMode === "openai_compatible") {
     const apiBase = labeledInput(
       doc,
@@ -235,7 +240,9 @@ function createProviderCard(
   const modelTitle = htmlElement(doc, "strong");
   modelTitle.textContent = getString("pref-provider-models");
   modelTitle.style.flex = "1";
-  const addModel = actionButton(doc, getString("pref-provider-add-model"));
+  const addModel = actionButton(doc, "+");
+  addModel.title = getString("pref-provider-add-model");
+  addModel.setAttribute("aria-label", getString("pref-provider-add-model"));
   addModel.addEventListener("click", () => {
     provider.models.push(createProviderModel());
     params.onDraftsChanged([...params.drafts]);
@@ -352,7 +359,9 @@ function createModelRow(
     void testDraftModel(card, provider, model, test);
   });
 
-  const remove = actionButton(doc, getString("pref-provider-remove-model"));
+  const remove = actionButton(doc, "×");
+  remove.title = getString("pref-provider-remove-model");
+  remove.setAttribute("aria-label", getString("pref-provider-remove-model"));
   remove.addEventListener("click", () => {
     if (model.id === params.activeModelId) {
       showCardStatus(
@@ -436,6 +445,20 @@ function cloneProviders(providers: ModelProviderGroup[]): ModelProviderGroup[] {
     ...provider,
     models: provider.models.map((model) => ({ ...model })),
   }));
+}
+
+function nextProviderName(providers: ModelProviderGroup[]): string {
+  const existing = new Set(providers.map((provider) => provider.name.trim()));
+  for (let index = 0; index < 26; index += 1) {
+    const letter = String.fromCharCode(65 + index);
+    const candidate = getString("pref-provider-default-name", {
+      args: { letter },
+    });
+    if (!existing.has(candidate)) return candidate;
+  }
+  return getString("pref-provider-default-name", {
+    args: { letter: String(providers.length + 1) },
+  });
 }
 
 function labeledInput(

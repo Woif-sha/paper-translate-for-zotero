@@ -5,10 +5,7 @@
 export type FluentMessageId =
   | 'pref-auth-mode'
   | 'pref-backend'
-  | 'pref-codex-api-url'
-  | 'pref-codex-effort'
   | 'pref-codex-failed'
-  | 'pref-codex-model'
   | 'pref-codex-success'
   | 'pref-codex-test'
   | 'pref-codex-testing'
@@ -20,6 +17,7 @@ export type FluentMessageId =
   | 'pref-provider-api-base'
   | 'pref-provider-api-key'
   | 'pref-provider-current'
+  | 'pref-provider-default-name'
   | 'pref-provider-model-id'
   | 'pref-provider-models'
   | 'pref-provider-name'

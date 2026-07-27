@@ -58,3 +58,33 @@ test("renders the shared provider editor while keeping the target language fixed
   );
   assert.match(script, /subscribeModelConfiguration\(render\)/u);
 });
+
+test("keeps dynamic provider controls localized and compact", async () => {
+  const script = await readFile(
+    new URL("../src/modules/preferenceWindow.ts", import.meta.url),
+    "utf8",
+  );
+  const addonLocales = await Promise.all(
+    ["zh-CN", "en-US"].map((locale) =>
+      readFile(
+        new URL(`../addon/locale/${locale}/addon.ftl`, import.meta.url),
+        "utf8",
+      ),
+    ),
+  );
+  const dynamicKeys = [...script.matchAll(/getString\("(pref-[^"]+)"\)/gu)].map(
+    (match) => match[1],
+  );
+
+  assert.ok(dynamicKeys.length > 0);
+  for (const addonLocale of addonLocales) {
+    for (const key of new Set(dynamicKeys)) {
+      assert.match(addonLocale, new RegExp(`^${key}\\s*=`, "mu"));
+    }
+  }
+  assert.match(script, /actionButton\(doc, "×"/u);
+  assert.match(script, /nextProviderName/u);
+  assert.match(addonLocales[0], /^pref-provider-save\s*=\s*保存$/mu);
+  assert.match(script, /getString\("pref-codex-test"\)/u);
+  assert.match(script, /row\.append\(select, test, remove\)/u);
+});

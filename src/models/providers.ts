@@ -19,7 +19,7 @@ export type ModelProviderGroup = {
 };
 
 export type ModelProviderConfiguration = {
-  schemaVersion: 1;
+  schemaVersion: 2;
   providers: ModelProviderGroup[];
   activeModelId: string;
 };
@@ -41,6 +41,7 @@ type LegacyModelConfiguration = {
 
 const PROVIDERS_PREF = "paper.modelProviders";
 const ACTIVE_MODEL_PREF = "paper.activeModelId";
+const MODEL_PROVIDER_SCHEMA_VERSION = 2;
 const listeners = new Set<() => void>();
 
 export function migrateLegacyModelConfiguration(
@@ -49,11 +50,11 @@ export function migrateLegacyModelConfiguration(
   const modelName = requiredValue(legacy.model, "Codex model");
   const modelId = `model-codex-${identifierPart(modelName)}`;
   return {
-    schemaVersion: 1,
+    schemaVersion: MODEL_PROVIDER_SCHEMA_VERSION,
     providers: [
       {
         id: "provider-codex",
-        name: "Codex",
+        name: "服务商 A",
         authMode: "codex_auth",
         apiBase: DEFAULT_CODEX_API_URL,
         apiKey: "",
@@ -161,7 +162,7 @@ export function validateProviderConfiguration(
     throw new Error("必须显式选择一个已保存的当前模型");
   }
   return {
-    schemaVersion: 1,
+    schemaVersion: MODEL_PROVIDER_SCHEMA_VERSION,
     providers: normalized,
     activeModelId,
   };
@@ -224,9 +225,16 @@ export function getModelProviderConfiguration(): ModelProviderConfiguration {
   } catch (error) {
     throw new Error(`模型服务商配置不是有效 JSON：${String(error)}`);
   }
-  const providers = parseProviderGroups(parsed);
+  const storedConfiguration = parseStoredConfiguration(parsed);
   const storedActive = String(getPref(ACTIVE_MODEL_PREF) || "").trim();
-  return validateProviderConfiguration(providers, storedActive);
+  const configuration = validateProviderConfiguration(
+    migrateStoredProviderNames(storedConfiguration),
+    storedActive,
+  );
+  if (storedConfiguration.schemaVersion < MODEL_PROVIDER_SCHEMA_VERSION) {
+    persistConfiguration(configuration);
+  }
+  return configuration;
 }
 
 export function setModelProviderConfiguration(
@@ -278,7 +286,10 @@ function persistConfiguration(configuration: ModelProviderConfiguration): void {
   setPref(ACTIVE_MODEL_PREF, configuration.activeModelId);
 }
 
-function parseProviderGroups(value: unknown): ModelProviderGroup[] {
+function parseStoredConfiguration(value: unknown): {
+  schemaVersion: 1 | 2;
+  providers: ModelProviderGroup[];
+} {
   if (!value || typeof value !== "object") {
     throw new Error("模型服务商配置必须是对象");
   }
@@ -286,7 +297,7 @@ function parseProviderGroups(value: unknown): ModelProviderGroup[] {
     schemaVersion?: unknown;
     providers?: unknown;
   };
-  if (stored.schemaVersion !== 1) {
+  if (stored.schemaVersion !== 1 && stored.schemaVersion !== 2) {
     throw new Error(
       `不支持的模型服务商配置版本：${String(stored.schemaVersion)}`,
     );
@@ -294,7 +305,7 @@ function parseProviderGroups(value: unknown): ModelProviderGroup[] {
   if (!Array.isArray(stored.providers)) {
     throw new Error("模型服务商配置缺少 providers 数组");
   }
-  return stored.providers.map((entry, index) => {
+  const providers = stored.providers.map((entry, index) => {
     if (!entry || typeof entry !== "object") {
       throw new Error(`模型服务商 ${index + 1} 不是对象`);
     }
@@ -317,6 +328,22 @@ function parseProviderGroups(value: unknown): ModelProviderGroup[] {
         : [],
     });
   });
+  return {
+    schemaVersion: stored.schemaVersion,
+    providers,
+  };
+}
+
+function migrateStoredProviderNames(configuration: {
+  schemaVersion: 1 | 2;
+  providers: ModelProviderGroup[];
+}): ModelProviderGroup[] {
+  if (configuration.schemaVersion !== 1) return configuration.providers;
+  return configuration.providers.map((provider) =>
+    provider.id === "provider-codex" && provider.name === "Codex"
+      ? { ...provider, name: "服务商 A" }
+      : provider,
+  );
 }
 
 function normalizeApiBase(value: string): string {
