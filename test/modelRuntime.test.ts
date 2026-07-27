@@ -1,13 +1,33 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
-import { runModelRequest } from "../src/models/runtime";
+import { CodexLoginRequiredError } from "../src/codex/legacyClient";
+import { modelErrorMessage, runModelRequest } from "../src/models/runtime";
 import type { RuntimeModel } from "../src/models/providers";
 
 const baseRequest = {
   instructions: "Translate faithfully.",
   prompt: "Source",
 };
+
+test("shows login guidance only for classified Codex authentication failures", () => {
+  const authError = new CodexLoginRequiredError(
+    new DOMException(
+      "An invalid or illegal string was specified",
+      "SyntaxError",
+    ),
+  );
+  assert.equal(modelErrorMessage(authError), authError.message);
+
+  const unrelated = new DOMException(
+    "An invalid or illegal string was specified",
+    "SyntaxError",
+  );
+  assert.equal(
+    modelErrorMessage(unrelated),
+    "SyntaxError: An invalid or illegal string was specified",
+  );
+});
 
 test("routes one request only to the explicitly selected Codex model", async () => {
   const calls: string[] = [];

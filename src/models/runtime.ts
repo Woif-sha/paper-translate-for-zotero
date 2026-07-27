@@ -1,4 +1,5 @@
 import {
+  CodexLoginRequiredError,
   runLegacyCodexRequest,
   testLegacyCodexConnection,
   type LegacyCodexRequest,
@@ -28,6 +29,12 @@ const defaultTransports: ModelTransports = {
   codex: runLegacyCodexRequest,
   openAICompatible: runOpenAICompatibleRequest,
 };
+
+export function modelErrorMessage(error: unknown): string {
+  return error instanceof CodexLoginRequiredError
+    ? error.message
+    : String(error);
+}
 
 export function getActiveModelSnapshot(): RuntimeModel {
   return { ...getActiveRuntimeModel() };
