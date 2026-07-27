@@ -25,7 +25,7 @@
 - Revalidate `_paper_source.json`, `_preparation.json`, and the current Markdown hash inside the paper file lock immediately before every knowledge-file write; a late request from an older hash must fail before modifying content.
 - Every knowledge-file and stage write must also match the current preparation attempt ID. External retry resets its background section and source record as one recoverable operation.
 - Restart recovery must parse and validate the same five background fields and complete terminology rows used at creation time. File markers and row counts alone are not completion evidence.
-- Persist external background only when every HTTPS source URL exactly matches a URL citation from the same web-search response. A model-only summary without cited sources is invalid. A successful search with zero accepted sources is a normal completed result; reserve `warning` for request, protocol, response parsing or persistence failures.
+- Persist external background only when every HTTPS source URL exactly matches a URL citation from the same web-search response. A model-only summary without cited sources is invalid. Because the response summary is not attributable per source, any returned source without a matching citation discards that response's entire optional summary and source set as a normal zero-source completion. A successful search with zero accepted sources is a normal completed result; reserve `warning` for request, protocol, response parsing or persistence failures.
 - The persistent terminology schema is Chinese-only. Keep the target language fixed to `zh-CN` unless the storage schema is deliberately redesigned to separate languages.
 
 ## Persistent context
@@ -60,3 +60,17 @@ Run targeted tests, `npx tsc --noEmit`, `npm run build`, then a real Zotero/Code
 - After validation succeeds, create a local Git commit for every completed change. Do not leave completed implementation work uncommitted.
 - Do not push commits, create or push tags, create a GitHub Release, or upload release assets unless the user explicitly asks to push or publish.
 - Keep generated XPI files local and ignored by Git until the user explicitly requests a release.
+
+## Agent skills
+
+### Issue tracker
+
+Issues and PRDs are tracked in this repository's GitHub Issues. See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+Triage uses the five default canonical labels. See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Domain documentation uses the single-context layout. See `docs/agents/domain.md`.
