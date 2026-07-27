@@ -2,6 +2,7 @@ import { getPref, setPref } from "../utils/prefs";
 import { FIXED_TARGET_LANGUAGE } from "../constants";
 import { DEFAULT_CODEX_API_URL } from "../codex/legacyClient";
 import { services } from "./services";
+import { getModelProviderConfiguration } from "../models/providers";
 
 export function setDefaultPrefSettings() {
   const servicesIds = services.getAllServices().map((service) => service.id);
@@ -11,4 +12,5 @@ export function setDefaultPrefSettings() {
 
   setPref("targetLanguage", FIXED_TARGET_LANGUAGE);
   setPref("paper.codexApiUrl", DEFAULT_CODEX_API_URL);
+  getModelProviderConfiguration();
 }

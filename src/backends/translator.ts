@@ -1,11 +1,14 @@
-import { runLegacyCodexRequest } from "../codex/legacyClient";
 import { preparePaperContext, readPreparationRecord } from "../context/runtime";
 import { continuePaperLearning } from "../context/research";
 import {
   TRANSLATION_DEVELOPER_INSTRUCTIONS,
   buildTranslationPrompt,
 } from "../context/prompts";
-import { getPref } from "../utils/prefs";
+import {
+  getActiveModelSnapshot,
+  runModelRequest,
+  type RuntimeModel,
+} from "../models/runtime";
 import {
   monitorReaderSidebarLearning,
   synchronizeReaderSidebarContext,
@@ -53,6 +56,7 @@ export async function translateWithPaperContext(params: {
     attachmentItemID: params.attachmentItemID,
     controller,
   };
+  const model = getActiveModelSnapshot();
   try {
     const context = await preparePaperContext(
       params.attachmentItemID,
@@ -66,9 +70,10 @@ export async function translateWithPaperContext(params: {
       targetLanguage: params.targetLanguage,
       input,
     });
-    const translation = await translateWithCodex(
+    const translation = await translateWithModel(
       prompt,
       input,
+      model,
       controller.signal,
       params.onUpdate,
     );
@@ -104,22 +109,23 @@ export function schedulePaperLearningAfterTranslation(
     .catch((error) => dependencies.report(error));
 }
 
-async function translateWithCodex(
+async function translateWithModel(
   prompt: string,
   source: string,
+  model: RuntimeModel,
   signal: AbortSignal,
   onUpdate: (text: string) => void,
 ): Promise<string> {
-  const result = await runLegacyCodexRequest({
-    apiUrl: requiredPref("paper.codexApiUrl"),
-    model: requiredPref("paper.codexModel"),
-    effort: String(getPref("paper.codexEffort") || ""),
-    instructions: TRANSLATION_DEVELOPER_INSTRUCTIONS,
-    prompt,
-    signal,
-    onDelta: (_delta, accumulated) =>
-      onUpdate(formatTranslationLayout(source, accumulated)),
-  });
+  const result = await runModelRequest(
+    {
+      instructions: TRANSLATION_DEVELOPER_INSTRUCTIONS,
+      prompt,
+      signal,
+      onDelta: (_delta, accumulated) =>
+        onUpdate(formatTranslationLayout(source, accumulated)),
+    },
+    model,
+  );
   return formatTranslationLayout(source, result.text);
 }
 
@@ -151,10 +157,4 @@ function classifySourceBullets(value: string): Array<"list" | "inline"> {
     layout.push(value.slice(lineStart, offset).trim() ? "inline" : "list");
   }
   return layout;
-}
-
-function requiredPref(key: string): string {
-  const value = String(getPref(key) || "").trim();
-  if (!value) throw new Error(`Required preference is empty: ${key}`);
-  return value;
 }

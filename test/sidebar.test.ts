@@ -26,6 +26,16 @@ test("does not claim to translate before a task starts", () => {
   );
 });
 
+test("renders one shared current-model selector in the Reader sidebar", async () => {
+  const source = await readFile(
+    new URL("../src/modules/sidebar.ts", import.meta.url),
+    "utf8",
+  );
+  assert.match(source, /createModelSelector\(body, modelSelection\)/u);
+  assert.match(source, /switchActiveModel\(select\.value\)/u);
+  assert.match(source, /getModelProviderConfiguration\(\)/u);
+});
+
 test("allows translation as soon as source and index files are complete", () => {
   assert.equal(
     isTranslationReady({
@@ -309,7 +319,14 @@ test("registers a visible Reader pane and binds a parent item to the active atta
     },
   };
 
-  registerReaderSidebar();
+  registerReaderSidebar({
+    switchActiveModel() {
+      throw new Error("Model switching is not exercised by this test");
+    },
+    saveModelProviderConfiguration() {
+      throw new Error("Provider saving is not exercised by this test");
+    },
+  });
   assert.equal(options.paneID, "papertranslateforzotero-translation");
   assert.equal(options.pluginID, "papertranslateforzotero@woif-sha.github.io");
   assert.match(options.header.icon, /section-16\.png$/);

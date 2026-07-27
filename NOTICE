@@ -19,12 +19,22 @@ This project contains and adapts code from:
    Copyright (C) Yile Wang and contributors
    License: AGPL-3.0-or-later
    Source: https://github.com/yilewang/llm-for-zotero
-   Pinned revision: 258c9d326bad1ec64c9ac166f45c0e2e2aea675b (v3.8.30)
+   Pinned revision: d9724df84ac053343cf32b00c7829620a243e5b9
+   (v3.8.30-4-gd9724df8)
 
    The legacy Codex authentication client and MinerU cache validation design
    were adapted from the upstream implementation patterns, notably
    src/utils/llmClient.ts, src/agent/model/codexResponses.ts,
    src/utils/providerTransport.ts, and its MinerU provenance/cache code.
+   The multi-provider preference model, global active-model selection,
+   OpenAI-compatible /chat/completions endpoint resolution, minimal request
+   payload, streaming SSE parser, and informational connection test also
+   adapt the design boundaries in src/utils/modelProviders.ts,
+   src/utils/providerTransport.ts, src/utils/llmClient.ts, and
+   src/modules/preferenceScript.ts at the pinned revision. This project keeps
+   only Codex Auth and generic OpenAI Compatible modes and does not copy the
+   upstream provider-specific protocol, preset, capability, reasoning, token,
+   local-model, web-chat, Copilot, Anthropic, Gemini, or App Server branches.
    Version 1.2.0 also consults the Responses input_image conversion and data
    URL handling in src/utils/llmClient.ts, Reader document discovery in
    src/modules/contextPanel/readerSelection.ts, page-location conventions in

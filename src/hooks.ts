@@ -29,10 +29,28 @@ import {
 } from "./modules/sidebar";
 import {
   beginKnowledgeOperationsSession,
+  cancelActiveKnowledgeOperations,
   endKnowledgeOperationsSession,
 } from "./context/research";
 import { cancelActiveCodexAuthRefreshes } from "./codex/legacyClient";
 import { cancelImageTextRecognition } from "./ocr/controller";
+import {
+  getModelProviderConfiguration,
+  setActiveModelId,
+  setModelProviderConfiguration,
+} from "./models/providers";
+import { createModelSelectionActions } from "./models/selection";
+
+const modelSelection = createModelSelectionActions({
+  getConfiguration: getModelProviderConfiguration,
+  setActiveModelId,
+  setConfiguration: setModelProviderConfiguration,
+  cancelModelTasks() {
+    cancelActiveTranslation();
+    cancelActiveKnowledgeOperations();
+    cancelImageTextRecognition();
+  },
+});
 
 async function onStartup() {
   await Promise.all([
@@ -56,7 +74,7 @@ async function onStartup() {
   try {
     beginKnowledgeOperationsSession();
     registerReaderInitializer();
-    registerReaderSidebar();
+    registerReaderSidebar(modelSelection);
     registerNotify(["item"]);
     await registerPrefsWindow();
     await Promise.all(
@@ -116,7 +134,7 @@ async function onNotify(
 }
 
 function onPrefsLoad(event: Event) {
-  registerPrefsScripts((event.target as any).ownerGlobal);
+  registerPrefsScripts((event.target as any).ownerGlobal, modelSelection);
 }
 
 async function onTranslate(): Promise<void>;

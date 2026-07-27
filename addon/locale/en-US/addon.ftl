@@ -15,6 +15,7 @@ sidebar-open-directory-error=Cannot open the knowledge folder
 sidebar-source-placeholder=Select Reader text, capture text from an image, or enter text to translate
 sidebar-no-attachment=Cannot resolve the active Reader attachment
 sidebar-untitled-paper=Untitled paper
+sidebar-model-label=Current model
 sidebar-preparation-title=Knowledge files
 sidebar-preparation-error=Knowledge preparation failed
 sidebar-preparation-stopped=Stopped

@@ -32,52 +32,12 @@
   </groupbox>
   <groupbox>
     <label><html:h2 data-l10n-id="pref-backend"></html:h2></label>
-    <html:label
-      data-l10n-id="pref-auth-mode"
-      for="__addonRef__-paper-authMode"
-    ></html:label>
-    <html:input
-      id="__addonRef__-paper-authMode"
-      type="text"
-      value="Codex Auth"
-      readonly="readonly"
-      disabled="disabled"
-      tabindex="-1"
-    ></html:input>
-    <html:label
-      data-l10n-id="pref-codex-api-url"
-      for="__addonRef__-paper-codexApiUrl"
-    ></html:label>
-    <html:input
-      id="__addonRef__-paper-codexApiUrl"
-      type="text"
-      readonly="readonly"
-    ></html:input>
-    <html:label
-      data-l10n-id="pref-codex-model"
-      for="__addonRef__-paper-codexModel"
-    ></html:label>
-    <html:input id="__addonRef__-paper-codexModel" type="text"></html:input>
-    <html:label
-      data-l10n-id="pref-codex-effort"
-      for="__addonRef__-paper-codexEffort"
-    ></html:label>
-    <html:select id="__addonRef__-paper-codexEffort">
-      <html:option value="auto">auto</html:option
-      ><html:option value="low">low</html:option
-      ><html:option value="medium">medium</html:option>
-      <html:option value="high">high</html:option
-      ><html:option value="xhigh">xhigh</html:option>
-    </html:select>
-    <html:div
-      style="display: flex; align-items: center; gap: 8px; margin-top: 8px"
-    >
-      <html:button
-        id="__addonRef__-paper-codexTest"
-        type="button"
-        data-l10n-id="pref-codex-test"
-      ></html:button>
-      <html:span id="__addonRef__-paper-codexStatus" hidden="true"></html:span>
-    </html:div>
+    <html:div id="__addonRef__-model-providers"></html:div>
+    <html:button
+      id="__addonRef__-add-provider"
+      type="button"
+      data-l10n-id="pref-provider-add"
+      style="margin-top: 10px; align-self: flex-start"
+    ></html:button>
   </groupbox>
 </vbox>
