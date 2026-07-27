@@ -829,3 +829,64 @@ test("cancels a hung shared Codex token refresh", async () => {
     (globalThis as any).ztoolkit = previousToolkit;
   }
 });
+
+test("resolves Codex auth through Zotero PathUtils without an XPCOM interface", async () => {
+  const previousServices = (globalThis as any).Services;
+  const previousPathUtils = (globalThis as any).PathUtils;
+  const previousIO = (globalThis as any).IOUtils;
+  const previousToolkit = (globalThis as any).ztoolkit;
+  let requestedAuthPath = "";
+  const successfulStream = [
+    'data: {"type":"response.output_text.delta","delta":"OK"}',
+    "",
+    'data: {"type":"response.completed","response":{}}',
+    "",
+  ].join("\n");
+  (globalThis as any).Services = {
+    env: { get: () => "" },
+    dirsvc: {
+      get() {
+        throw new DOMException(
+          "An invalid or illegal string was specified",
+          "SyntaxError",
+        );
+      },
+    },
+  };
+  (globalThis as any).PathUtils = { homeDir: "E:\\ExpectedHome" };
+  (globalThis as any).IOUtils = {
+    async read(path: string) {
+      requestedAuthPath = path;
+      return new TextEncoder().encode(
+        JSON.stringify({
+          tokens: { access_token: "access", refresh_token: "refresh" },
+        }),
+      );
+    },
+    async write() {
+      throw new Error("A successful request must not refresh auth");
+    },
+  };
+  (globalThis as any).ztoolkit = {
+    getGlobal(name: string) {
+      assert.equal(name, "fetch");
+      return async () => new Response(successfulStream, { status: 200 });
+    },
+  };
+
+  try {
+    const result = await runLegacyCodexRequest({
+      apiUrl: DEFAULT_CODEX_API_URL,
+      model: "gpt-5.4",
+      instructions: "Reply with OK.",
+      prompt: "OK",
+    });
+    assert.equal(result.text, "OK");
+    assert.equal(requestedAuthPath, "E:\\ExpectedHome\\.codex\\auth.json");
+  } finally {
+    (globalThis as any).Services = previousServices;
+    (globalThis as any).PathUtils = previousPathUtils;
+    (globalThis as any).IOUtils = previousIO;
+    (globalThis as any).ztoolkit = previousToolkit;
+  }
+});
