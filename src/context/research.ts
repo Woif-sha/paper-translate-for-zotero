@@ -1,5 +1,4 @@
-import { runLegacyCodexRequest } from "../codex/legacyClient";
-import { getPref } from "../utils/prefs";
+import { getActiveModelSnapshot, runModelRequest } from "../models/runtime";
 import {
   CORE_KNOWLEDGE_DEVELOPER_INSTRUCTIONS,
   EXTERNAL_RESEARCH_DEVELOPER_INSTRUCTIONS,
@@ -491,16 +490,16 @@ async function runCoreKnowledge(
       signal,
       operationKey: `${contextKey(context)}:${attempt}`,
       operation: (requestSignal) =>
-        runLegacyCodexRequest({
-          apiUrl: requiredPref("paper.codexApiUrl"),
-          model: requiredPref("paper.codexModel"),
-          effort: String(getPref("paper.codexEffort") || ""),
-          instructions: CORE_KNOWLEDGE_DEVELOPER_INSTRUCTIONS,
-          prompt: buildCoreKnowledgePrompt(context),
-          signal: requestSignal,
-          maxOutputCharacters: CORE_MAX_OUTPUT_CHARACTERS,
-          maxResponseBytes: CORE_MAX_RESPONSE_BYTES,
-        }),
+        runModelRequest(
+          {
+            instructions: CORE_KNOWLEDGE_DEVELOPER_INSTRUCTIONS,
+            prompt: buildCoreKnowledgePrompt(context),
+            signal: requestSignal,
+            maxOutputCharacters: CORE_MAX_OUTPUT_CHARACTERS,
+            maxResponseBytes: CORE_MAX_RESPONSE_BYTES,
+          },
+          getActiveModelSnapshot(),
+        ),
     });
     failureKind = "response";
     assertKnowledgeRun(session, signal);
@@ -637,20 +636,20 @@ async function runExternalResearch(
       signal,
       operationKey: `${contextKey(context)}:${attempt}`,
       operation: (requestSignal) =>
-        runLegacyCodexRequest({
-          apiUrl: requiredPref("paper.codexApiUrl"),
-          model: requiredPref("paper.codexModel"),
-          effort: String(getPref("paper.codexEffort") || ""),
-          instructions: EXTERNAL_RESEARCH_DEVELOPER_INSTRUCTIONS,
-          prompt: buildExternalResearchPrompt({ context, queries }),
-          signal: requestSignal,
-          webSearch: true,
-          requireWebSearch: false,
-          maxOutputCharacters: EXTERNAL_MAX_OUTPUT_CHARACTERS,
-          maxResponseBytes: EXTERNAL_MAX_RESPONSE_BYTES,
-          maxObservedWebSearchCalls:
-            EXTERNAL_RESEARCH_LIMITS.maximumObservedSearchCalls,
-        }),
+        runModelRequest(
+          {
+            instructions: EXTERNAL_RESEARCH_DEVELOPER_INSTRUCTIONS,
+            prompt: buildExternalResearchPrompt({ context, queries }),
+            signal: requestSignal,
+            webSearch: true,
+            requireWebSearch: false,
+            maxOutputCharacters: EXTERNAL_MAX_OUTPUT_CHARACTERS,
+            maxResponseBytes: EXTERNAL_MAX_RESPONSE_BYTES,
+            maxObservedWebSearchCalls:
+              EXTERNAL_RESEARCH_LIMITS.maximumObservedSearchCalls,
+          },
+          getActiveModelSnapshot(),
+        ),
     });
     failurePhase = "response";
     assertKnowledgeRun(session, signal);
@@ -1543,10 +1542,4 @@ function attemptOwnerKey(
 function conciseError(error: unknown): string {
   const message = error instanceof Error ? error.message : String(error);
   return message.replace(/https?:\/\/\S+/g, "[URL omitted]").slice(0, 240);
-}
-
-function requiredPref(key: string): string {
-  const value = String(getPref(key) || "").trim();
-  if (!value) throw new Error(`Required preference is empty: ${key}`);
-  return value;
 }

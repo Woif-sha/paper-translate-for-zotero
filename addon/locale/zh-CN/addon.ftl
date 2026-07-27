@@ -15,6 +15,7 @@ sidebar-open-directory-error=无法打开知识目录
 sidebar-source-placeholder=在 Reader 中划词、从图片取词，或输入需要翻译的文本
 sidebar-no-attachment=无法确定当前 Reader 附件
 sidebar-untitled-paper=未命名论文
+sidebar-model-label=当前模型
 sidebar-preparation-title=知识文件
 sidebar-preparation-error=知识准备失败
 sidebar-preparation-stopped=已停止

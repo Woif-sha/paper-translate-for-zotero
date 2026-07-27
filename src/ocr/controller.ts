@@ -1,4 +1,3 @@
-import { getPref } from "../utils/prefs";
 import {
   assertValidatedPaperContextCurrent,
   preparePaperContext,
@@ -14,10 +13,11 @@ import {
 } from "./mineruImages";
 import {
   OCR_PROMPT_VERSION,
-  runCodexImageOcr,
-  type CodexOcrRequest,
-} from "./codexOcr";
+  runModelImageOcr,
+  type ModelOcrRequest,
+} from "./modelOcr";
 import { persistCachedOcrText, readCachedOcrText } from "./cache";
+import { getActiveModelSnapshot, modelCacheIdentity } from "../models/runtime";
 
 const OCR_REQUEST_TIMEOUT_MS = 60_000;
 
@@ -59,6 +59,7 @@ export async function startImageTextRecognition(params: {
     notify: params.onStateChange,
   };
   activeRecognitions.set(params.attachmentItemID, active);
+  const runtimeModel = getActiveModelSnapshot();
   publishState(params.attachmentItemID, active, { phase: "selecting" });
   let failureDetail: string | undefined;
   try {
@@ -86,15 +87,13 @@ export async function startImageTextRecognition(params: {
       region.runtimeDocument,
       { signal: controller.signal },
     );
-    const model = requiredPref("paper.codexModel");
-    const effort = String(getPref("paper.codexEffort") || "").trim();
     const keyInput: OcrCacheKeyInput = {
       attachmentKey: context.identity.attachmentKey,
       imageSha256: crop.imageSha256,
       contentListSha256: crop.contentListSha256,
       crop: crop.crop,
-      model,
-      effort,
+      model: modelCacheIdentity(runtimeModel),
+      effort: runtimeModel.effort,
       promptVersion: OCR_PROMPT_VERSION,
     };
     const key = await createOcrCacheKey(keyInput);
@@ -103,8 +102,7 @@ export async function startImageTextRecognition(params: {
     if (cached) return cached;
     const text = await runOcrWithTimeout(
       {
-        model,
-        effort,
+        runtimeModel,
         imageDataUrl: crop.dataUrl,
       },
       controller.signal,
@@ -208,7 +206,7 @@ function assertActive(
 }
 
 async function runOcrWithTimeout(
-  request: Omit<CodexOcrRequest, "signal">,
+  request: Omit<ModelOcrRequest, "signal">,
   parentSignal: AbortSignal,
 ): Promise<string> {
   if (parentSignal.aborted) throw createCancellationError();
@@ -223,26 +221,20 @@ async function runOcrWithTimeout(
   parentSignal.addEventListener("abort", onAbort, { once: true });
   const timer = setTimeout(() => {
     timedOut = true;
-    controller.abort(new Error("Codex image OCR exceeded 60 seconds"));
+    controller.abort(new Error("Image OCR exceeded 60 seconds"));
   }, OCR_REQUEST_TIMEOUT_MS);
   try {
-    return await runCodexImageOcr({
+    return await runModelImageOcr({
       ...request,
       signal: controller.signal,
     });
   } catch (error) {
-    if (timedOut) throw new Error("Codex image OCR exceeded 60 seconds");
+    if (timedOut) throw new Error("Image OCR exceeded 60 seconds");
     throw error;
   } finally {
     clearTimeout(timer);
     parentSignal.removeEventListener("abort", onAbort);
   }
-}
-
-function requiredPref(key: string): string {
-  const value = String(getPref(key) || "").trim();
-  if (!value) throw new Error(`Required preference is empty: ${key}`);
-  return value;
 }
 
 function conciseError(error: unknown): string {

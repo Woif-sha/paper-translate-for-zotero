@@ -3,7 +3,7 @@
 [![CI](https://github.com/Woif-sha/paper-translate-for-zotero/actions/workflows/ci.yml/badge.svg)](https://github.com/Woif-sha/paper-translate-for-zotero/actions/workflows/ci.yml)
 [![License: AGPL-3.0-or-later](https://img.shields.io/badge/license-AGPL--3.0--or--later-blue.svg)](LICENSE)
 
-普通划词翻译只看到选中的一句话，不知道 `cell` 在当前论文里是“单元”还是“细胞”，也不知道作者前面如何定义一个缩写。这个插件用当前论文的 MinerU Markdown 补上这些上下文，再把选区交给 Codex 翻译。
+普通划词翻译只看到选中的一句话，不知道 `cell` 在当前论文里是“单元”还是“细胞”，也不知道作者前面如何定义一个缩写。这个插件用当前论文的 MinerU Markdown 补上这些上下文，再把选区交给用户当前选定的模型翻译。
 
 它不会加入 `llm-for-zotero` 的对话，也不会共用提示词、线程或运行状态。两者之间只有一个文件层面的关系：`llm-for-zotero` 负责生成 MinerU Markdown，本插件读取并验证这份 Markdown。
 
@@ -27,7 +27,9 @@
 
 1. Zotero 7.9.9–10.9.9；
 2. 已安装并配置好的 `llm-for-zotero`；
-3. 官方 Codex CLI，并已在终端执行 `codex login`。
+3. 至少配置一种模型认证方式：
+   - `Codex Auth`：安装官方 Codex CLI，并在终端执行 `codex login`；
+   - `OpenAI Compatible`：准备支持 `/chat/completions` 的 HTTPS API Base、API Key 和模型 ID。
 
 先在 `llm-for-zotero` 中解析论文。对应附件的 MinerU 缓存必须包含：
 
@@ -50,7 +52,7 @@ full.md
 3. 点击右上角齿轮，选择“从文件安装插件”，然后选中 XPI。
 4. 重启 Zotero。
 
-插件设置页默认使用：
+首次安装会把原有 Codex 设置迁移为一个名为 `Codex` 的服务商，默认使用：
 
 ```text
 认证模式：Codex Auth
@@ -59,7 +61,11 @@ API URL：https://chatgpt.com/backend-api/codex/responses
 推理强度：medium
 ```
 
-认证模式和 API 地址不可编辑。插件读取 Codex CLI 的登录凭据；默认位置是 `~/.codex/auth.json`，设置 `CODEX_HOME` 后则读取该目录下的 `auth.json`。可以在设置页点击“测试连接”检查登录和模型是否可用。
+设置页可以添加多个服务商，每个服务商选择 `Codex Auth` 或 `OpenAI Compatible`，并添加多个模型 ID。`OpenAI Compatible` 服务商必须填写名称、HTTPS API Base、API Key 和至少一个模型，缺少任何一项都不能保存。API Base 可以填写版本根地址或完整的 `/chat/completions` 地址。
+
+所有已保存模型中始终只有一个“当前模型”。设置页和 Reader 侧栏共用这项选择；切换后，翻译、论文背景、术语、外部补充和图片 OCR 都只使用这个模型，不会混用其他服务商，也不会在请求失败时自动回退。连接测试只用于帮助用户检查配置，不是保存或选择模型的前置条件。
+
+`Codex Auth` 读取 Codex CLI 的登录凭据；默认位置是 `~/.codex/auth.json`，设置 `CODEX_HOME` 后则读取该目录下的 `auth.json`。`OpenAI Compatible` 只发送最小 Chat Completions 请求，不根据模型名称猜测能力，也不自动添加 temperature、reasoning 或 token 参数。API Key 保存在 Zotero 插件偏好中，不写入论文上下文、日志或导出文件。
 
 ## 使用
 
@@ -73,9 +79,11 @@ API URL：https://chatgpt.com/backend-api/codex/responses
 外部补充
 ```
 
-正文身份和章节索引写完后就能翻译，通常只需要本地文件处理时间。其余阶段继续在后台运行。核心知识只进行一次有限提取：在最多 8,000 个字符内优先覆盖摘要、引言、方法、实验和结论，写完五项结构化论文背景，并得到 6–12 个能在正文中逐字定位的高价值术语后立即收口。认证、固定端点和模型配置沿用 `llm-for-zotero` 的旧版 Codex 路径；请求体按当前端点契约移除不支持的公开 Responses 限额字段。插件改在本地流边界分别限制核心与外部的可见输出为 16,000/8,000 字符、总响应为 2,000,000/1,000,000 字节。
+正文身份和章节索引写完后就能翻译，通常只需要本地文件处理时间。其余阶段继续在后台运行。核心知识只进行一次有限提取：在最多 8,000 个字符内优先覆盖摘要、引言、方法、实验和结论，写完五项结构化论文背景，并得到 6–12 个能在正文中逐字定位的高价值术语后立即收口。所有模型请求都会在任务开始时固定当前服务商和模型；中途切换会明确取消仍在运行的模型任务，不让一个任务混入两套结果。
 
-外部补充最多提出 3 个由论文产生的问题，通常只进行两次网页搜索；第三次仅是本地流边界的硬性安全上限，不是必须完成的配额。它没有最低来源数量：一条可靠资料已经足够解决翻译歧义时立即结束，成功检索后没有可采纳来源也可正常完成。返回 403、429、robots 限制、无法连接、没有可核验正文，或者无法与本次 Responses URL citation 对应的候选内容会直接丢弃，不写入文件，也不在侧栏显示警告。只有整个 Codex 请求失败、响应协议损坏、JSON 无法解析或文件写入失败时，外部阶段才显示警告。
+外部补充最多提出 3 个由论文产生的问题，通常只进行两次网页搜索；第三次仅是本地流边界的硬性安全上限，不是必须完成的配额。它没有最低来源数量：一条可靠资料已经足够解决翻译歧义时立即结束，成功检索后没有可采纳来源也可正常完成。返回 403、429、robots 限制、无法连接、没有可核验正文，或者无法与本次 Responses URL citation 对应的候选内容会直接丢弃，不写入文件，也不在侧栏显示警告。
+
+通用 OpenAI Chat Completions 协议没有统一的网页搜索能力。因此当前模型使用 `OpenAI Compatible` 时，外部补充会明确标记“当前协议不支持网页搜索”，不会偷偷借用 Codex；论文内背景、术语、普通翻译和模型支持图片输入时的 OCR 仍按当前 API 正常执行。插件不根据模型名预判能力，服务商若拒绝图片等输入，会原样暴露请求错误。
 
 侧栏中的“打开目录”按钮会打开当前论文已经校验过的上下文目录。知识任务运行时可以点击“停止准备”；请求失败、额度不足或手动停止后会显示“重新准备”，外部检索单独失败时则显示“重试外部补充”。这些按钮只处理当前论文，不会停止其他论文的任务或当前翻译。网页候选是否可访问不会阻断当前翻译。
 
@@ -95,7 +103,7 @@ API URL：https://chatgpt.com/backend-api/codex/responses
 1. 在当前 Reader 侧栏点击“图片取词”。
 2. 在论文图片上拖出只包含目标文字的矩形区域；按 `Esc` 可以取消。
 3. 插件依据 Reader 页码和 `content_list.json` 查找唯一对应的 MinerU 图片，并只裁剪该本地图片的相应区域。
-4. Codex 只负责逐字识别，保留换行、公式、符号、缩写、数值和单位。识别文字会进入原文框，可以修改后再翻译。
+4. 当前模型只负责逐字识别，保留换行、公式、符号、缩写、数值和单位。识别文字会进入原文框，可以修改后再翻译。
 
 图片区域不会作为新的论文正文，也不会写入章节索引、背景或术语表。插件不截取 PDF 画面，不做整页扫描，不调用其他 OCR 引擎，也不会在当前模型不接受图片时改用其他接口或模型；此类失败会直接显示。
 
@@ -138,9 +146,9 @@ E:\ZoteroData\paper-translate-for-zotero\<parentItemKey>\
 
 回到 `llm-for-zotero`，确认当前附件已经解析完成。若尚未配置 MinerU API Token，先在 [MinerU API Token 管理页](https://mineru.net/apiManage/token)创建 Token，再填入 `llm-for-zotero` 的 MinerU 设置。不要手工把另一个附件的 `full.md` 复制过来，插件会核对附件 key 和父条目 key。
 
-### Codex 连接失败
+### 模型连接失败
 
-先在终端运行 `codex login`，然后回到插件设置页点击“测试连接”。本插件不会改用 App Server、其他接口或其他模型来掩盖连接错误。
+使用 `Codex Auth` 时，先在终端运行 `codex login`；使用 `OpenAI Compatible` 时，检查 API Base、API Key 和模型 ID。然后回到设置页点击对应模型的“测试”。本插件不会改用 App Server、其他协议、服务商或模型来掩盖连接错误。
 
 ### 知识准备为什么会停止
 
@@ -173,6 +181,6 @@ npm run build
 
 ## 来源与许可
 
-Reader 交互和部分 Zotero 插件结构来自 [Translate for Zotero](https://github.com/windingwind/zotero-pdf-translate)。MinerU 缓存约定和 Codex 认证实现参考了 [llm-for-zotero](https://github.com/yilewang/llm-for-zotero)。复用范围和提交哈希见 [NOTICE](NOTICE)。
+Reader 交互和部分 Zotero 插件结构来自 [Translate for Zotero](https://github.com/windingwind/zotero-pdf-translate)。MinerU 缓存约定、Codex 认证、模型服务商注册和 OpenAI-compatible 传输设计参考了 [llm-for-zotero](https://github.com/yilewang/llm-for-zotero)。复用范围和提交哈希见 [NOTICE](NOTICE)。
 
 本项目使用 [AGPL-3.0-or-later](LICENSE) 许可。

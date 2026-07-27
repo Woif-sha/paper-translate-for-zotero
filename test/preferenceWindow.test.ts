@@ -22,20 +22,15 @@ test("registers the exact plugin name and a correctly sized settings icon", asyn
   assert.match(options.image, /section-20\.png$/);
 });
 
-test("locks the Codex authentication mode and defaults to the legacy endpoint", async () => {
+test("renders the shared provider editor while keeping the target language fixed", async () => {
   const markup = await readFile(
     new URL("../addon/chrome/content/preferences.xhtml", import.meta.url),
     "utf8",
   );
-  assert.match(markup, /value="Codex Auth"/);
-  assert.match(
-    markup,
-    /paper-authMode[\s\S]*readonly="readonly"[\s\S]*disabled="disabled"/,
-  );
-  assert.doesNotMatch(markup, /\(Legacy\)|pref-context-note/);
-  assert.match(markup, /paper-codexApiUrl/);
+  assert.match(markup, /model-providers/);
+  assert.match(markup, /add-provider/);
   assert.doesNotMatch(markup, /Codex App Server/);
-  assert.doesNotMatch(markup, /chat-completions|paper-apiKey|paper-codexPath/);
+  assert.doesNotMatch(markup, /paper-codexPath/);
   assert.match(
     markup,
     /targetLanguage[\s\S]*value="zh-CN"[\s\S]*readonly="readonly"[\s\S]*disabled="disabled"/,
@@ -46,6 +41,8 @@ test("locks the Codex authentication mode and defaults to the legacy endpoint", 
   );
   assert.match(defaults, /paper\.codexModel", "gpt-5\.4"/);
   assert.match(defaults, /paper\.codexEffort", "medium"/);
+  assert.match(defaults, /paper\.modelProviders", ""/);
+  assert.match(defaults, /paper\.activeModelId", ""/);
   assert.match(defaults, /targetLanguage", "zh-CN"/);
   const runtimeDefaults = await readFile(
     new URL("../src/modules/defaultPrefs.ts", import.meta.url),
@@ -55,4 +52,9 @@ test("locks the Codex authentication mode and defaults to the legacy endpoint", 
     runtimeDefaults,
     /setPref\("paper\.codexApiUrl", DEFAULT_CODEX_API_URL\)/,
   );
+  const script = await readFile(
+    new URL("../src/modules/preferenceWindow.ts", import.meta.url),
+    "utf8",
+  );
+  assert.match(script, /subscribeModelConfiguration\(render\)/u);
 });

@@ -16,9 +16,9 @@ import {
   OCR_DEVELOPER_INSTRUCTIONS,
   OCR_PROMPT_VERSION,
   OCR_USER_PROMPT,
-  buildCodexOcrRequest,
-  parseCodexOcrResponse,
-} from "../src/ocr/codexOcr";
+  buildModelOcrRequest,
+  parseModelOcrResponse,
+} from "../src/ocr/modelOcr";
 import {
   assertPngDataUrlWithinLimit,
   computePixelCrop,
@@ -32,7 +32,6 @@ import {
   type MineruImageFileAccess,
   type MineruImageIndex,
 } from "../src/ocr/mineruImages";
-import { DEFAULT_CODEX_API_URL } from "../src/codex/legacyClient";
 
 const PNG_SIGNATURE = Uint8Array.of(
   0x89,
@@ -469,13 +468,10 @@ test("creates a stable OCR cache key from every identity component", async () =>
   );
 });
 
-test("builds a fixed legacy OCR request with one high-detail image", () => {
-  const request = buildCodexOcrRequest({
-    model: "gpt-5.4",
-    effort: "medium",
+test("builds one provider-independent OCR request with a high-detail image", () => {
+  const request = buildModelOcrRequest({
     imageDataUrl: "data:image/png;base64,iVBORw==",
   });
-  assert.equal(request.apiUrl, DEFAULT_CODEX_API_URL);
   assert.equal(request.instructions, OCR_DEVELOPER_INSTRUCTIONS);
   assert.equal(request.prompt, OCR_USER_PROMPT);
   assert.deepEqual(request.image, {
@@ -491,7 +487,7 @@ test("builds a fixed legacy OCR request with one high-detail image", () => {
 });
 
 test("reflows visual OCR wrapping without flattening semantic structure", () => {
-  assert.equal(OCR_PROMPT_VERSION, "2");
+  assert.equal(OCR_PROMPT_VERSION, "3");
   assert.match(
     OCR_DEVELOPER_INSTRUCTIONS,
     /Return text in semantic reading units, not raw visual rows/u,
@@ -537,23 +533,23 @@ test("releases failed OCR ownership before publishing the retryable error state"
 
 test("strictly parses OCR JSON while preserving meaningful line breaks", () => {
   assert.equal(
-    parseCodexOcrResponse('{"text":"first line\\nE = mc²"}'),
+    parseModelOcrResponse('{"text":"first line\\nE = mc²"}'),
     "first line\nE = mc²",
   );
   assert.equal(
-    parseCodexOcrResponse('{"text":"  label\\nvalue  "}'),
+    parseModelOcrResponse('{"text":"  label\\nvalue  "}'),
     "  label\nvalue  ",
   );
   assert.throws(
-    () => parseCodexOcrResponse('```json\\n{"text":"x"}\\n```'),
+    () => parseModelOcrResponse('```json\\n{"text":"x"}\\n```'),
     /not valid JSON/,
   );
   assert.throws(
-    () => parseCodexOcrResponse('{"text":"x","translation":"y"}'),
+    () => parseModelOcrResponse('{"text":"x","translation":"y"}'),
     /only the "text" field/,
   );
   assert.throws(
-    () => parseCodexOcrResponse('{"text":"   "}'),
+    () => parseModelOcrResponse('{"text":"   "}'),
     /no visible text/,
   );
 });

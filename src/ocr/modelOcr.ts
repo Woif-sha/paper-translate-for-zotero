@@ -1,10 +1,10 @@
 import {
-  DEFAULT_CODEX_API_URL,
-  runLegacyCodexRequest,
-  type LegacyCodexRequest,
-} from "../codex/legacyClient";
+  runModelRequest,
+  type ModelRequest,
+  type RuntimeModel,
+} from "../models/runtime";
 
-export const OCR_PROMPT_VERSION = "2";
+export const OCR_PROMPT_VERSION = "3";
 
 export const OCR_DEVELOPER_INSTRUCTIONS = [
   "You are a strict OCR transcription component for academic figures and images.",
@@ -26,20 +26,16 @@ export const OCR_USER_PROMPT =
 const MAXIMUM_OCR_OUTPUT_CHARACTERS = 20_000;
 const MAXIMUM_OCR_RESPONSE_BYTES = 2_000_000;
 
-export type CodexOcrRequest = {
-  model: string;
-  effort?: string;
+export type ModelOcrRequest = {
+  runtimeModel: RuntimeModel;
   imageDataUrl: string;
   signal?: AbortSignal;
 };
 
-export function buildCodexOcrRequest(
-  request: CodexOcrRequest,
-): LegacyCodexRequest {
+export function buildModelOcrRequest(
+  request: Pick<ModelOcrRequest, "imageDataUrl" | "signal">,
+): ModelRequest {
   return {
-    apiUrl: DEFAULT_CODEX_API_URL,
-    model: request.model,
-    effort: request.effort,
     instructions: OCR_DEVELOPER_INSTRUCTIONS,
     prompt: OCR_USER_PROMPT,
     image: {
@@ -52,43 +48,46 @@ export function buildCodexOcrRequest(
   };
 }
 
-export async function runCodexImageOcr(
-  request: CodexOcrRequest,
+export async function runModelImageOcr(
+  request: ModelOcrRequest,
 ): Promise<string> {
-  const result = await runLegacyCodexRequest(buildCodexOcrRequest(request));
+  const result = await runModelRequest(
+    buildModelOcrRequest(request),
+    request.runtimeModel,
+  );
   if (
     result.usedWebSearch ||
     result.webSearchCalls ||
     result.citedUrls.length
   ) {
-    throw new Error("Codex OCR response unexpectedly contained web research");
+    throw new Error("OCR response unexpectedly contained web research");
   }
-  return parseCodexOcrResponse(result.text);
+  return parseModelOcrResponse(result.text);
 }
 
-export function parseCodexOcrResponse(value: string): string {
+export function parseModelOcrResponse(value: string): string {
   const response = value.trim();
   let parsed: unknown;
   try {
     parsed = JSON.parse(response);
   } catch (error) {
-    throw new Error(`Codex OCR response is not valid JSON: ${String(error)}`);
+    throw new Error(`OCR response is not valid JSON: ${String(error)}`);
   }
   if (!isObject(parsed)) {
-    throw new Error("Codex OCR response must be a JSON object");
+    throw new Error("OCR response must be a JSON object");
   }
   const keys = Object.keys(parsed);
   if (keys.length !== 1 || keys[0] !== "text") {
-    throw new Error('Codex OCR response must contain only the "text" field');
+    throw new Error('OCR response must contain only the "text" field');
   }
   if (typeof parsed.text !== "string") {
-    throw new Error('Codex OCR response "text" must be a string');
+    throw new Error('OCR response "text" must be a string');
   }
   if (!parsed.text.trim()) {
-    throw new Error("Codex OCR response contained no visible text");
+    throw new Error("OCR response contained no visible text");
   }
   if (parsed.text.includes("\0")) {
-    throw new Error("Codex OCR response text contains a null character");
+    throw new Error("OCR response text contains a null character");
   }
   return parsed.text;
 }

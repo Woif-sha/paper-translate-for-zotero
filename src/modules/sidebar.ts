@@ -38,6 +38,12 @@ import {
   ensureTranslationDisplayStyles,
   renderTranslationDisplay,
 } from "./translationDisplay";
+import {
+  flattenRuntimeModels,
+  getModelProviderConfiguration,
+  subscribeModelConfiguration,
+} from "../models/providers";
+import type { ModelSelectionActions } from "../models/selection";
 
 const activeBodies = new Set<HTMLElement>();
 const preparationJobs = new Map<number, Promise<void>>();
@@ -52,6 +58,7 @@ const paperContexts = new Map<number, ValidatedPaperContext>();
 const imageRecognitionStates = new Map<number, ImageTextRecognitionState>();
 const preparationRefreshVersions = new WeakMap<HTMLElement, number>();
 let registeredPaneKey: string | null = null;
+let unsubscribeModelConfiguration: (() => void) | undefined;
 
 export type SidebarPreparationAction =
   | "stop"
@@ -59,7 +66,9 @@ export type SidebarPreparationAction =
   | "retry-external"
   | null;
 
-export function registerReaderSidebar(): void {
+export function registerReaderSidebar(
+  modelSelection: ModelSelectionActions,
+): void {
   if (registeredPaneKey) return;
   const paneKey = Zotero.ItemPaneManager.registerSection({
     paneID: `${config.addonRef}-translation`,
@@ -98,7 +107,7 @@ export function registerReaderSidebar(): void {
       setSidebarAttachment(body, attachmentItemID);
       setEnabled(tabType === "reader");
       if (tabType !== "reader") return;
-      buildSidebar(body);
+      buildSidebar(body, modelSelection);
       if (attachmentItemID) {
         const cached = preparationErrors.get(attachmentItemID);
         if (
@@ -128,12 +137,20 @@ export function registerReaderSidebar(): void {
   if (!paneKey)
     throw new Error("Failed to register the Paper Translate Reader sidebar");
   registeredPaneKey = paneKey;
+  unsubscribeModelConfiguration = subscribeModelConfiguration(() => {
+    for (const body of activeBodies) {
+      renderModelSelector(body);
+      updateSidebarBody(body);
+    }
+  });
 }
 
 export function unregisterReaderSidebar(): void {
   if (!registeredPaneKey) return;
   Zotero.ItemPaneManager.unregisterSection(registeredPaneKey);
   registeredPaneKey = null;
+  unsubscribeModelConfiguration?.();
+  unsubscribeModelConfiguration = undefined;
   activeBodies.clear();
   preparationAttempts.clear();
   preparationErrors.clear();
@@ -183,7 +200,10 @@ export function monitorReaderSidebarLearning(
   );
 }
 
-function buildSidebar(body: HTMLElement): void {
+function buildSidebar(
+  body: HTMLElement,
+  modelSelection: ModelSelectionActions,
+): void {
   if (body.querySelector(`.${config.addonRef}-sidebar`)) return;
   const doc = body.ownerDocument;
   ensureTranslationDisplayStyles(doc);
@@ -367,10 +387,96 @@ function buildSidebar(body: HTMLElement): void {
     overflowWrap: "anywhere",
   });
   imageTools.append(imageSelect, imageStatus);
-  container.append(card, preparation, imageTools, source, translate, result);
+  const modelSelector = createModelSelector(body, modelSelection);
+  container.append(
+    card,
+    modelSelector,
+    preparation,
+    imageTools,
+    source,
+    translate,
+    result,
+  );
   body.append(container);
+  renderModelSelector(body);
   renderPreparation(body, createPreparationRecord("AAAAAAAA", "pending"));
   resetSidebarBody(body);
+}
+
+function createModelSelector(
+  body: HTMLElement,
+  modelSelection: ModelSelectionActions,
+): HTMLElement {
+  const doc = body.ownerDocument;
+  const wrap = element(doc, "label", `${config.addonRef}-model-selector`);
+  Object.assign(wrap.style, {
+    display: "flex",
+    flexDirection: "column",
+    gap: "4px",
+    padding: "8px",
+    border: "1px solid var(--fill-quinary)",
+    borderRadius: "6px",
+  });
+  const label = element(doc, "span", `${config.addonRef}-model-label`);
+  label.textContent = getString("sidebar-model-label");
+  Object.assign(label.style, {
+    fontSize: "0.85em",
+    fontWeight: "600",
+    color: "var(--fill-secondary)",
+  });
+  const select = element(doc, "select", `${config.addonRef}-model-select`);
+  Object.assign(select.style, {
+    boxSizing: "border-box",
+    width: "100%",
+    padding: "5px 7px",
+  });
+  select.addEventListener("change", () => {
+    try {
+      modelSelection.switchActiveModel(select.value);
+      delete select.dataset.error;
+      select.title = "";
+    } catch (error) {
+      select.dataset.error = "true";
+      select.title = String(error);
+      renderModelSelector(body);
+    }
+  });
+  wrap.append(label, select);
+  return wrap;
+}
+
+function renderModelSelector(body: HTMLElement): void {
+  const select = body.querySelector(
+    `.${config.addonRef}-model-select`,
+  ) as HTMLSelectElement | null;
+  if (!select) return;
+  try {
+    const configuration = getModelProviderConfiguration();
+    const models = flattenRuntimeModels(
+      configuration.providers,
+      configuration.activeModelId,
+    );
+    select.replaceChildren(
+      ...models.map((model) => {
+        const option = body.ownerDocument.createElementNS(
+          "http://www.w3.org/1999/xhtml",
+          "option",
+        ) as HTMLOptionElement;
+        option.value = model.id;
+        option.textContent = model.label;
+        return option;
+      }),
+    );
+    select.value = configuration.activeModelId;
+    select.disabled = models.length === 0;
+    select.title = "";
+    delete select.dataset.error;
+  } catch (error) {
+    select.replaceChildren();
+    select.disabled = true;
+    select.dataset.error = "true";
+    select.title = String(error);
+  }
 }
 
 function setSidebarAttachment(
