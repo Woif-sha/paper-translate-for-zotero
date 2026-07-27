@@ -183,6 +183,11 @@ async function runValidatedRequest(
   );
   if (!response.ok) {
     const detail = await readBoundedErrorResponse(response);
+    if (params.image && endpointRejectsImageInput(response.status, detail)) {
+      throw new Error(
+        `当前模型 ${params.model.trim()} 不支持图片输入，无法进行图片取词`,
+      );
+    }
     throw new Error(
       `OpenAI Compatible request failed: ${response.status} ${response.statusText} - ${detail}`,
     );
@@ -326,6 +331,20 @@ function redactSecret(value: string, secret: string): string {
   const normalizedSecret = secret.trim();
   if (!normalizedSecret) return value;
   return value.split(normalizedSecret).join("[API KEY REDACTED]");
+}
+
+function endpointRejectsImageInput(status: number, detail: string): boolean {
+  if (![400, 415, 422].includes(status)) return false;
+  const normalized = detail.toLowerCase();
+  const mentionsImageInput =
+    /\bimage_url\b|image input|image content|multimodal input|vision input/u.test(
+      normalized,
+    );
+  const rejectsCapability =
+    /unknown variant.{0,80}\bimage_url\b|\bimage_url\b.{0,80}(?:unsupported|not supported|does not support|expected [`'"]?text)|(?:image input|multimodal input|vision input).{0,80}(?:unsupported|not supported|does not support)|only supports? text|text[- ]only/u.test(
+      normalized,
+    );
+  return mentionsImageInput && rejectsCapability;
 }
 
 function redactError(error: unknown, secret: string): unknown {

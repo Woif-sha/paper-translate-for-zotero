@@ -22,13 +22,15 @@ export function updateReaderPopup() {
     popup.getAttribute(`${config.addonRef}-attachment-item-id`),
   );
   if (!Number.isInteger(itemId) || itemId <= 0) return;
-  const source = popup.querySelector(
-    `#${prefix}-source`,
-  ) as HTMLTextAreaElement | null;
-  const result = popup.querySelector(`#${prefix}-result`) as HTMLElement | null;
-  const button = popup.querySelector(
-    `#${prefix}-translate`,
-  ) as HTMLButtonElement | null;
+  const source = findPopupElement<HTMLTextAreaElement>(
+    popup,
+    `${prefix}-source`,
+  );
+  const result = findPopupElement<HTMLElement>(popup, `${prefix}-result`);
+  const button = findPopupElement<HTMLButtonElement>(
+    popup,
+    `${prefix}-translate`,
+  );
   if (!source || !result || !button) return;
   const task = getPopupTask(popup, itemId);
   if (!task) {
@@ -229,4 +231,12 @@ function getPopupTask(popup: Element, itemId: number) {
   const taskId = popup.getAttribute(`${config.addonRef}-task-id`);
   if (!taskId) return undefined;
   return getLastTranslateTask({ id: taskId, type: "text", itemId });
+}
+
+function findPopupElement<T extends HTMLElement>(
+  popup: HTMLDivElement,
+  id: string,
+): T | null {
+  const element = popup.ownerDocument.getElementById(id);
+  return element && popup.contains(element) ? (element as T) : null;
 }
