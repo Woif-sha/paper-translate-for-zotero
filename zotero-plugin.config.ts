@@ -18,7 +18,7 @@ export default defineConfig({
   },
 
   build: {
-    assets: ["addon/**/*.*"],
+    assets: ["addon/**/*.*", "LICENSE", "NOTICE"],
     define: {
       ...pkg.config,
       author: pkg.author,

@@ -18,6 +18,11 @@ test("resizes source and translation together through one shared panel", async (
   assert.match(source, /width: "100%"/);
   assert.match(source, /height: "100%"/);
   assert.match(source, /resize: "none"/);
+  assert.match(source, /renderTranslationDisplay/);
+  assert.match(
+    source,
+    /tag: "div",\s+namespace: "html",\s+id: `\$\{prefix\}-result`/u,
+  );
   assert.doesNotMatch(source, /maxWidth: "320px"|maxHeight: "96px"/);
   assert.match(source, /getPopupTask\(popup, itemId\)/);
   assert.match(source, /papertranslateforzotero.*task-id|addonRef}-task-id/);
