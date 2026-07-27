@@ -200,3 +200,70 @@ test("finishes at DONE without waiting for the provider to close the stream", as
   assert.equal(result.text, "译文");
   assert.equal(cancelled, true);
 });
+
+test("reports an explicit OCR capability error when the endpoint rejects image_url", async () => {
+  const rawError = {
+    error: {
+      message:
+        "Failed to deserialize the JSON body into the target type: messages[1]: unknown variant `image_url`, expected `text`",
+    },
+  };
+
+  await assert.rejects(
+    runOpenAICompatibleRequest({
+      apiBase: "https://api.example.com/v1",
+      apiKey: "secret",
+      model: "deepseek-v4-flash",
+      instructions: "Recognize the image text.",
+      prompt: "Read this image.",
+      image: {
+        dataUrl: "data:image/png;base64,iVBORw==",
+        detail: "high",
+      },
+      fetchFn: async () =>
+        new Response(JSON.stringify(rawError), {
+          status: 400,
+          statusText: "Bad Request",
+        }),
+    }),
+    (error: unknown) => {
+      assert.match(
+        String(error),
+        /当前模型 deepseek-v4-flash 不支持图片输入，无法进行图片取词/u,
+      );
+      assert.doesNotMatch(String(error), /deserialize|image_url/u);
+      return true;
+    },
+  );
+});
+
+test("does not misclassify other image-request failures as unsupported OCR", async () => {
+  for (const detail of [
+    "Insufficient account balance",
+    "Unsupported API revision for image requests",
+  ]) {
+    await assert.rejects(
+      runOpenAICompatibleRequest({
+        apiBase: "https://api.example.com/v1",
+        apiKey: "secret",
+        model: "deepseek-v4-flash",
+        instructions: "Recognize the image text.",
+        prompt: "Read this image.",
+        image: {
+          dataUrl: "data:image/png;base64,iVBORw==",
+          detail: "high",
+        },
+        fetchFn: async () =>
+          new Response(JSON.stringify({ error: { message: detail } }), {
+            status: 400,
+            statusText: "Bad Request",
+          }),
+      }),
+      (error: unknown) => {
+        assert.match(String(error), new RegExp(detail, "u"));
+        assert.doesNotMatch(String(error), /不支持图片输入/u);
+        return true;
+      },
+    );
+  }
+});

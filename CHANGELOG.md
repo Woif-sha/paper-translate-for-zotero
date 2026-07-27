@@ -12,6 +12,8 @@
 
 ### 调整
 
+- 修复部分 Reader 实例 ID 包含 CSS 保留字符时，Codex Auth 流式译文刷新会触发 `SyntaxError: An invalid or illegal string was specified` 的问题。浮窗控件改为按精确 DOM ID 查找，不再把动态实例 ID 解析为 CSS 选择器。
+- OpenAI-compatible 服务商明确拒绝 `image_url`、多模态或视觉输入时，图片取词改为显示“当前模型不支持图片输入”，不再向用户暴露底层 JSON 反序列化错误。认证、额度和其他请求错误仍保留原始原因。
 - 服务商卡片改为紧凑布局，默认按“服务商 A、服务商 B……”命名且可直接重命名；删除按钮统一为 `×`，模型的测试按钮在窄设置窗口中保持可见，保存按钮精简为“保存”。
 - 修复动态设置文案加载了错误的本地化资源，导致界面显示 `papertranslateforzotero-pref-...` 完整键名的问题。
 - 原有 Codex 设置会确定性迁移为“服务商 A”和当前模型，不影响已有用户继续使用 `auth.json`；已经自定义的其他服务商名称保持不变。
