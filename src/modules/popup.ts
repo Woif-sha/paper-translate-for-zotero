@@ -55,6 +55,12 @@ export function updateReaderPopup() {
   button.disabled = task.status === "processing" || !task.raw.trim();
 }
 
+export function containPopupEditorDeletion(event: KeyboardEvent): void {
+  if (event.key === "Delete" || event.key === "Backspace") {
+    event.stopPropagation();
+  }
+}
+
 export function buildReaderPopup(
   event: _ZoteroTypes.Reader.EventParams<"renderTextSelectionPopup">,
   taskId?: string,
@@ -135,6 +141,11 @@ export function buildReaderPopup(
                 onpointerup: (event: Event) => event.stopPropagation(),
               },
               listeners: [
+                {
+                  type: "keydown",
+                  listener: (event) =>
+                    containPopupEditorDeletion(event as KeyboardEvent),
+                },
                 {
                   type: "input",
                   listener: (event) => {
