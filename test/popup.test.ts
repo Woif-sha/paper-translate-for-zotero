@@ -26,6 +26,19 @@ test("resizes source and translation together through one shared panel", async (
   assert.doesNotMatch(source, /maxWidth: "320px"|maxHeight: "96px"/);
   assert.match(source, /getPopupTask\(popup, itemId\)/);
   assert.match(source, /papertranslateforzotero.*task-id|addonRef}-task-id/);
+  assert.doesNotMatch(source, /containPopupEditorDeletion/u);
+  assert.match(
+    source,
+    /const READER_EDITABLE_POPUP_GUARD_CLASS = "label-popup"/u,
+  );
+  assert.match(
+    source,
+    /tag: "textarea",[\s\S]*?classList: \[[^\]]*READER_EDITABLE_POPUP_GUARD_CLASS/u,
+  );
+  assert.match(
+    source,
+    /background: "var\(--color-sidepane\)",\s+position: "static",\s+left: "auto"/u,
+  );
 });
 
 test("editing a streaming source creates a separate task", () => {
