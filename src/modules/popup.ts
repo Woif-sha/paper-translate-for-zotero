@@ -13,6 +13,9 @@ import {
   renderTranslationDisplay,
 } from "./translationDisplay";
 
+// Zotero's capture-phase annotation deletion shortcut exempts label popups.
+const READER_EDITABLE_POPUP_GUARD_CLASS = "label-popup";
+
 export function updateReaderPopup() {
   const popup = addon.data.popup.currentPopup;
   if (!popup) return;
@@ -53,12 +56,6 @@ export function updateReaderPopup() {
     ),
   );
   button.disabled = task.status === "processing" || !task.raw.trim();
-}
-
-export function containPopupEditorDeletion(event: KeyboardEvent): void {
-  if (event.key === "Delete" || event.key === "Backspace") {
-    event.stopPropagation();
-  }
 }
 
 export function buildReaderPopup(
@@ -130,10 +127,15 @@ export function buildReaderPopup(
               tag: "textarea",
               id: `${prefix}-source`,
               attributes: { rows: "3", placeholder: "Source text" },
-              classList: [`${config.addonRef}-readerpopup`],
+              classList: [
+                `${config.addonRef}-readerpopup`,
+                READER_EDITABLE_POPUP_GUARD_CLASS,
+              ],
               styles: {
                 ...textStyle,
                 background: "var(--color-sidepane)",
+                position: "static",
+                left: "auto",
               },
               properties: {
                 value: addon.data.translate.selectedText,
@@ -141,11 +143,6 @@ export function buildReaderPopup(
                 onpointerup: (event: Event) => event.stopPropagation(),
               },
               listeners: [
-                {
-                  type: "keydown",
-                  listener: (event) =>
-                    containPopupEditorDeletion(event as KeyboardEvent),
-                },
                 {
                   type: "input",
                   listener: (event) => {

@@ -1,11 +1,7 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
-import {
-  containPopupEditorDeletion,
-  updatePopupSourceTask,
-  updateReaderPopup,
-} from "../src/modules/popup";
+import { updatePopupSourceTask, updateReaderPopup } from "../src/modules/popup";
 import { addTranslateTask } from "../src/utils/task";
 
 test("resizes source and translation together through one shared panel", async () => {
@@ -30,9 +26,18 @@ test("resizes source and translation together through one shared panel", async (
   assert.doesNotMatch(source, /maxWidth: "320px"|maxHeight: "96px"/);
   assert.match(source, /getPopupTask\(popup, itemId\)/);
   assert.match(source, /papertranslateforzotero.*task-id|addonRef}-task-id/);
+  assert.doesNotMatch(source, /containPopupEditorDeletion/u);
   assert.match(
     source,
-    /type: "keydown",\s+listener: \(event\) =>\s+containPopupEditorDeletion/u,
+    /const READER_EDITABLE_POPUP_GUARD_CLASS = "label-popup"/u,
+  );
+  assert.match(
+    source,
+    /tag: "textarea",[\s\S]*?classList: \[[^\]]*READER_EDITABLE_POPUP_GUARD_CLASS/u,
+  );
+  assert.match(
+    source,
+    /background: "var\(--color-sidepane\)",\s+position: "static",\s+left: "auto"/u,
   );
 });
 
@@ -71,28 +76,6 @@ test("editing a streaming source creates a separate task", () => {
     attributes.get("papertranslateforzotero-task-id"),
     replacement.id,
   );
-});
-
-test("keeps Delete and Backspace inside the popup editor", () => {
-  for (const key of ["Delete", "Backspace"]) {
-    let propagationStops = 0;
-    let defaultPreventions = 0;
-    containPopupEditorDeletion({
-      key,
-      stopPropagation: () => propagationStops++,
-      preventDefault: () => defaultPreventions++,
-    } as unknown as KeyboardEvent);
-
-    assert.equal(propagationStops, 1);
-    assert.equal(defaultPreventions, 0);
-  }
-
-  let escapePropagationStops = 0;
-  containPopupEditorDeletion({
-    key: "Escape",
-    stopPropagation: () => escapePropagationStops++,
-  } as unknown as KeyboardEvent);
-  assert.equal(escapePropagationStops, 0);
 });
 
 test("refreshes a Reader popup whose instance ID is not a valid CSS selector", () => {
