@@ -59,6 +59,9 @@ Run targeted tests, `npx tsc --noEmit`, `npm run build`, then a real Zotero/Code
 
 ## Local builds and version history
 
+- Use `dev` as the only development and integration branch. Normal CI builds run from `dev`; do not develop or commit directly on `main`.
+- Promote validated changes to `main` only by merging `dev` into `main`. Pull requests targeting `main` must use `dev` as their source branch.
+- Keep `dev` limited to source, tests, and the configuration required to validate and build the plugin. Never commit `build/`, generated XPI files, release assets, local diagnostics, or temporary output.
 - After every code or asset change, run the relevant tests and static checks, then run `npm run build` and verify that `build/paper-translate-for-zotero.xpi` was regenerated successfully.
 - After validation succeeds, create a local Git commit for every completed change. Do not leave completed implementation work uncommitted.
 - Do not push commits, create or push tags, create a GitHub Release, or upload release assets unless the user explicitly asks to push or publish.

@@ -2,8 +2,9 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [dev]
   pull_request:
+    branches: [dev, main]
 
 permissions:
   contents: read
@@ -19,6 +20,14 @@ jobs:
     steps:
       - name: Check out source
         uses: actions/checkout@v7
+
+      - name: Require dev for main promotions
+        if: github.event_name == 'pull_request' && github.base_ref == 'main'
+        run: |
+          if [[ "$GITHUB_HEAD_REF" != "dev" ]]; then
+            echo "main accepts changes only from dev; received $GITHUB_HEAD_REF" >&2
+            exit 1
+          fi
 
       - name: Set up Node.js
         uses: actions/setup-node@v7

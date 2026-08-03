@@ -179,7 +179,9 @@ npx eslint src test
 npm run build
 ```
 
-本地 XPI 生成在 `build/paper-translate-for-zotero.xpi`。推送和拉取请求会运行 CI；推送与 `package.json` 版本一致的 `v*` 标签后，发布工作流会重新检查并上传 XPI。
+日常开发和 CI 构建统一在 `dev` 分支进行；`main` 只接收验证后的 `dev -> main` 合并，不直接承载开发提交。`dev` 保留源码、测试和必要的构建配置，不提交 `build/`、XPI、发布资产或临时诊断输出。
+
+本地 XPI 生成在 `build/paper-translate-for-zotero.xpi`。推送 `dev` 或创建面向 `dev` 的拉取请求会运行 CI；`dev -> main` 的提升请求会再次验证。推送与 `package.json` 版本一致的 `v*` 标签后，发布工作流会重新检查并上传 XPI。
 
 ## 来源与许可
 
