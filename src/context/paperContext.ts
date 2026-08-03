@@ -71,6 +71,7 @@ export type RetrievedPassage = PaperIndexChunk & {
 
 const MAX_CHUNK_CHARS = 1600;
 const MIN_CHUNK_CHARS = 900;
+const TRANSLATION_PASSAGE_WINDOW_CHUNKS = 3;
 
 export function assertParentItemKey(value: string): void {
   if (!/^[A-Z0-9]{8}$/.test(value)) {
@@ -218,6 +219,7 @@ export function retrievePassages(
   if (index.totalChars !== markdown.length) {
     throw new Error("Paper index length does not match full.md");
   }
+  if (limit <= 0) return [];
   const terms = tokenize(query);
   if (terms.length === 0) return [];
   const ranked = index.chunks
@@ -237,22 +239,42 @@ export function retrievePassages(
     })
     .filter((chunk) => chunk.score > 0)
     .sort((a, b) => b.score - a.score || a.charStart - b.charStart);
-  const selected = new Map<number, RetrievedPassage>();
-  for (const passage of ranked) {
-    if (selected.size >= limit) break;
-    selected.set(passage.id, passage);
-    for (const neighborId of [passage.previousChunkId, passage.nextChunkId]) {
-      if (neighborId === null || selected.size >= limit) continue;
-      const neighbor = index.chunks[neighborId];
-      if (!neighbor || selected.has(neighbor.id)) continue;
-      selected.set(neighbor.id, {
-        ...neighbor,
-        text: markdown.slice(neighbor.charStart, neighbor.charEnd),
-        score: Math.max(0.1, passage.score * 0.25),
-      });
-    }
+  const anchor = ranked[0];
+  if (!anchor) return [];
+  return retrievePassageWindow(markdown, index, anchor, limit);
+}
+
+function retrievePassageWindow(
+  markdown: string,
+  index: PaperIndex,
+  anchor: RetrievedPassage,
+  limit: number,
+): RetrievedPassage[] {
+  const sectionChunks = index.chunks
+    .filter((chunk) => chunk.sectionIndex === anchor.sectionIndex)
+    .sort((left, right) => left.charStart - right.charStart);
+  const anchorIndex = sectionChunks.findIndex(
+    (chunk) => chunk.id === anchor.id,
+  );
+  if (anchorIndex < 0) {
+    throw new Error("Ranked passage is missing from its indexed section");
   }
-  return [...selected.values()];
+  const windowSize = Math.min(
+    limit,
+    TRANSLATION_PASSAGE_WINDOW_CHUNKS,
+    sectionChunks.length,
+  );
+  const windowStart = Math.floor(anchorIndex / windowSize) * windowSize;
+  return sectionChunks
+    .slice(windowStart, windowStart + windowSize)
+    .map((chunk) => ({
+      ...chunk,
+      text: markdown.slice(chunk.charStart, chunk.charEnd),
+      score:
+        chunk.id === anchor.id
+          ? anchor.score
+          : Math.max(0.1, anchor.score * 0.25),
+    }));
 }
 
 export function alignSelectionHyphens(
