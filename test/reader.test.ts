@@ -121,11 +121,11 @@ test("skips an algorithm above the continued prose on the second selected page",
       nextPageLines: [
         {
           text: "Algorithm 2 Hybrid Column-Based RLA [13]",
-          rect: [48, 688, 412, 701],
+          rect: [48, 116, 412, 128],
         },
         {
           text: "This corresponds to the outer most for loop in Algorithm 1 (index i).",
-          rect: [48, 216, 518, 228],
+          rect: [48, 92, 518, 104],
         },
       ],
     }),
@@ -165,8 +165,10 @@ test("uses the current Reader selection layout to clean a cross-page annotation"
   const continued =
     "of data. For a multi-GPU system, there will be multiple grids.";
   const firstRect = [48, 84, 518, 96];
-  const captionRect = [48, 684, 286, 696];
-  const continuedRect = [48, 612, 518, 624];
+  // Zotero excludes the figure body from the text selection, so the selected
+  // caption and the continued prose are adjacent even though a figure is above.
+  const captionRect = [48, 116, 286, 128];
+  const continuedRect = [48, 92, 518, 104];
   const annotation = {
     text: `${firstPageText} ${caption} ${continued}`,
     position: {

@@ -127,8 +127,11 @@ function removeLeadingCrossPageObject(
     const upper = layout.nextPageLines[index].rect;
     const lower = layout.nextPageLines[index + 1].rect;
     const gap = upper[1] - lower[3];
+    const verifiedAdjacentHeading =
+      index === 0 &&
+      isCompleteSingleLineObjectHeading(layout.nextPageLines[index].text);
+    if (gap <= minimumGap && !verifiedAdjacentHeading) continue;
     if (
-      gap <= minimumGap ||
       !startsSemanticProse(layout.nextPageLines.slice(index + 1, index + 3))
     ) {
       continue;
@@ -154,6 +157,14 @@ function removeLeadingCrossPageObject(
     .slice(discardedPrefix.length)
     .trimStart();
   return retainedText ? `${layout.firstPageText} ${retainedText}` : value;
+}
+
+function isCompleteSingleLineObjectHeading(value: string): boolean {
+  const text = value.trim();
+  return (
+    /^(?:Fig\.|Figure)\s+\d+[A-Z]?\s*[.:]\s+\S.*[.!?]$/iu.test(text) ||
+    /^Algorithm\s+\d+[A-Z]?\s+\S.*\[\d+(?:\s*,\s*\d+)*\]\s*$/iu.test(text)
+  );
 }
 
 function startsSemanticProse(lines: readonly ReaderSelectionLine[]): boolean {
