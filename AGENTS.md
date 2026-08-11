@@ -67,6 +67,12 @@ Run targeted tests, `npx tsc --noEmit`, `npm run build`, then a real Zotero/Code
 - Do not push commits, create or push tags, create a GitHub Release, or upload release assets unless the user explicitly asks to push or publish.
 - Keep generated XPI files local and ignored by Git until the user explicitly requests a release.
 
+### GitHub release conventions
+
+- Keep the GitHub Releases page limited to semantic-version releases. Every version tag and Release title must match exactly in the form `vX.Y.Z`.
+- Attach the XPI to its matching version Release and write a Chinese update summary covering user-visible changes, installation or update instructions, and completed release validation.
+- Never create or recreate the `release` tag or a standalone `Zotero update manifest` Release. The user intentionally removed that Release; `update.json` must not be distributed through a manifest-only GitHub Release.
+
 ## Agent skills
 
 ### Issue tracker
