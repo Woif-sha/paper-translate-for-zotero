@@ -14,6 +14,13 @@ test("renders Markdown and inline LaTeX without exposing dollar delimiters", () 
   assert.match(markup, /<li>保留分段<\/li>/u);
 });
 
+test("renders multiline translation with XHTML-compatible line breaks", () => {
+  const markup = renderTranslationMarkup("第一行\n第二行");
+
+  assert.match(markup, /<br \/>/u);
+  assert.doesNotMatch(markup, /<br>/u);
+});
+
 test("escapes model-provided HTML before displaying translation Markdown", () => {
   const markup = renderTranslationMarkup(
     '<img src="x" onerror="alert(1)"> **安全文本**',

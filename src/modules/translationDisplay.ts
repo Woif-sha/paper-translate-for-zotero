@@ -13,6 +13,7 @@ const markdown = new MarkdownIt({
   html: false,
   linkify: false,
   typographer: false,
+  xhtmlOut: true,
 });
 
 markdown.disable(["image", "link"]);
