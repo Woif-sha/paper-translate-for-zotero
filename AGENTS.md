@@ -71,7 +71,7 @@ Run targeted tests, `npx tsc --noEmit`, `npm run build`, then a real Zotero/Code
 
 - Keep the GitHub Releases page limited to semantic-version releases. Every version tag and Release title must match exactly in the form `vX.Y.Z`.
 - Attach the XPI to its matching version Release and write a Chinese update summary covering user-visible changes, installation or update instructions, and completed release validation.
-- Never create or recreate the `release` tag or a standalone `Zotero update manifest` Release. The user intentionally removed that Release; `update.json` must not be distributed through a manifest-only GitHub Release.
+- Preserve the updater configuration, the XPI `update_url`, and generated `update*.json` files for build validation. A version release uploads only its matching XPI; never automatically create or update the manifest-only `release` Release or upload `update*.json` from the version release workflow.
 
 ## Agent skills
 

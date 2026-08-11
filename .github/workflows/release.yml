@@ -76,20 +76,3 @@ jobs:
           else
             gh release upload "$GITHUB_REF_NAME" "$xpi"
           fi
-
-      - name: Update Zotero auto-update manifest
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          gh release view release >/dev/null 2>&1 || gh release create release --latest=false --title "Zotero update manifest" --notes "Stable auto-update metadata."
-          mkdir -p "$RUNNER_TEMP/current-update"
-          assets="$(gh release view release --json assets --jq '.assets[].name')"
-          if grep -Fxq update.json <<<"$assets"; then
-            gh release download release --pattern update.json --dir "$RUNNER_TEMP/current-update"
-            CURRENT_UPDATE="$RUNNER_TEMP/current-update/update.json" NEXT_UPDATE="build/update.json" node -e "const fs=require('fs');const pkg=require('./package.json');const read=p=>JSON.parse(fs.readFileSync(p,'utf8')).addons?.[pkg.config.addonID]?.updates?.[0]?.version;const parse=v=>{if(!/^\\d+\\.\\d+\\.\\d+$/.test(v||''))throw new Error('Expected a stable semantic version, received '+v);return v.split('.').map(Number)};const current=parse(read(process.env.CURRENT_UPDATE));const next=parse(read(process.env.NEXT_UPDATE));let order=0;for(let i=0;i<3;i++){if(next[i]!==current[i]){order=next[i]>current[i]?1:-1;break}}if(order<0)throw new Error('Refusing to replace update.json '+current.join('.')+' with older '+next.join('.'));if(order===0&&!fs.readFileSync(process.env.CURRENT_UPDATE).equals(fs.readFileSync(process.env.NEXT_UPDATE)))throw new Error('Refusing to replace update.json with different content for the same version')"
-            if cmp -s "$RUNNER_TEMP/current-update/update.json" build/update.json; then
-              echo "update.json is already current"
-              exit 0
-            fi
-          fi
-          gh release upload release build/update.json --clobber
