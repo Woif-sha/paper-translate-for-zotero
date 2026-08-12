@@ -41,6 +41,7 @@ sidebar-preparation-stop=Stop
 sidebar-preparation-retry=Prepare again
 sidebar-preparation-retry-external=Retry external enrichment
 sidebar-preparation-recheck=Check again
+sidebar-preparation-checking=Checking…
 sidebar-mineru-warning-title=MinerU Markdown unavailable
 sidebar-mineru-not-generated=Selected or manually entered text can still be translated. Parse this paper in llm-for-zotero to enable image text selection and knowledge preparation.
 sidebar-mineru-incomplete=Text translation remains available. Image text selection and knowledge preparation require a complete MinerU cache; { $files } is missing. Parse this paper again in llm-for-zotero.

@@ -761,6 +761,9 @@ function runPreparationAction(body: HTMLElement): void {
   const action = button?.dataset.action;
   if (!action) return;
   button.disabled = true;
+  if (action === "recheck") {
+    button.textContent = getString("sidebar-preparation-checking");
+  }
   const job =
     action === "recheck"
       ? recheckPaperPreparation(itemID)
@@ -1203,6 +1206,22 @@ function renderPreparationAction(
     `.${config.addonRef}-preparation-action`,
   ) as HTMLButtonElement | null;
   if (!button) return;
+  const heading = body.querySelector(
+    `.${config.addonRef}-paper-heading`,
+  ) as HTMLElement | null;
+  const preparationHeader = body.querySelector(
+    `.${config.addonRef}-preparation-header`,
+  ) as HTMLElement | null;
+  const openDirectory = body.querySelector(
+    `.${config.addonRef}-open-directory`,
+  ) as HTMLElement | null;
+  if (action === "recheck") {
+    heading?.append(button);
+    applyCompactActionStyle(button, "error");
+  } else if (preparationHeader) {
+    preparationHeader.insertBefore(button, openDirectory);
+    applyCompactActionStyle(button);
+  }
   if (!action) {
     button.hidden = true;
     button.disabled = false;
@@ -1501,12 +1520,16 @@ function conciseStageDetail(detail?: string): string {
     .slice(0, 80);
 }
 
-function applyCompactActionStyle(button: HTMLButtonElement): void {
+function applyCompactActionStyle(
+  button: HTMLButtonElement,
+  tone: "default" | "error" = "default",
+): void {
+  const isError = tone === "error";
   Object.assign(button.style, {
     padding: "2px 8px",
-    border: "1px solid #77ad99",
+    border: `1px solid ${isError ? "#d35d5d" : "#77ad99"}`,
     borderRadius: "10px",
-    color: "#276553",
+    color: isError ? "#8b1e1e" : "#276553",
     background: "transparent",
     font: "inherit",
     fontSize: "0.82em",

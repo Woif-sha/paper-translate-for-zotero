@@ -50,6 +50,23 @@ test("renders the missing Markdown guidance in the red paper card", async () => 
     /title\.textContent = `⚠ \$\{getString\("sidebar-mineru-warning-title"\)\}`/u,
   );
   assert.match(source, /isError\s*\?\s*"#fff1f0"/u);
+  assert.match(
+    source,
+    /if \(action === "recheck"\) \{\s+heading\?\.append\(button\);\s+applyCompactActionStyle\(button, "error"\);/u,
+  );
+  assert.match(
+    source,
+    /button\.textContent = getString\("sidebar-preparation-checking"\)/u,
+  );
+  assert.match(source, /if \(preparationActionJobs\.has\(itemID\)\) return;/u);
+  assert.equal(
+    [
+      ...source.matchAll(
+        /element\(\s*doc,\s*"button",\s*`\$\{config\.addonRef\}-preparation-action`/gu,
+      ),
+    ].length,
+    1,
+  );
   assert.doesNotMatch(source, /mineru-reminder/u);
 });
 

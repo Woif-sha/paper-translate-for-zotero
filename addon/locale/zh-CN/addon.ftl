@@ -41,6 +41,7 @@ sidebar-preparation-stop=停止准备
 sidebar-preparation-retry=重新准备
 sidebar-preparation-retry-external=重试外部补充
 sidebar-preparation-recheck=重新检查
+sidebar-preparation-checking=检查中…
 sidebar-mineru-warning-title=MinerU Markdown 不可用
 sidebar-mineru-not-generated=当前仍可进行文本划词或手动输入翻译；图片取词和知识准备需先在 llm-for-zotero 中解析本文。
 sidebar-mineru-incomplete=当前仍可进行文本翻译；图片取词和知识准备需完整的 MinerU 缓存，现缺少 { $files }。请在 llm-for-zotero 中重新解析本文。

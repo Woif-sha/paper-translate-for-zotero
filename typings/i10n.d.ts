@@ -58,6 +58,7 @@ export type FluentMessageId =
   | 'sidebar-open-directory-error'
   | 'sidebar-open-knowledge-directory'
   | 'sidebar-preferences'
+  | 'sidebar-preparation-checking'
   | 'sidebar-preparation-error'
   | 'sidebar-preparation-recheck'
   | 'sidebar-preparation-retry'
