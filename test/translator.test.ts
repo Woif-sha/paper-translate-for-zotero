@@ -3,8 +3,10 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 import {
   formatTranslationLayout,
+  resolveTranslationRequest,
   schedulePaperLearningAfterTranslation,
 } from "../src/backends/translator";
+import { MineruMarkdownUnavailableError } from "../src/context/runtime";
 
 test("keeps translated bullet items on separate lines", () => {
   assert.equal(
@@ -56,10 +58,77 @@ test("does not await paper learning or start per-translation knowledge requests"
     new URL("../src/backends/translator.ts", import.meta.url),
     "utf8",
   );
-  assert.match(source, /schedulePaperLearningAfterTranslation\(context\)/);
+  assert.match(
+    source,
+    /if \(request\.context\) schedulePaperLearningAfterTranslation\(request\.context\)/,
+  );
   assert.doesNotMatch(source, /await readPreparationRecord\(context\)/);
   assert.doesNotMatch(source, /updateTerminology|TERMINOLOGY_DEVELOPER/);
   assert.doesNotMatch(source, /await ensureCorePaperKnowledge/);
+});
+
+test("translates selected text without MinerU Markdown and skips paper learning", async () => {
+  const source = await readFile(
+    new URL("../src/backends/translator.ts", import.meta.url),
+    "utf8",
+  );
+
+  assert.match(source, /MineruMarkdownUnavailableError/);
+  assert.match(source, /buildStandaloneTranslationPrompt/);
+  assert.match(
+    source,
+    /catch\s*\([^)]*\)\s*\{[\s\S]*?MineruMarkdownUnavailableError[\s\S]*?buildStandaloneTranslationPrompt/u,
+  );
+  let synchronized = false;
+  const request = await resolveTranslationRequest(
+    {
+      attachmentItemID: 42,
+      sourceLanguage: "en",
+      targetLanguage: "zh-CN",
+      input: "Selected text remains translatable.",
+    },
+    {
+      async prepareContext() {
+        throw new MineruMarkdownUnavailableError(
+          "not-generated",
+          ["_llm_source.json", "full.md", "manifest.json"],
+          "E:\\MinerU\\42",
+        );
+      },
+      synchronizeContext() {
+        synchronized = true;
+      },
+    },
+  );
+
+  assert.equal(request.context, undefined);
+  assert.equal(request.input, "Selected text remains translatable.");
+  assert.match(request.prompt, /Text to translate:\nSelected text remains/u);
+  assert.doesNotMatch(request.prompt, /Persistent terminology|Paper section/u);
+  assert.equal(synchronized, false);
+});
+
+test("does not hide paper context validation failures behind text-only translation", async () => {
+  const failure = new Error("provenance identity mismatch");
+  await assert.rejects(
+    resolveTranslationRequest(
+      {
+        attachmentItemID: 42,
+        sourceLanguage: "en",
+        targetLanguage: "zh-CN",
+        input: "Selected text",
+      },
+      {
+        async prepareContext() {
+          throw failure;
+        },
+        synchronizeContext() {
+          assert.fail("invalid context must not be synchronized");
+        },
+      },
+    ),
+    failure,
+  );
 });
 
 test("reports a background setup failure without blocking a completed translation", async () => {

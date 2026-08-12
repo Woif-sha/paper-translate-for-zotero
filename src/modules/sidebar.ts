@@ -348,13 +348,7 @@ function buildSidebar(
       cancelImageTextRecognition(itemId);
     }
     const input = normalizeTaskText(source.value);
-    if (
-      !Number.isInteger(itemId) ||
-      itemId <= 0 ||
-      !input ||
-      body.dataset.paperReady !== "true"
-    )
-      return;
+    if (!Number.isInteger(itemId) || itemId <= 0 || !input) return;
     const task = addTranslateTask(input, itemId);
     if (!task) return;
     body.dataset.sourceDirty = "false";
@@ -512,7 +506,7 @@ function setSidebarAttachment(
 }
 
 function resetSidebarBody(body: HTMLElement): void {
-  body.dataset.paperReady = "false";
+  body.dataset.paperContextReady = "false";
   delete body.dataset.sourceDirty;
   delete body.dataset.sidebarTaskId;
   const title = body.querySelector(`.${config.addonRef}-paper-title`);
@@ -607,7 +601,7 @@ function runImageTextSelection(body: HTMLElement): void {
   if (
     !Number.isInteger(itemID) ||
     itemID <= 0 ||
-    body.dataset.paperReady !== "true" ||
+    body.dataset.paperContextReady !== "true" ||
     !paperContexts.has(itemID) ||
     imageTextRecognitionIsActive(itemID)
   ) {
@@ -1137,7 +1131,7 @@ export function formatPreparationRows(
   });
 }
 
-export function isTranslationReady(record: PreparationRecord): boolean {
+export function isPaperContextReady(record: PreparationRecord): boolean {
   return ["source", "index"].every(
     (id) =>
       record.stages.find((stage) => stage.id === id)?.status === "complete",
@@ -1197,7 +1191,7 @@ function renderPreparation(body: HTMLElement, record: PreparationRecord): void {
       return line;
     }),
   );
-  body.dataset.paperReady = String(isTranslationReady(record));
+  body.dataset.paperContextReady = String(isPaperContextReady(record));
   renderPreparationAction(body, getSidebarPreparationAction(record));
 }
 
@@ -1325,7 +1319,7 @@ function publishPreparationError(
       `.${config.addonRef}-open-directory`,
     ) as HTMLButtonElement | null;
     if (openDirectory) openDirectory.disabled = !paperContexts.has(itemID);
-    body.dataset.paperReady = "false";
+    body.dataset.paperContextReady = "false";
     updateSidebarBody(body);
   }
 }
@@ -1417,21 +1411,21 @@ function updateSidebarBody(body: HTMLElement): void {
     body.dataset.sourceDirty = "false";
   }
   if (!sourceDirty && task) body.dataset.sidebarTaskId = task.id;
-  const paperReady = body.dataset.paperReady === "true";
+  const paperContextReady = body.dataset.paperContextReady === "true";
   if (imageSelect) {
     imageSelect.disabled =
-      !paperReady ||
+      !paperContextReady ||
       !paperContexts.has(itemId) ||
       imageTextRecognitionIsActive(itemId);
   }
   if (sourceDirty) {
     renderTranslationDisplay(result, "", placeholder);
-    translate.disabled = !paperReady || !normalizeTaskText(source.value);
+    translate.disabled = !normalizeTaskText(source.value);
     return;
   }
   if (!task) {
     renderTranslationDisplay(result, "", placeholder);
-    translate.disabled = !paperReady || !source.value.trim();
+    translate.disabled = !source.value.trim();
     return;
   }
   if (source.ownerDocument.activeElement !== source) source.value = task.raw;
@@ -1440,7 +1434,7 @@ function updateSidebarBody(body: HTMLElement): void {
     task.result,
     getString(getSidebarResultPlaceholderKey(task.status)),
   );
-  translate.disabled = !paperReady || task.status === "processing";
+  translate.disabled = task.status === "processing";
 }
 
 function handleSidebarSourceInput(body: HTMLElement, value: string): void {

@@ -8,7 +8,7 @@ import {
   getMineruUnavailablePresentation,
   getSidebarPreparationAction,
   getSidebarResultPlaceholderKey,
-  isTranslationReady,
+  isPaperContextReady,
   openPaperContextDirectory,
   preparationRefreshIsCurrent,
   registerReaderSidebar,
@@ -61,6 +61,28 @@ test("does not claim to translate before a task starts", () => {
   );
 });
 
+test("keeps text translation available when paper context is unavailable", async () => {
+  const source = await readFile(
+    new URL("../src/modules/sidebar.ts", import.meta.url),
+    "utf8",
+  );
+  const updateBody = source.match(
+    /function updateSidebarBody[\s\S]*?function handleSidebarSourceInput/u,
+  )?.[0];
+
+  assert.ok(updateBody);
+  assert.doesNotMatch(
+    updateBody,
+    /translate\.disabled\s*=\s*!paperContextReady/u,
+  );
+  assert.match(updateBody, /imageSelect\.disabled\s*=\s*!paperContextReady/u);
+  const translateClick = source.match(
+    /translate\.addEventListener\("click",[\s\S]*?dispatchTranslateTask\(task\);/u,
+  )?.[0];
+  assert.ok(translateClick);
+  assert.doesNotMatch(translateClick, /paperContextReady/u);
+});
+
 test("renders one shared current-model selector in the Reader sidebar", async () => {
   const source = await readFile(
     new URL("../src/modules/sidebar.ts", import.meta.url),
@@ -71,9 +93,9 @@ test("renders one shared current-model selector in the Reader sidebar", async ()
   assert.match(source, /getModelProviderConfiguration\(\)/u);
 });
 
-test("allows translation as soon as source and index files are complete", () => {
+test("marks paper context ready as soon as source and index files are complete", () => {
   assert.equal(
-    isTranslationReady({
+    isPaperContextReady({
       stages: [
         { id: "source", status: "complete" },
         { id: "index", status: "complete" },
@@ -101,9 +123,9 @@ test("does not count a failed external process warning as a completed file", () 
   );
 });
 
-test("keeps translation ready when background preparation reports an error", () => {
+test("keeps paper context ready when background preparation reports an error", () => {
   assert.equal(
-    isTranslationReady({
+    isPaperContextReady({
       stages: [
         { id: "source", status: "complete" },
         { id: "index", status: "complete" },

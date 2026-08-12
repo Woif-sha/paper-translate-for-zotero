@@ -76,6 +76,20 @@ export function buildTranslationPrompt(params: {
   ].join("\n");
 }
 
+export function buildStandaloneTranslationPrompt(params: {
+  sourceLanguage: string;
+  targetLanguage: string;
+  input: string;
+}): string {
+  return [
+    `Source language: ${params.sourceLanguage}`,
+    `Target language: ${params.targetLanguage}`,
+    "",
+    "Text to translate:",
+    params.input,
+  ].join("\n");
+}
+
 export function buildCoreKnowledgePrompt(
   context: ValidatedPaperContext,
 ): string {

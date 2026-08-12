@@ -1,7 +1,13 @@
-import { preparePaperContext, readPreparationRecord } from "../context/runtime";
+import {
+  MineruMarkdownUnavailableError,
+  preparePaperContext,
+  readPreparationRecord,
+  type ValidatedPaperContext,
+} from "../context/runtime";
 import { continuePaperLearning } from "../context/research";
 import {
   TRANSLATION_DEVELOPER_INSTRUCTIONS,
+  buildStandaloneTranslationPrompt,
   buildTranslationPrompt,
 } from "../context/prompts";
 import {
@@ -27,6 +33,24 @@ type PaperLearningScheduleDependencies = {
     attemptId: number,
   ): void;
   report(error: unknown): void;
+};
+
+type TranslationRequestParams = {
+  attachmentItemID: number;
+  sourceLanguage: string;
+  targetLanguage: string;
+  input: string;
+};
+
+type TranslationRequestDependencies = {
+  prepareContext: typeof preparePaperContext;
+  synchronizeContext: typeof synchronizeReaderSidebarContext;
+};
+
+type ResolvedTranslationRequest = {
+  input: string;
+  prompt: string;
+  context?: ValidatedPaperContext;
 };
 
 let activeTranslation:
@@ -58,31 +82,55 @@ export async function translateWithPaperContext(params: {
   };
   const model = getActiveModelSnapshot();
   try {
-    const context = await preparePaperContext(
-      params.attachmentItemID,
-      params.input,
-    );
-    synchronizeReaderSidebarContext(context);
-    const input = context.alignedQuery || params.input;
-    const prompt = buildTranslationPrompt({
-      context,
-      sourceLanguage: params.sourceLanguage,
-      targetLanguage: params.targetLanguage,
-      input,
-    });
+    const request = await resolveTranslationRequest(params);
     const translation = await translateWithModel(
-      prompt,
-      input,
+      request.prompt,
+      request.input,
       model,
       controller.signal,
       params.onUpdate,
     );
-    schedulePaperLearningAfterTranslation(context);
+    if (request.context) schedulePaperLearningAfterTranslation(request.context);
     return translation;
   } finally {
     if (activeTranslation?.controller === controller)
       activeTranslation = undefined;
   }
+}
+
+export async function resolveTranslationRequest(
+  params: TranslationRequestParams,
+  dependencies: TranslationRequestDependencies = {
+    prepareContext: preparePaperContext,
+    synchronizeContext: synchronizeReaderSidebarContext,
+  },
+): Promise<ResolvedTranslationRequest> {
+  let context: ValidatedPaperContext;
+  try {
+    context = await dependencies.prepareContext(
+      params.attachmentItemID,
+      params.input,
+    );
+  } catch (error) {
+    if (!(error instanceof MineruMarkdownUnavailableError)) throw error;
+    return {
+      input: params.input,
+      prompt: buildStandaloneTranslationPrompt(params),
+    };
+  }
+
+  dependencies.synchronizeContext(context);
+  const input = context.alignedQuery || params.input;
+  return {
+    context,
+    input,
+    prompt: buildTranslationPrompt({
+      context,
+      sourceLanguage: params.sourceLanguage,
+      targetLanguage: params.targetLanguage,
+      input,
+    }),
+  };
 }
 
 export function schedulePaperLearningAfterTranslation(

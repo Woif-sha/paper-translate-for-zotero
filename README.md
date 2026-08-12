@@ -3,7 +3,7 @@
 [![CI](https://github.com/Woif-sha/paper-translate-for-zotero/actions/workflows/ci.yml/badge.svg)](https://github.com/Woif-sha/paper-translate-for-zotero/actions/workflows/ci.yml)
 [![License: AGPL-3.0-or-later](https://img.shields.io/badge/license-AGPL--3.0--or--later-blue.svg)](LICENSE)
 
-普通划词翻译只看到选中的一句话，不知道 `cell` 在当前论文里是“单元”还是“细胞”，也不知道作者前面如何定义一个缩写。这个插件用当前论文的 MinerU Markdown 补上这些上下文，再把选区交给用户当前选定的模型翻译。
+普通划词翻译只看到选中的一句话，不知道 `cell` 在当前论文里是“单元”还是“细胞”，也不知道作者前面如何定义一个缩写。这个插件会在 MinerU Markdown 可用时补上论文上下文；没有 Markdown 时仍会把当前选中或手动输入的文本交给用户选定的模型直接翻译。
 
 它不会加入 `llm-for-zotero` 的对话，也不会共用提示词、线程或运行状态。两者之间只有一个文件层面的关系：`llm-for-zotero` 负责生成 MinerU Markdown，本插件读取并验证这份 Markdown。
 
@@ -12,6 +12,7 @@
 ## 它会做什么
 
 - 在 Zotero Reader 中划词后自动翻译，也可以修改原文或粘贴新文本再翻译。
+- MinerU Markdown 缺失或缓存不完整时继续提供纯文本翻译；此时不启用图片取词和知识准备。
 - 根据选中文本查找同一篇论文的相关章节和相邻段落，不反复发送整篇论文。
 - 为每篇论文保存中文背景、双语术语表、来源记录和章节索引。
 - 论文打开后立即允许翻译。背景分析、术语整理和网页检索留在后台进行，后续翻译会读到已经写入的新内容。
@@ -31,7 +32,7 @@
    - `Codex Auth`：安装官方 Codex CLI，并在终端执行 `codex login`；
    - `OpenAI Compatible`：准备支持 `/chat/completions` 的 HTTPS API Base、API Key 和模型 ID。
 
-先在 `llm-for-zotero` 中解析论文。对应附件的 MinerU 缓存必须包含：
+如需论文上下文、图片取词和知识准备，请先在 `llm-for-zotero` 中解析论文。对应附件的 MinerU 缓存必须包含：
 
 ```text
 _llm_source.json
@@ -39,7 +40,7 @@ manifest.json
 full.md
 ```
 
-缺少其中任何一个文件，或者附件 key、父条目 key、字符长度对不上，本插件都会停止读取并显示错误。它不会猜测另一个缓存目录，也不会转去读取 PDF。
+缺少其中任何一个文件时，插件会停止读取论文上下文并显示提示，但已有的划词或手动输入文本仍可直接翻译；图片取词和知识准备保持不可用。附件 key、父条目 key、字符长度或已有缓存内容校验失败时会显式报错。插件不会猜测另一个缓存目录，也不会转去读取 PDF。
 
 如果当前附件的三个缓存文件都不存在，侧栏会在文件列表下方提示先回到 `llm-for-zotero` 解析论文，并提供 [MinerU API Token 管理页](https://mineru.net/apiManage/token)的入口。只有部分文件缺失时会明确提示缓存不完整，不会把它误报成 Token 问题。配置或重新解析完成后，点击“重新检查”即可，不必重启 Zotero。
 
