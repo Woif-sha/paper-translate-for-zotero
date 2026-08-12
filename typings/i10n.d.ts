@@ -52,6 +52,7 @@ export type FluentMessageId =
   | 'sidebar-mineru-incomplete'
   | 'sidebar-mineru-not-generated'
   | 'sidebar-mineru-token-link'
+  | 'sidebar-mineru-warning-title'
   | 'sidebar-model-label'
   | 'sidebar-no-attachment'
   | 'sidebar-open-directory-error'

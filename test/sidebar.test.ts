@@ -5,6 +5,7 @@ import {
   formatPreparationRows,
   getCompletedPreparationStageCount,
   getLearningMonitorKey,
+  getMineruUnavailablePresentation,
   getSidebarPreparationAction,
   getSidebarResultPlaceholderKey,
   isTranslationReady,
@@ -14,9 +15,43 @@ import {
 } from "../src/modules/sidebar";
 import {
   MINERU_TOKEN_URL,
+  MineruMarkdownUnavailableError,
   createPreparationRecord,
   updatePreparationStages,
 } from "../src/context/runtime";
+
+test("collapses missing Markdown into one prominent error presentation", () => {
+  const presentation = getMineruUnavailablePresentation(
+    new MineruMarkdownUnavailableError(
+      "not-generated",
+      [],
+      "E:\\MinerU\\cache",
+    ),
+  );
+
+  assert.deepEqual(presentation, {
+    preparationSummaryKey: "sidebar-preparation-error",
+    noticeKey: "sidebar-mineru-not-generated",
+    showTokenLink: true,
+    hidePreparationFiles: true,
+    tone: "error",
+  });
+});
+
+test("renders the missing Markdown guidance in the red paper card", async () => {
+  const source = await readFile(
+    new URL("../src/modules/sidebar.ts", import.meta.url),
+    "utf8",
+  );
+
+  assert.match(source, /renderMineruUnavailableCard\(body, reported\)/u);
+  assert.match(
+    source,
+    /title\.textContent = `⚠ \$\{getString\("sidebar-mineru-warning-title"\)\}`/u,
+  );
+  assert.match(source, /isError\s*\?\s*"#fff1f0"/u);
+  assert.doesNotMatch(source, /mineru-reminder/u);
+});
 
 test("does not claim to translate before a task starts", () => {
   assert.equal(getSidebarResultPlaceholderKey(), "sidebar-result-placeholder");

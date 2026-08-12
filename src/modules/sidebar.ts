@@ -66,6 +66,37 @@ export type SidebarPreparationAction =
   | "retry-external"
   | null;
 
+export type MineruUnavailablePresentation = {
+  preparationSummaryKey: "sidebar-preparation-error";
+  noticeKey: "sidebar-mineru-not-generated" | "sidebar-mineru-incomplete";
+  noticeArgs?: { files: string };
+  showTokenLink: boolean;
+  hidePreparationFiles: true;
+  tone: "error";
+};
+
+export function getMineruUnavailablePresentation(
+  error: MineruMarkdownUnavailableError,
+): MineruUnavailablePresentation {
+  if (error.reason === "not-generated") {
+    return {
+      preparationSummaryKey: "sidebar-preparation-error",
+      noticeKey: "sidebar-mineru-not-generated",
+      showTokenLink: true,
+      hidePreparationFiles: true,
+      tone: "error",
+    };
+  }
+  return {
+    preparationSummaryKey: "sidebar-preparation-error",
+    noticeKey: "sidebar-mineru-incomplete",
+    noticeArgs: { files: error.missingFiles.join(", ") },
+    showTokenLink: false,
+    hidePreparationFiles: true,
+    tone: "error",
+  };
+}
+
 export function registerReaderSidebar(
   modelSelection: ModelSelectionActions,
 ): void {
@@ -216,12 +247,7 @@ function buildSidebar(
   });
 
   const card = element(doc, "section", `${config.addonRef}-paper-card`);
-  Object.assign(card.style, {
-    padding: "10px",
-    border: "1px solid #77ad99",
-    borderRadius: "8px",
-    background: "#e7f7f1",
-  });
+  applyPaperCardAppearance(card, "checking");
   const heading = element(doc, "div", `${config.addonRef}-paper-heading`);
   Object.assign(heading.style, {
     display: "flex",
@@ -299,20 +325,8 @@ function buildSidebar(
     gap: "4px",
     fontSize: "0.9em",
   });
-  const mineruReminder = element(
-    doc,
-    "div",
-    `${config.addonRef}-mineru-reminder`,
-  );
-  mineruReminder.hidden = true;
-  Object.assign(mineruReminder.style, {
-    marginTop: "7px",
-    color: "var(--fill-secondary)",
-    fontSize: "0.85em",
-    lineHeight: "1.45",
-  });
   preparationHeader.append(summary, preparationAction, openDirectory);
-  preparation.append(preparationHeader, files, mineruReminder);
+  preparation.append(preparationHeader, files);
 
   const source = element(doc, "textarea", `${config.addonRef}-sidebar-source`);
   source.rows = 5;
@@ -527,11 +541,25 @@ function resetSidebarBody(body: HTMLElement): void {
   const preparationAction = body.querySelector(
     `.${config.addonRef}-preparation-action`,
   ) as HTMLButtonElement | null;
-  const mineruReminder = body.querySelector(
-    `.${config.addonRef}-mineru-reminder`,
+  if (title) {
+    title.textContent = getString("sidebar-md-checking");
+    Object.assign((title as HTMLElement).style, {
+      color: "var(--fill-secondary)",
+      fontSize: "1em",
+    });
+  }
+  if (meta) {
+    meta.textContent = "";
+    Object.assign((meta as HTMLElement).style, {
+      color: "#6b7f78",
+      fontSize: "0.9em",
+      lineHeight: "normal",
+    });
+  }
+  const card = body.querySelector(
+    `.${config.addonRef}-paper-card`,
   ) as HTMLElement | null;
-  if (title) title.textContent = "";
-  if (meta) meta.textContent = "";
+  if (card) applyPaperCardAppearance(card, "checking");
   if (badge) badge.hidden = true;
   if (source) source.value = "";
   if (result)
@@ -551,10 +579,6 @@ function resetSidebarBody(body: HTMLElement): void {
     preparationAction.hidden = true;
     preparationAction.disabled = false;
     delete preparationAction.dataset.action;
-  }
-  if (mineruReminder) {
-    mineruReminder.hidden = true;
-    mineruReminder.replaceChildren();
   }
   if (body.querySelector(`.${config.addonRef}-preparation-files`)) {
     renderPreparation(body, createPreparationRecord("AAAAAAAA", "pending"));
@@ -1005,11 +1029,16 @@ function renderPaperCard(
   body: HTMLElement,
   context: ValidatedPaperContext,
 ): void {
+  const card = body.querySelector(
+    `.${config.addonRef}-paper-card`,
+  ) as HTMLElement | null;
   const title = body.querySelector(`.${config.addonRef}-paper-title`);
   const meta = body.querySelector(`.${config.addonRef}-paper-meta`);
   const badge = body.querySelector(
     `.${config.addonRef}-md-badge`,
   ) as HTMLElement | null;
+  if (card) applyPaperCardAppearance(card, "ready");
+  if (title) (title as HTMLElement).style.color = "#173b32";
   if (title)
     title.textContent =
       context.identity.title || getString("sidebar-untitled-paper");
@@ -1027,9 +1056,33 @@ function renderPaperCard(
     .filter(Boolean)
     .slice(0, 3);
   const year = String(parent?.getField("date") || "").match(/\d{4}/)?.[0] || "";
-  if (meta)
+  if (meta) {
     meta.textContent = [names.join(", "), year].filter(Boolean).join(" · ");
+    const metaElement = meta as HTMLElement;
+    metaElement.style.color = "#6b7f78";
+    metaElement.style.fontSize = "0.9em";
+    metaElement.style.lineHeight = "normal";
+  }
   if (badge) badge.hidden = false;
+}
+
+function applyPaperCardAppearance(
+  card: HTMLElement,
+  tone: "checking" | "ready" | "error",
+): void {
+  const isError = tone === "error";
+  const isReady = tone === "ready";
+  Object.assign(card.style, {
+    padding: "10px",
+    border: `1px solid ${isError ? "#d35d5d" : isReady ? "#77ad99" : "var(--fill-quinary)"}`,
+    borderRadius: "8px",
+    background: isError
+      ? "#fff1f0"
+      : isReady
+        ? "#e7f7f1"
+        : "var(--material-background)",
+  });
+  card.dataset.tone = tone;
 }
 
 export function formatPreparationRows(
@@ -1119,6 +1172,7 @@ function renderPreparation(body: HTMLElement, record: PreparationRecord): void {
     issueStages.size > 0 ||
     record.stages.some((stage) => stage.status === "error");
   const completed = getCompletedPreparationStageCount(record);
+  (files as HTMLElement).hidden = false;
   summary.textContent = `${getString("sidebar-preparation-title")} ${completed}/${record.stages.length}${hasError ? ` · ${getString("sidebar-preparation-stopped")}` : ""}`;
   const learningError = learningErrors.get(Number(body.dataset.itemId));
   const currentHash = paperContexts.get(
@@ -1145,7 +1199,6 @@ function renderPreparation(body: HTMLElement, record: PreparationRecord): void {
   );
   body.dataset.paperReady = String(isTranslationReady(record));
   renderPreparationAction(body, getSidebarPreparationAction(record));
-  hideMineruReminder(body);
 }
 
 function renderPreparationAction(
@@ -1176,33 +1229,42 @@ function renderPreparationAction(
   button.disabled = preparationActionJobs.has(Number(body.dataset.itemId));
 }
 
-function hideMineruReminder(body: HTMLElement): void {
-  const reminder = body.querySelector(
-    `.${config.addonRef}-mineru-reminder`,
-  ) as HTMLElement | null;
-  if (!reminder) return;
-  reminder.hidden = true;
-  reminder.replaceChildren();
-}
-
-function renderMineruReminder(
+function renderMineruUnavailableCard(
   body: HTMLElement,
   error: MineruMarkdownUnavailableError,
 ): void {
-  const reminder = body.querySelector(
-    `.${config.addonRef}-mineru-reminder`,
+  const presentation = getMineruUnavailablePresentation(error);
+  const card = body.querySelector(
+    `.${config.addonRef}-paper-card`,
   ) as HTMLElement | null;
-  if (!reminder) return;
+  const title = body.querySelector(
+    `.${config.addonRef}-paper-title`,
+  ) as HTMLElement | null;
+  const meta = body.querySelector(
+    `.${config.addonRef}-paper-meta`,
+  ) as HTMLElement | null;
+  const badge = body.querySelector(
+    `.${config.addonRef}-md-badge`,
+  ) as HTMLElement | null;
+  if (!card || !title || !meta) return;
   const doc = body.ownerDocument;
-  const text = element(doc, "span", `${config.addonRef}-mineru-reminder-text`);
-  text.textContent =
-    error.reason === "not-generated"
-      ? getString("sidebar-mineru-not-generated")
-      : getString("sidebar-mineru-incomplete", {
-          args: { files: error.missingFiles.join(", ") },
-        });
-  reminder.replaceChildren(text);
-  if (error.reason === "not-generated") {
+  applyPaperCardAppearance(card, presentation.tone);
+  title.textContent = `⚠ ${getString("sidebar-mineru-warning-title")}`;
+  Object.assign(title.style, {
+    color: "#8b1e1e",
+    fontSize: "1em",
+  });
+  const text = element(doc, "span", `${config.addonRef}-mineru-warning-text`);
+  text.textContent = getString(presentation.noticeKey, {
+    args: presentation.noticeArgs,
+  });
+  meta.replaceChildren(text);
+  Object.assign(meta.style, {
+    color: "#7a2424",
+    fontSize: "1em",
+    lineHeight: "1.5",
+  });
+  if (presentation.showTokenLink) {
     const link = element(doc, "button", `${config.addonRef}-mineru-token-link`);
     link.type = "button";
     link.textContent = getString("sidebar-mineru-token-link");
@@ -1210,16 +1272,16 @@ function renderMineruReminder(
       marginInlineStart: "4px",
       padding: "0",
       border: "0",
-      color: "#168c68",
+      color: "#8b1e1e",
       background: "transparent",
       textDecoration: "underline",
       font: "inherit",
       cursor: "pointer",
     });
     link.addEventListener("click", () => Zotero.launchURL(MINERU_TOKEN_URL));
-    reminder.append(link);
+    meta.append(link);
   }
-  reminder.hidden = false;
+  if (badge) badge.hidden = true;
 }
 
 function publishPreparationError(
@@ -1241,14 +1303,23 @@ function publishPreparationError(
     const summary = body.querySelector(
       `.${config.addonRef}-preparation-summary`,
     );
-    if (summary)
-      summary.textContent = `${getString("sidebar-preparation-error")}: ${conciseError(reported)}`;
     if (reported instanceof MineruMarkdownUnavailableError) {
+      const presentation = getMineruUnavailablePresentation(reported);
+      if (summary)
+        summary.textContent = getString(presentation.preparationSummaryKey);
+      const files = body.querySelector(
+        `.${config.addonRef}-preparation-files`,
+      ) as HTMLElement | null;
+      if (files) {
+        files.hidden = presentation.hidePreparationFiles;
+        files.replaceChildren();
+      }
       renderPreparationAction(body, "recheck");
-      renderMineruReminder(body, reported);
+      renderMineruUnavailableCard(body, reported);
     } else {
+      if (summary)
+        summary.textContent = `${getString("sidebar-preparation-error")}: ${conciseError(reported)}`;
       renderPreparationAction(body, null);
-      hideMineruReminder(body);
     }
     const openDirectory = body.querySelector(
       `.${config.addonRef}-open-directory`,
