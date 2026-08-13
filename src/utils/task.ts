@@ -115,7 +115,7 @@ export class TranslateTaskRunner {
     if (!data.langfrom) {
       ztoolkit.log("try auto detect language");
       const { fromLanguage, toLanguage, isInferred } = autoDetectLanguage(
-        Zotero.Items.get(data.itemId || -1),
+        Zotero.Items.get(data.itemId || -1) || null,
       );
       data.langfrom = data.langfrom || fromLanguage;
       data.langto = data.langto || toLanguage;

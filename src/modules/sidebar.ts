@@ -1492,7 +1492,8 @@ function resolveReaderAttachmentItemID(item: Zotero.Item): number | null {
     : null;
   const itemID = Number(reader?.itemID);
   if (!Number.isInteger(itemID) || itemID <= 0) return null;
-  return Zotero.Items.get(itemID)?.isAttachment() ? itemID : null;
+  const readerItem = Zotero.Items.get(itemID);
+  return readerItem && readerItem.isAttachment() ? itemID : null;
 }
 
 function stageIcon(status: string): string {
