@@ -42,6 +42,17 @@ test("renders paired caret and tilde scripts used in academic text", () => {
   assert.doesNotMatch(markup, /\^9\^|~2~/u);
 });
 
+test("renders single-caret numeric superscripts throughout streaming", () => {
+  const incomplete = renderTranslationMarkup("双缝实验^");
+  const partial = renderTranslationMarkup("双缝实验^3");
+  const complete = renderTranslationMarkup("双缝实验^35中");
+
+  assert.match(incomplete, /双缝实验\^/u);
+  assert.match(partial, /双缝实验<sup>3<\/sup>/u);
+  assert.match(complete, /双缝实验<sup>35<\/sup>中/u);
+  assert.doesNotMatch(complete, /\^35/u);
+});
+
 test("positions scripts without relying on Zotero host styles", () => {
   const style = { id: "", textContent: "" };
   const doc = {
@@ -67,11 +78,11 @@ test("positions scripts without relying on Zotero host styles", () => {
   );
 });
 
-test("keeps unmatched operators and strikethrough out of script parsing", () => {
-  const markup = renderTranslationMarkup("x^2，约 ~10%，~~删除~~");
+test("keeps nonnumeric operators and strikethrough out of script parsing", () => {
+  const markup = renderTranslationMarkup("x^n，约 ~10%，~~删除~~");
 
   assert.doesNotMatch(markup, /<sup>|<sub>/u);
-  assert.match(markup, /x\^2，约 ~10%，<s>删除<\/s>/u);
+  assert.match(markup, /x\^n，约 ~10%，<s>删除<\/s>/u);
 });
 
 test("escapes model-provided HTML before displaying translation Markdown", () => {

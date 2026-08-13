@@ -106,11 +106,18 @@ function parseScript(state: StateInline, silent: boolean): boolean {
       return false;
     }
     const end = findClosingScriptMarker(state.src, state.pos + 1, marker);
-    if (end < 0) return false;
-    content = state.src.slice(state.pos + 1, end);
-    if (!content || /[\s<>]/u.test(content)) return false;
-    tag = marker === "^" ? "sup" : "sub";
-    length = end - state.pos + 1;
+    const pairedContent = end < 0 ? "" : state.src.slice(state.pos + 1, end);
+    if (pairedContent && !/[\s<>]/u.test(pairedContent)) {
+      content = pairedContent;
+      tag = marker === "^" ? "sup" : "sub";
+      length = end - state.pos + 1;
+    } else {
+      const numericMatch = /^\^(\d+)/u.exec(source);
+      if (!numericMatch) return false;
+      content = numericMatch[1];
+      tag = "sup";
+      length = numericMatch[0].length;
+    }
   }
   if (!silent) {
     const token = state.push("translation_script", tag, 0);
