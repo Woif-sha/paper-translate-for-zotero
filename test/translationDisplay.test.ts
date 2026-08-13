@@ -53,6 +53,17 @@ test("renders single-caret numeric superscripts throughout streaming", () => {
   assert.doesNotMatch(complete, /\^35/u);
 });
 
+test("does not pair a single numeric caret with later citations", () => {
+  const markup = renderTranslationMarkup("CatBoost^9、LightGBM^8^、SVM^39^");
+
+  assert.match(
+    markup,
+    /CatBoost<sup>9<\/sup>、LightGBM<sup>8<\/sup>、SVM<sup>39<\/sup>/u,
+  );
+  assert.doesNotMatch(markup, /<sup>[^<]*LightGBM/u);
+  assert.doesNotMatch(markup, /\^/u);
+});
+
 test("positions scripts without relying on Zotero host styles", () => {
   const style = { id: "", textContent: "" };
   const doc = {

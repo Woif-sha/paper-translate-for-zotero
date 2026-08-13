@@ -18,6 +18,18 @@ test("keeps translated bullet items on separate lines", () => {
   );
 });
 
+test("restores numeric script direction from the validated source", () => {
+  const source =
+    "random forest<sup>38</sup>, XGBoost<sup>7</sup>, CatBoost<sup>9</sup>, LightGBM<sup>8</sup>, SVMs<sup>39</sup>, and H<sub>2</sub>O";
+  const translation =
+    "随机森林~38~、XGBoost₇、CatBoost^9、LightGBM<sub>8</sub>、SVM~39~，以及 H~2~O";
+
+  assert.equal(
+    formatTranslationLayout(source, translation),
+    "随机森林^38^、XGBoost^7^、CatBoost^9、LightGBM^8^、SVM^39^，以及 H~2~O",
+  );
+});
+
 test("does not treat an inline bullet operator as a list", () => {
   assert.equal(
     formatTranslationLayout("The similarity is a • b.", "相似度为 a • b。"),

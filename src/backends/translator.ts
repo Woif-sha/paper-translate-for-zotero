@@ -181,6 +181,7 @@ export function formatTranslationLayout(
   source: string,
   translation: string,
 ): string {
+  translation = restoreNumericScriptDirections(source, translation);
   const sourceBulletLayout = classifySourceBullets(source);
   if (!sourceBulletLayout.includes("list")) return translation;
   const translationBulletCount = translation.match(/[•●▪◦‣]/gu)?.length ?? 0;
@@ -195,6 +196,32 @@ export function formatTranslationLayout(
       return `${offset > 0 ? "\n" : ""}${bullet} `;
     })
     .trim();
+}
+
+function restoreNumericScriptDirections(
+  source: string,
+  translation: string,
+): string {
+  const superscripts = new Set<string>();
+  const subscripts = new Set<string>();
+  for (const match of source.matchAll(/<(sup|sub)>(\d+)<\/\1>/gu)) {
+    (match[1] === "sup" ? superscripts : subscripts).add(match[2]);
+  }
+  const isSourceSuperscript = (digits: string) =>
+    superscripts.has(digits) && !subscripts.has(digits);
+  return translation
+    .replace(/~(\d+)~/gu, (value, digits: string) =>
+      isSourceSuperscript(digits) ? `^${digits}^` : value,
+    )
+    .replace(/<sub>(\d+)<\/sub>/gu, (value, digits: string) =>
+      isSourceSuperscript(digits) ? `^${digits}^` : value,
+    )
+    .replace(/[₀-₉]+/gu, (value) => {
+      const digits = Array.from(value, (character) =>
+        String(character.charCodeAt(0) - 0x2080),
+      ).join("");
+      return isSourceSuperscript(digits) ? `^${digits}^` : value;
+    });
 }
 
 function classifySourceBullets(value: string): Array<"list" | "inline"> {
