@@ -182,7 +182,9 @@ npm run build
 
 日常开发和 CI 构建统一在 `dev` 分支进行；`main` 只接收验证后的 `dev -> main` 合并，不直接承载开发提交。`dev` 保留源码、测试和必要的构建配置，不提交 `build/`、XPI、发布资产或临时诊断输出。
 
-本地 XPI 生成在 `build/paper-translate-for-zotero.xpi`。推送 `dev` 或创建面向 `dev` 的拉取请求会运行 CI；`dev -> main` 的提升请求会再次验证。推送与 `package.json` 版本一致的 `v*` 标签后，发布工作流会重新检查并上传 XPI。
+本地 XPI 生成在 `build/paper-translate-for-zotero.xpi`。推送 `dev` 或创建面向 `dev` 的拉取请求会运行 CI；`dev -> main` 的提升请求会再次验证。
+
+发布新版本前，在 `dev` 中同步更新 `package.json`、`package-lock.json` 和 `CHANGELOG.md` 的版本章节，验证后将 `dev` 合并到 `main`。随后在 GitHub Actions 中从 `main` 手动运行 `Release` 工作流并输入不带 `v` 的稳定版本号。工作流会再次执行完整校验，确认 `dev` 与 `main` 指向同一提交后，自动创建不可变的 `vX.Y.Z` 标签、按 `.github/release-notes-template.md` 生成分层中文更新说明，并构建、校验和上传对应 XPI。无需在本地创建或同步版本标签。
 
 ## 来源与许可
 

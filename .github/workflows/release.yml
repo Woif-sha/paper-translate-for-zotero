@@ -1,9 +1,12 @@
 name: Release
 
 on:
-  push:
-    tags:
-      - "v*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "要发布的稳定版本号（例如 1.4.5，不含 v）"
+        required: true
+        type: string
 
 permissions:
   contents: write
@@ -17,8 +20,10 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - name: Check out source
+      - name: Check out main
         uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
 
       - name: Set up Node.js
         uses: actions/setup-node@v7
@@ -26,10 +31,44 @@ jobs:
           node-version: 22
           cache: npm
 
-      - name: Verify tag matches package version
+      - name: Verify release source and version
+        id: release
         env:
-          RELEASE_TAG: ${{ github.ref_name }}
-        run: node -e "const expected='v'+require('./package.json').version;if(process.env.RELEASE_TAG!==expected){throw new Error('Expected tag '+expected+', received '+process.env.RELEASE_TAG)}"
+          VERSION: ${{ inputs.version }}
+        run: |
+          if [[ "$GITHUB_REF" != "refs/heads/main" ]]; then
+            echo "Release must be run from main; received $GITHUB_REF" >&2
+            exit 1
+          fi
+          if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Version must be a stable semantic version without the v prefix; received $VERSION" >&2
+            exit 1
+          fi
+          PACKAGE_VERSION="$(node -p "require('./package.json').version")"
+          if [[ "$VERSION" != "$PACKAGE_VERSION" ]]; then
+            echo "Expected package version $PACKAGE_VERSION, received $VERSION" >&2
+            exit 1
+          fi
+          git fetch origin dev --no-tags
+          if [[ "$(git rev-parse HEAD)" != "$(git rev-parse origin/dev)" ]]; then
+            echo "main and dev must point to the same validated release commit" >&2
+            exit 1
+          fi
+          TAG="v$VERSION"
+          REMOTE_TAG_COMMIT="$(git ls-remote --tags origin "refs/tags/$TAG^{}" | awk '{print $1}')"
+          if [[ -z "$REMOTE_TAG_COMMIT" ]]; then
+            REMOTE_TAG_COMMIT="$(git ls-remote --tags origin "refs/tags/$TAG" | awk '{print $1}')"
+          fi
+          if [[ -n "$REMOTE_TAG_COMMIT" && "$REMOTE_TAG_COMMIT" != "$GITHUB_SHA" ]]; then
+            echo "$TAG already exists on a different commit and will not be moved" >&2
+            exit 1
+          fi
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          if [[ -n "$REMOTE_TAG_COMMIT" ]]; then
+            echo "tag_exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "tag_exists=false" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Install dependencies
         run: npm ci
@@ -60,19 +99,42 @@ jobs:
           XPI_MANIFEST="$RUNNER_TEMP/xpi-manifest.json" node -e "const fs=require('fs');const pkg=require('./package.json');const value=JSON.parse(fs.readFileSync(process.env.XPI_MANIFEST,'utf8'));const zotero=value.applications?.zotero;const expected=process.env.REPOSITORY_URL+'/releases/download/release/update.json';if(value.version!==pkg.version||zotero?.id!==pkg.config.addonID||zotero?.update_url!==expected)throw new Error('Invalid XPI manifest identity, version, or update URL')"
           XPI_NAME="$(basename "$xpi")" node -e "const fs=require('fs');const pkg=require('./package.json');const value=JSON.parse(fs.readFileSync('build/update.json','utf8'));const update=value.addons?.[pkg.config.addonID]?.updates?.[0];const expected=process.env.REPOSITORY_URL+'/releases/download/v'+pkg.version+'/'+process.env.XPI_NAME;if(update?.version!==pkg.version||update?.update_link!==expected)throw new Error('Invalid build/update.json')"
 
+      - name: Render release notes
+        env:
+          VERSION: ${{ inputs.version }}
+        run: npx tsx .github/scripts/render-release-notes.ts "$VERSION" "$GITHUB_REPOSITORY" "$RUNNER_TEMP/release-notes.md"
+
+      - name: Create immutable version tag
+        if: steps.release.outputs.tag_exists == 'false'
+        env:
+          RELEASE_TAG: ${{ steps.release.outputs.tag }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag --annotate "$RELEASE_TAG" --message "Release $RELEASE_TAG"
+          git push origin "refs/tags/$RELEASE_TAG"
+
       - name: Publish GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ steps.release.outputs.tag }}
         run: |
-          gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1 || gh release create "$GITHUB_REF_NAME" --verify-tag --generate-notes --title "$GITHUB_REF_NAME"
+          if ! gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            gh release create "$RELEASE_TAG" \
+              --verify-tag \
+              --title "$RELEASE_TAG" \
+              --notes-file "$RUNNER_TEMP/release-notes.md"
+          fi
           xpi="$(find build -maxdepth 1 -name '*.xpi' -print -quit)"
           asset_name="$(basename "$xpi")"
-          assets="$(gh release view "$GITHUB_REF_NAME" --json assets --jq '.assets[].name')"
+          assets="$(gh release view "$RELEASE_TAG" --json assets --jq '.assets[].name')"
           if grep -Fxq "$asset_name" <<<"$assets"; then
             mkdir -p "$RUNNER_TEMP/current-xpi"
-            gh release download "$GITHUB_REF_NAME" --pattern "$asset_name" --dir "$RUNNER_TEMP/current-xpi"
+            gh release download "$RELEASE_TAG" --pattern "$asset_name" --dir "$RUNNER_TEMP/current-xpi"
             cmp -s "$xpi" "$RUNNER_TEMP/current-xpi/$asset_name" || { echo "Refusing to replace a different $asset_name for the same version" >&2; exit 1; }
             echo "$asset_name is already published with identical content"
           else
-            gh release upload "$GITHUB_REF_NAME" "$xpi"
+            gh release upload "$RELEASE_TAG" "$xpi"
           fi
+          release_url="$(gh release view "$RELEASE_TAG" --json url --jq .url)"
+          echo "Published [$RELEASE_TAG]($release_url)" >> "$GITHUB_STEP_SUMMARY"
