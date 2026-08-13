@@ -70,6 +70,10 @@ export function ensureTranslationDisplayStyles(doc: Document): void {
     .${DISPLAY_CLASS} li + li { margin-top: 0.2em; }
     .${DISPLAY_CLASS} pre { margin: 0 0 0.55em; white-space: pre-wrap; }
     .${DISPLAY_CLASS} code { font-family: monospace; }
+    .${DISPLAY_CLASS} sup,
+    .${DISPLAY_CLASS} sub { font-size: 0.75em; line-height: 0; }
+    .${DISPLAY_CLASS} sup { vertical-align: super; }
+    .${DISPLAY_CLASS} sub { vertical-align: sub; }
     .${DISPLAY_CLASS} math[display="block"] { margin: 0.4em 0; overflow-x: auto; }
     .${PLACEHOLDER_CLASS} { color: var(--fill-secondary); }
     .${MATH_ERROR_CLASS} {

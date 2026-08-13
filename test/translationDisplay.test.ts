@@ -1,6 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { renderTranslationMarkup } from "../src/modules/translationDisplay";
+import {
+  ensureTranslationDisplayStyles,
+  renderTranslationMarkup,
+} from "../src/modules/translationDisplay";
 
 test("renders Markdown and inline LaTeX without exposing dollar delimiters", () => {
   const markup = renderTranslationMarkup(
@@ -37,6 +40,31 @@ test("renders paired caret and tilde scripts used in academic text", () => {
   assert.match(markup, /CatBoost<sup>9<\/sup>/u);
   assert.match(markup, /H<sub>2<\/sub>O/u);
   assert.doesNotMatch(markup, /\^9\^|~2~/u);
+});
+
+test("positions scripts without relying on Zotero host styles", () => {
+  const style = { id: "", textContent: "" };
+  const doc = {
+    getElementById: () => null,
+    createElementNS: () => style,
+    head: { append: (node: unknown) => assert.equal(node, style) },
+    documentElement: { append: () => assert.fail("unexpected fallback") },
+  } as unknown as Document;
+
+  ensureTranslationDisplayStyles(doc);
+
+  assert.match(
+    style.textContent,
+    /\.papertranslateforzotero-translation-display sup\s*\{[^}]*vertical-align:\s*super;/su,
+  );
+  assert.match(
+    style.textContent,
+    /\.papertranslateforzotero-translation-display sub\s*\{[^}]*vertical-align:\s*sub;/su,
+  );
+  assert.match(
+    style.textContent,
+    /\.papertranslateforzotero-translation-display sup,\s*\.papertranslateforzotero-translation-display sub\s*\{[^}]*font-size:\s*0\.75em;[^}]*line-height:\s*0;/su,
+  );
 });
 
 test("keeps unmatched operators and strikethrough out of script parsing", () => {
