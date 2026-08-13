@@ -31,6 +31,21 @@ test("renders plain sup and sub tags as academic superscripts and subscripts", (
   assert.doesNotMatch(markup, /&lt;\/?(?:sup|sub)&gt;/u);
 });
 
+test("renders paired caret and tilde scripts used in academic text", () => {
+  const markup = renderTranslationMarkup("CatBoost^9^ 可表示 H~2~O");
+
+  assert.match(markup, /CatBoost<sup>9<\/sup>/u);
+  assert.match(markup, /H<sub>2<\/sub>O/u);
+  assert.doesNotMatch(markup, /\^9\^|~2~/u);
+});
+
+test("keeps unmatched operators and strikethrough out of script parsing", () => {
+  const markup = renderTranslationMarkup("x^2，约 ~10%，~~删除~~");
+
+  assert.doesNotMatch(markup, /<sup>|<sub>/u);
+  assert.match(markup, /x\^2，约 ~10%，<s>删除<\/s>/u);
+});
+
 test("escapes model-provided HTML before displaying translation Markdown", () => {
   const markup = renderTranslationMarkup(
     '<img src="x" onerror="alert(1)"> <sup onclick="alert(1)">34</sup> **安全文本**',

@@ -82,16 +82,59 @@ export function ensureTranslationDisplayStyles(doc: Document): void {
 }
 
 function parseScript(state: StateInline, silent: boolean): boolean {
-  const match = /^<(sup|sub)>([^<>\r\n]+)<\/\1>/u.exec(
-    state.src.slice(state.pos),
-  );
-  if (!match) return false;
-  if (!silent) {
-    const token = state.push("translation_script", match[1], 0);
-    token.content = match[2];
+  const source = state.src.slice(state.pos);
+  const htmlMatch = /^<(sup|sub)>([^<>\r\n]+)<\/\1>/u.exec(source);
+  let tag: "sup" | "sub";
+  let content: string;
+  let length: number;
+  if (htmlMatch) {
+    tag = htmlMatch[1] as "sup" | "sub";
+    content = htmlMatch[2];
+    length = htmlMatch[0].length;
+  } else {
+    const marker = state.src[state.pos];
+    if (
+      (marker !== "^" && marker !== "~") ||
+      isEscaped(state.src, state.pos) ||
+      state.src[state.pos - 1] === marker ||
+      state.src[state.pos + 1] === marker
+    ) {
+      return false;
+    }
+    const end = findClosingScriptMarker(state.src, state.pos + 1, marker);
+    if (end < 0) return false;
+    content = state.src.slice(state.pos + 1, end);
+    if (!content || /[\s<>]/u.test(content)) return false;
+    tag = marker === "^" ? "sup" : "sub";
+    length = end - state.pos + 1;
   }
-  state.pos += match[0].length;
+  if (!silent) {
+    const token = state.push("translation_script", tag, 0);
+    token.content = content;
+  }
+  state.pos += length;
   return true;
+}
+
+function findClosingScriptMarker(
+  value: string,
+  start: number,
+  marker: "^" | "~",
+): number {
+  let position = start;
+  while (position < value.length) {
+    position = value.indexOf(marker, position);
+    if (position < 0) return -1;
+    if (
+      !isEscaped(value, position) &&
+      value[position - 1] !== marker &&
+      value[position + 1] !== marker
+    ) {
+      return position;
+    }
+    position += 1;
+  }
+  return -1;
 }
 
 function parseMath(state: StateInline, silent: boolean): boolean {
