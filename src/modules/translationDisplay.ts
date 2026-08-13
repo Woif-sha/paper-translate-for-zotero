@@ -17,7 +17,13 @@ const markdown = new MarkdownIt({
 });
 
 markdown.disable(["image", "link"]);
+markdown.inline.ruler.before("escape", "translation_script", parseScript);
 markdown.inline.ruler.before("escape", "translation_math", parseMath);
+markdown.renderer.rules.translation_script = (tokens, index) => {
+  const token = tokens[index];
+  const tag = token.tag === "sub" ? "sub" : "sup";
+  return `<${tag}>${escapeHtml(token.content)}</${tag}>`;
+};
 markdown.renderer.rules.translation_math = (tokens, index) => {
   const token = tokens[index];
   return renderMath(token.content, token.markup === "$$");
@@ -73,6 +79,19 @@ export function ensureTranslationDisplayStyles(doc: Document): void {
     }
   `;
   (doc.head || doc.documentElement).append(style);
+}
+
+function parseScript(state: StateInline, silent: boolean): boolean {
+  const match = /^<(sup|sub)>([^<>\r\n]+)<\/\1>/u.exec(
+    state.src.slice(state.pos),
+  );
+  if (!match) return false;
+  if (!silent) {
+    const token = state.push("translation_script", match[1], 0);
+    token.content = match[2];
+  }
+  state.pos += match[0].length;
+  return true;
 }
 
 function parseMath(state: StateInline, silent: boolean): boolean {

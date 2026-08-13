@@ -21,13 +21,25 @@ test("renders multiline translation with XHTML-compatible line breaks", () => {
   assert.doesNotMatch(markup, /<br>/u);
 });
 
+test("renders plain sup and sub tags as academic superscripts and subscripts", () => {
+  const markup = renderTranslationMarkup(
+    "多层感知机（MLPs）<sup>34</sup> 与模式<sub>14</sub>",
+  );
+
+  assert.match(markup, /<sup>34<\/sup>/u);
+  assert.match(markup, /<sub>14<\/sub>/u);
+  assert.doesNotMatch(markup, /&lt;\/?(?:sup|sub)&gt;/u);
+});
+
 test("escapes model-provided HTML before displaying translation Markdown", () => {
   const markup = renderTranslationMarkup(
-    '<img src="x" onerror="alert(1)"> **安全文本**',
+    '<img src="x" onerror="alert(1)"> <sup onclick="alert(1)">34</sup> **安全文本**',
   );
 
   assert.doesNotMatch(markup, /<img/u);
+  assert.doesNotMatch(markup, /<sup onclick/u);
   assert.match(markup, /&lt;img/u);
+  assert.match(markup, /&lt;sup onclick/u);
   assert.match(markup, /<strong>安全文本<\/strong>/u);
 });
 
