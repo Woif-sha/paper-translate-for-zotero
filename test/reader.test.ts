@@ -234,6 +234,104 @@ test("uses the current Reader selection layout to clean a cross-page annotation"
   );
 });
 
+test("removes a rotated arXiv margin label from a cross-page annotation", () => {
+  const firstPageText =
+    "For triangular solving, the parallelism and computation-to-communication ratio are both extremely low, and it is extremely difficult to get speedups";
+  const marginLabel = "arXiv:2411.14082v2 [cs.AR] 27 Nov 2024";
+  const nextPageText = "by parallelism.";
+  const firstTextRect = [822, 44, 1490, 88];
+  const marginRect = [40, 16, 64, 389];
+  const nextTextRect = [120, 1198, 346, 1222];
+  const annotation = {
+    text: `${firstPageText} ${marginLabel} ${nextPageText}`,
+    position: {
+      pageIndex: 1,
+      rects: [firstTextRect, marginRect],
+      nextPageRects: [nextTextRect],
+    },
+  };
+  const reader = {
+    _internalReader: {
+      _lastView: {
+        _selectionRanges: [
+          {
+            pageIndex: 1,
+            anchorOffset: 0,
+            headOffset: 2,
+            text: `${firstPageText} ${marginLabel}`,
+            position: {
+              pageIndex: 1,
+              rects: [firstTextRect, marginRect],
+            },
+          },
+          {
+            pageIndex: 2,
+            anchorOffset: 0,
+            headOffset: 1,
+            text: nextPageText,
+            position: { pageIndex: 2, rects: [nextTextRect] },
+          },
+        ],
+        _pdfPages: {
+          1: {
+            chars: [
+              {
+                c: firstPageText,
+                inlineRect: firstTextRect,
+                lineBreakAfter: true,
+              },
+              {
+                c: marginLabel,
+                inlineRect: marginRect,
+                lineBreakAfter: true,
+              },
+            ],
+          },
+          2: {
+            chars: [
+              {
+                c: nextPageText,
+                inlineRect: nextTextRect,
+                lineBreakAfter: true,
+              },
+            ],
+          },
+        },
+      },
+    },
+  };
+
+  assert.equal(
+    normalizeReaderAnnotationSelection(reader, annotation),
+    `${firstPageText} ${nextPageText}`,
+  );
+});
+
+test("keeps a horizontal arXiv reference in cross-page body text", () => {
+  const firstPageText =
+    "The implementation is archived as arXiv:2411.14082v2 [cs.AR] 27 Nov 2024";
+  const nextPageText = "for reproducibility.";
+
+  assert.equal(
+    normalizeReaderSelection(`${firstPageText} ${nextPageText}`, {
+      firstPageText,
+      firstPageLines: [
+        {
+          text: "The implementation is archived as",
+          rect: [120, 72, 518, 96],
+        },
+        {
+          text: "arXiv:2411.14082v2 [cs.AR] 27 Nov 2024",
+          rect: [120, 44, 508, 68],
+        },
+      ],
+      nextPageText,
+      nextPageLines: [{ text: nextPageText, rect: [120, 1198, 346, 1222] }],
+    }),
+    `${firstPageText} ${nextPageText}`,
+  );
+});
+
 test("keeps semantic figure and algorithm references in body text", () => {
   const firstPageText = "The ablation confirms the same trend.";
   const nextPageText =

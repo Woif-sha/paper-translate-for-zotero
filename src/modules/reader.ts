@@ -52,6 +52,7 @@ export type ReaderSelectionLine = {
 
 export type ReaderSelectionLayout = {
   firstPageText: string;
+  firstPageLines?: readonly ReaderSelectionLine[];
   nextPageText: string;
   nextPageLines: readonly ReaderSelectionLine[];
 };
@@ -78,7 +79,7 @@ export function normalizeReaderSelection(
   value: string,
   layout?: ReaderSelectionLayout,
 ): string {
-  let text = removeLeadingCrossPageObject(value, layout)
+  let text = removeVerifiedCrossPageArtifacts(value, layout)
     .normalize("NFC")
     .replace(/\r\n?/g, "\n")
     .replace(/\u00a0/g, " ");
@@ -104,36 +105,73 @@ export function normalizeReaderSelection(
   return text;
 }
 
-function removeLeadingCrossPageObject(
+function removeVerifiedCrossPageArtifacts(
   value: string,
   layout: ReaderSelectionLayout | undefined,
 ): string {
-  if (!layout || layout.nextPageLines.length < 2) return value;
+  if (!layout) return value;
   const expected = `${layout.firstPageText} ${layout.nextPageText}`;
   if (value !== expected) return value;
-  const firstLine = layout.nextPageLines.find(({ text }) => text.trim());
+  const firstPageText = removeTrailingArxivMarginLabel(
+    layout.firstPageText,
+    layout.firstPageLines,
+  );
+  const nextPageText = removeLeadingCrossPageObject(
+    layout.nextPageText,
+    layout.nextPageLines,
+  );
+  return `${firstPageText} ${nextPageText}`;
+}
+
+function removeTrailingArxivMarginLabel(
+  value: string,
+  lines: readonly ReaderSelectionLine[] | undefined,
+): string {
+  const lastLine = lines?.findLast(({ text }) => text.trim());
+  if (!lastLine || !isRotatedArxivMarginLabel(lastLine)) return value;
+  const label = lastLine.text.trim();
+  if (!value.endsWith(label)) return value;
+  const prefix = value.slice(0, -label.length);
+  return /\s$/u.test(prefix) ? prefix.trimEnd() : value;
+}
+
+function isRotatedArxivMarginLabel(line: ReaderSelectionLine): boolean {
+  const text = line.text.trim();
+  if (
+    !/^arXiv:\d{4}\.\d{4,5}(?:v\d+)?\s+\[[A-Za-z.-]+\]\s+\d{1,2}\s+(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+\d{4}$/u.test(
+      text,
+    )
+  ) {
+    return false;
+  }
+  const width = Math.abs(line.rect[2] - line.rect[0]);
+  const height = Math.abs(line.rect[3] - line.rect[1]);
+  return width > 0 && height > width * 3;
+}
+
+function removeLeadingCrossPageObject(
+  value: string,
+  lines: readonly ReaderSelectionLine[],
+): string {
+  if (lines.length < 2) return value;
+  const firstLine = lines.find(({ text }) => text.trim());
   if (!firstLine || !isFloatingObjectCaptionLine(firstLine.text)) return value;
 
-  const lineHeight = median(
-    layout.nextPageLines.map(({ rect }) => rect[3] - rect[1]),
-  );
+  const lineHeight = median(lines.map(({ rect }) => rect[3] - rect[1]));
   if (!lineHeight) return value;
   const minimumGap = Math.max(
     MINIMUM_FLOAT_GAP,
     lineHeight * FLOAT_GAP_LINE_HEIGHT_MULTIPLIER,
   );
   let cutAfterLine = -1;
-  for (let index = 0; index < layout.nextPageLines.length - 1; index += 1) {
-    const upper = layout.nextPageLines[index].rect;
-    const lower = layout.nextPageLines[index + 1].rect;
+  for (let index = 0; index < lines.length - 1; index += 1) {
+    const upper = lines[index].rect;
+    const lower = lines[index + 1].rect;
     const gap = upper[1] - lower[3];
     const verifiedAdjacentHeading =
-      index === 0 &&
-      isCompleteSingleLineObjectHeading(layout.nextPageLines[index].text);
+      index === 0 && isCompleteSingleLineObjectHeading(lines[index].text);
     if (gap <= minimumGap && !verifiedAdjacentHeading) continue;
-    if (
-      !startsSemanticProse(layout.nextPageLines.slice(index + 1, index + 3))
-    ) {
+    if (!startsSemanticProse(lines.slice(index + 1, index + 3))) {
       continue;
     }
     cutAfterLine = index;
@@ -141,22 +179,20 @@ function removeLeadingCrossPageObject(
   }
   if (cutAfterLine < 0) return value;
 
-  const discardedPrefix = layout.nextPageLines
+  const discardedPrefix = lines
     .slice(0, cutAfterLine + 1)
     .map(({ text }) => text.trim())
     .filter(Boolean)
     .join(" ");
   if (
     !discardedPrefix ||
-    !layout.nextPageText.startsWith(discardedPrefix) ||
-    !/^\s/u.test(layout.nextPageText.slice(discardedPrefix.length))
+    !value.startsWith(discardedPrefix) ||
+    !/^\s/u.test(value.slice(discardedPrefix.length))
   ) {
     return value;
   }
-  const retainedText = layout.nextPageText
-    .slice(discardedPrefix.length)
-    .trimStart();
-  return retainedText ? `${layout.firstPageText} ${retainedText}` : value;
+  const retainedText = value.slice(discardedPrefix.length).trimStart();
+  return retainedText || value;
 }
 
 function isCompleteSingleLineObjectHeading(value: string): boolean {
@@ -237,8 +273,13 @@ function resolveReaderSelectionLayout(
   const chars = view?._pdfPages?.[firstPageIndex + 1]?.chars;
   const nextPageLines = extractSelectedRuntimeLines(chars, nextRange);
   if (!nextPageLines) return undefined;
+  const firstPageLines = extractSelectedRuntimeLines(
+    view?._pdfPages?.[firstPageIndex]?.chars,
+    firstRange,
+  );
   return {
     firstPageText: firstRange.text,
+    firstPageLines,
     nextPageText: nextRange.text,
     nextPageLines,
   };
