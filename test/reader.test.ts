@@ -234,6 +234,275 @@ test("uses the current Reader selection layout to clean a cross-page annotation"
   );
 });
 
+test("removes selected figure text before a cross-page figure caption", () => {
+  const firstPageText = "As matrices in circuit simulations are";
+  const nextPageLines = [
+    { text: "4", rect: [910, 700, 921, 712] },
+    {
+      text: "Thread 1 Thread 2 level nodes cluster mode pipeline mode",
+      rect: [120, 650, 880, 662],
+    },
+    {
+      text: "(a) Levelization (b) Task assignment (c) Timing diagram (d) Pipeline illustration",
+      rect: [120, 630, 880, 642],
+    },
+    {
+      text: "Fig. 3: Levelization-based dual-mode parallel scheduling method [6], [7]. This example does not correspond to Fig. 2.",
+      rect: [57, 580, 852, 592],
+    },
+    {
+      text: "generally much sparser than matrices from other applications [4].",
+      rect: [20, 500, 690, 512],
+    },
+  ] as const;
+  const nextPageText = nextPageLines.map(({ text }) => text).join(" ");
+  const nextPageRects = nextPageLines.map(({ rect }) => rect);
+  const firstRect = [501, 837, 924, 959];
+  const annotation = {
+    text: `${firstPageText} ${nextPageText}`,
+    position: {
+      pageIndex: 2,
+      rects: [firstRect],
+      nextPageRects,
+    },
+  };
+  const reader = {
+    _internalReader: {
+      _lastView: {
+        _selectionRanges: [
+          {
+            pageIndex: 2,
+            anchorOffset: 0,
+            headOffset: 1,
+            text: firstPageText,
+            position: { pageIndex: 2, rects: [firstRect] },
+          },
+          {
+            pageIndex: 3,
+            anchorOffset: 0,
+            headOffset: nextPageLines.length,
+            text: nextPageText,
+            position: { pageIndex: 3, rects: nextPageRects },
+          },
+        ],
+        _pdfPages: {
+          2: {
+            chars: [{ c: firstPageText, lineBreakAfter: true }],
+          },
+          3: {
+            chars: nextPageLines.map(({ text }) => ({
+              c: text,
+              lineBreakAfter: true,
+            })),
+          },
+        },
+      },
+    },
+  };
+
+  assert.equal(
+    normalizeReaderAnnotationSelection(reader, annotation),
+    `${firstPageText} generally much sparser than matrices from other applications [4].`,
+  );
+});
+
+test("removes selected figure text after a cross-page figure caption", () => {
+  const firstPageText = "The sentence continues across the page break";
+  const nextPageLines = [
+    {
+      text: "Fig. 3. GPU memory architecture.",
+      rect: [48, 700, 286, 712],
+    },
+    {
+      text: "Thread 1 Thread 2 level nodes cluster mode pipeline mode",
+      rect: [120, 680, 480, 692],
+    },
+    {
+      text: "on the second selected page.",
+      rect: [48, 612, 518, 624],
+    },
+  ] as const;
+  const nextPageText = nextPageLines.map(({ text }) => text).join(" ");
+
+  assert.equal(
+    normalizeReaderSelection(`${firstPageText} ${nextPageText}`, {
+      firstPageText,
+      nextPageText,
+      nextPageLines,
+    }),
+    `${firstPageText} on the second selected page.`,
+  );
+});
+
+test("removes page furniture before cross-page algorithm and table headings", () => {
+  const firstPageText = "The measured results remain consistent.";
+  const algorithmLines = [
+    { text: "4", rect: [510, 716, 518, 728] },
+    {
+      text: "Algorithm 2 Hybrid Column-Based RLA [13]",
+      rect: [48, 116, 412, 128],
+    },
+    {
+      text: "This corresponds to the outer most loop in Algorithm 1.",
+      rect: [48, 92, 518, 104],
+    },
+  ] as const;
+  const algorithmText = algorithmLines.map(({ text }) => text).join(" ");
+  assert.equal(
+    normalizeReaderSelection(`${firstPageText} ${algorithmText}`, {
+      firstPageText,
+      nextPageText: algorithmText,
+      nextPageLines: algorithmLines,
+    }),
+    `${firstPageText} This corresponds to the outer most loop in Algorithm 1.`,
+  );
+
+  const tableLines = [
+    { text: "4", rect: [510, 716, 518, 728] },
+    { text: "TABLE II", rect: [210, 706, 282, 718] },
+    { text: "RUNTIME COMPARISON", rect: [165, 684, 328, 696] },
+    { text: "Method CPU GPU", rect: [84, 647, 442, 659] },
+    { text: "Baseline 21.4 8.3", rect: [84, 625, 442, 637] },
+    {
+      text: "The proposed scheduler reduces runtime.",
+      rect: [48, 556, 518, 568],
+    },
+  ] as const;
+  const tableText = tableLines.map(({ text }) => text).join(" ");
+  assert.equal(
+    normalizeReaderSelection(`${firstPageText} ${tableText}`, {
+      firstPageText,
+      nextPageText: tableText,
+      nextPageLines: tableLines,
+    }),
+    `${firstPageText} The proposed scheduler reduces runtime.`,
+  );
+});
+
+test("keeps wrapped prose before a later cross-page figure", () => {
+  const firstPageText = "The page break occurs after this sentence.";
+  const nextPageLines = [
+    {
+      text: "This paragraph starts on",
+      rect: [48, 716, 518, 728],
+    },
+    { text: "the second selected page.", rect: [48, 696, 518, 708] },
+    {
+      text: "Fig. 3. GPU memory architecture.",
+      rect: [48, 650, 286, 662],
+    },
+    {
+      text: "The discussion resumes below the figure.",
+      rect: [48, 580, 518, 592],
+    },
+  ] as const;
+  const nextPageText = nextPageLines.map(({ text }) => text).join(" ");
+
+  assert.equal(
+    normalizeReaderSelection(`${firstPageText} ${nextPageText}`, {
+      firstPageText,
+      nextPageText,
+      nextPageLines,
+    }),
+    `${firstPageText} ${nextPageText}`,
+  );
+});
+
+test("removes consecutive figures before cross-page prose", () => {
+  const firstPageText = "The sentence continues across the page break";
+  const nextPageLines = [
+    {
+      text: "Fig. 3. GPU memory architecture.",
+      rect: [48, 700, 286, 712],
+    },
+    { text: "Thread 1 Thread 2", rect: [120, 680, 480, 692] },
+    {
+      text: "Fig. 4. CPU memory architecture.",
+      rect: [48, 600, 286, 612],
+    },
+    {
+      text: "on the second selected page.",
+      rect: [48, 520, 518, 532],
+    },
+  ] as const;
+  const nextPageText = nextPageLines.map(({ text }) => text).join(" ");
+
+  assert.equal(
+    normalizeReaderSelection(`${firstPageText} ${nextPageText}`, {
+      firstPageText,
+      nextPageText,
+      nextPageLines,
+    }),
+    `${firstPageText} on the second selected page.`,
+  );
+});
+
+test("keeps semantic headings and bullets before a later figure", () => {
+  const firstPageText = "The previous page ends here.";
+  for (const semanticLine of [
+    "III. CKTSO OVERVIEW",
+    "• The first contribution remains selected.",
+  ]) {
+    const nextPageLines = [
+      { text: semanticLine, rect: [48, 716, 518, 728] },
+      {
+        text: "Fig. 3. GPU memory architecture.",
+        rect: [48, 650, 286, 662],
+      },
+      {
+        text: "The discussion resumes below the figure.",
+        rect: [48, 580, 518, 592],
+      },
+    ] as const;
+    const nextPageText = nextPageLines.map(({ text }) => text).join(" ");
+
+    assert.equal(
+      normalizeReaderSelection(`${firstPageText} ${nextPageText}`, {
+        firstPageText,
+        nextPageText,
+        nextPageLines,
+      }),
+      `${firstPageText} ${nextPageText}`,
+    );
+  }
+});
+
+test("keeps ambiguous object text without a verified caption boundary", () => {
+  const firstPageText = "The sentence continues across the page break";
+  const cases = [
+    [
+      { text: "Thread 1 Thread 2", rect: [120, 700, 480, 712] },
+      {
+        text: "on the second selected page.",
+        rect: [48, 620, 518, 632],
+      },
+    ],
+    [
+      {
+        text: "Fig. 3. GPU memory architecture.",
+        rect: [48, 700, 286, 712],
+      },
+      { text: "Thread 1 Thread 2", rect: [120, 680, 480, 692] },
+      {
+        text: "on the second selected page.",
+        rect: [48, 660, 518, 672],
+      },
+    ],
+  ] as const;
+
+  for (const nextPageLines of cases) {
+    const nextPageText = nextPageLines.map(({ text }) => text).join(" ");
+    assert.equal(
+      normalizeReaderSelection(`${firstPageText} ${nextPageText}`, {
+        firstPageText,
+        nextPageText,
+        nextPageLines,
+      }),
+      `${firstPageText} ${nextPageText}`,
+    );
+  }
+});
+
 test("removes a rotated arXiv margin label from a cross-page annotation", () => {
   const firstPageText =
     "For triangular solving, the parallelism and computation-to-communication ratio are both extremely low, and it is extremely difficult to get speedups";

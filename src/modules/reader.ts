@@ -154,8 +154,15 @@ function removeLeadingCrossPageObject(
   lines: readonly ReaderSelectionLine[],
 ): string {
   if (lines.length < 2) return value;
-  const firstLine = lines.find(({ text }) => text.trim());
-  if (!firstLine || !isFloatingObjectCaptionLine(firstLine.text)) return value;
+  const captionLineIndex = lines.findIndex(({ text }) =>
+    isFloatingObjectCaptionLine(text),
+  );
+  if (
+    captionLineIndex < 0 ||
+    containsSemanticContent(lines.slice(0, captionLineIndex))
+  ) {
+    return value;
+  }
 
   const lineHeight = median(lines.map(({ rect }) => rect[3] - rect[1]));
   if (!lineHeight) return value;
@@ -164,18 +171,23 @@ function removeLeadingCrossPageObject(
     lineHeight * FLOAT_GAP_LINE_HEIGHT_MULTIPLIER,
   );
   let cutAfterLine = -1;
-  for (let index = 0; index < lines.length - 1; index += 1) {
+  for (let index = captionLineIndex; index < lines.length - 1; index += 1) {
     const upper = lines[index].rect;
     const lower = lines[index + 1].rect;
     const gap = upper[1] - lower[3];
-    const verifiedAdjacentHeading =
-      index === 0 && isCompleteSingleLineObjectHeading(lines[index].text);
-    if (gap <= minimumGap && !verifiedAdjacentHeading) continue;
+    if (gap <= minimumGap) continue;
     if (!startsSemanticProse(lines.slice(index + 1, index + 3))) {
       continue;
     }
     cutAfterLine = index;
     break;
+  }
+  if (
+    cutAfterLine < 0 &&
+    isCompleteSingleLineObjectHeading(lines[captionLineIndex].text) &&
+    startsSemanticProse(lines.slice(captionLineIndex + 1, captionLineIndex + 2))
+  ) {
+    cutAfterLine = captionLineIndex;
   }
   if (cutAfterLine < 0) return value;
 
@@ -195,6 +207,24 @@ function removeLeadingCrossPageObject(
   return retainedText || value;
 }
 
+function containsSemanticContent(
+  lines: readonly ReaderSelectionLine[],
+): boolean {
+  return lines.some(
+    (line, index) =>
+      isStructuredSemanticLine(line.text) ||
+      startsSemanticProse(lines.slice(index, index + 1)) ||
+      startsSemanticProse(lines.slice(index, index + 2)),
+  );
+}
+
+function isStructuredSemanticLine(value: string): boolean {
+  return new RegExp(
+    `^(?:${BULLET_PATTERN}|(?:[IVXLCDM]+|\\d+|[A-Z])\\.)\\s+\\S`,
+    "u",
+  ).test(value.trim());
+}
+
 function isCompleteSingleLineObjectHeading(value: string): boolean {
   const text = value.trim();
   return (
@@ -204,10 +234,9 @@ function isCompleteSingleLineObjectHeading(value: string): boolean {
 }
 
 function startsSemanticProse(lines: readonly ReaderSelectionLine[]): boolean {
-  const text = lines
-    .map((line) => line.text.trim())
-    .filter(Boolean)
-    .join(" ");
+  const content = lines.map((line) => line.text.trim()).filter(Boolean);
+  if (!content.length || isFloatingObjectCaptionLine(content[0])) return false;
+  const text = content.join(" ");
   return (
     /^[\p{L}\p{N}\p{Ps}\p{Pi}"']/u.test(text) &&
     /[.!?。！？](?:[\p{Pe}\p{Pf}"']*)\s*$/u.test(text)
