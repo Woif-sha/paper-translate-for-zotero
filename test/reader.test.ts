@@ -302,6 +302,33 @@ test("keeps a trailing lowercase table label with non-body line height", () => {
   );
 });
 
+test("skips a cross-page table regardless of selected body fragment text", () => {
+  for (const bodyFragment of [
+    "Results",
+    "45 corners",
+    "RRMSE = 2.1%",
+  ] as const) {
+    const firstPageText = "The comparison continues";
+    const nextPageLines = [
+      { text: "Table II", rect: [210, 706, 282, 713] },
+      { text: "RUNTIME COMPARISON", rect: [165, 684, 328, 691] },
+      { text: "AN2 9.93 14.51", rect: [84, 640, 188, 647] },
+      { text: bodyFragment, rect: [48, 580, 220, 592] },
+    ] as const;
+    const nextPageText = nextPageLines.map(({ text }) => text).join(" ");
+
+    assert.equal(
+      normalizeReaderSelection(`${firstPageText} ${nextPageText}`, {
+        firstPageText,
+        firstPageLines: [{ text: firstPageText, rect: [48, 84, 220, 96] }],
+        nextPageText,
+        nextPageLines,
+      }),
+      `${firstPageText} ${bodyFragment}`,
+    );
+  }
+});
+
 test("uses the current Reader selection layout to clean a cross-page annotation", () => {
   const firstPageText =
     "wherein each thread is executing the same program while operating on different sets";
