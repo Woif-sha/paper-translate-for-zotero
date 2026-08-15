@@ -176,7 +176,10 @@ function removeLeadingCrossPageObject(
     const lower = lines[index + 1].rect;
     const gap = upper[1] - lower[3];
     if (gap <= minimumGap) continue;
+    const boundaryFollowsTrailingCaption =
+      captionLineIndex > 0 && index === captionLineIndex;
     if (
+      !boundaryFollowsTrailingCaption &&
       !startsSemanticProse(followingVisualBlock(lines, index + 1, minimumGap))
     ) {
       continue;

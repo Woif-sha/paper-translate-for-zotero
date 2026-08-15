@@ -258,13 +258,8 @@ test("removes selected figure text before a cross-page figure caption", () => {
       paragraphBreakAfter: false,
     },
     {
-      text: "tions [4], solvers designed for circuit simulations typically do",
+      text: "tions",
       rect: [20, 480, 690, 492],
-      paragraphBreakAfter: false,
-    },
-    {
-      text: "not expose enough parallelism.",
-      rect: [20, 460, 690, 472],
       paragraphBreakAfter: false,
     },
   ] as const;
@@ -322,7 +317,7 @@ test("removes selected figure text before a cross-page figure caption", () => {
 
   assert.equal(
     normalizeReaderAnnotationSelection(reader, annotation),
-    `${firstPageText} generally much sparser than matrices from other applica- tions [4], solvers designed for circuit simulations typically do not expose enough parallelism.`,
+    `${firstPageText} generally much sparser than matrices from other applica- tions`,
   );
 });
 
