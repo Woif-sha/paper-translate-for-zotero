@@ -321,6 +321,38 @@ test("removes selected figure text before a cross-page figure caption", () => {
   );
 });
 
+test("removes a wrapped trailing figure caption before partial prose", () => {
+  const firstPageText = "CKTSO uses a";
+  const nextPageLines = [
+    {
+      text: "Sub-graph: X X Y S (a) (b) Sub-graph: Y Separator: S",
+      rect: [190, 620, 745, 632],
+    },
+    {
+      text: "Fig. 5: Nested dissection ordering. (a) Graph partitioning. (b)",
+      rect: [65, 580, 870, 592],
+    },
+    {
+      text: "Corresponding bordered block diagonal matrix.",
+      rect: [65, 560, 685, 572],
+    },
+    {
+      text: "combination of them",
+      rect: [65, 480, 305, 492],
+    },
+  ] as const;
+  const nextPageText = nextPageLines.map(({ text }) => text).join(" ");
+
+  assert.equal(
+    normalizeReaderSelection(`${firstPageText} ${nextPageText}`, {
+      firstPageText,
+      nextPageText,
+      nextPageLines,
+    }),
+    `${firstPageText} combination of them`,
+  );
+});
+
 test("removes selected figure text after a cross-page figure caption", () => {
   const firstPageText = "The sentence continues across the page break";
   const nextPageLines = [

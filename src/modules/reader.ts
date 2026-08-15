@@ -177,7 +177,11 @@ function removeLeadingCrossPageObject(
     const gap = upper[1] - lower[3];
     if (gap <= minimumGap) continue;
     const boundaryFollowsTrailingCaption =
-      captionLineIndex > 0 && index === captionLineIndex;
+      captionLineIndex > 0 &&
+      (index === captionLineIndex ||
+        isCompleteFloatingObjectCaptionBlock(
+          lines.slice(captionLineIndex, index + 1),
+        ));
     if (
       !boundaryFollowsTrailingCaption &&
       !startsSemanticProse(followingVisualBlock(lines, index + 1, minimumGap))
@@ -208,6 +212,14 @@ function removeLeadingCrossPageObject(
   }
   const retainedText = value.slice(discardedPrefixEnd).trimStart();
   return retainedText || value;
+}
+
+function isCompleteFloatingObjectCaptionBlock(
+  lines: readonly ReaderSelectionLine[],
+): boolean {
+  return isCompleteSingleLineObjectHeading(
+    lines.map(({ text }) => text.trim()).join(" "),
+  );
 }
 
 function followingVisualBlock(
