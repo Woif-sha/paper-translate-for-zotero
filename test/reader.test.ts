@@ -208,6 +208,71 @@ test("skips a table above the continued prose on the second selected page", () =
   );
 });
 
+test("skips a title-case table above continued cross-page prose", () => {
+  const firstPageText = "each standard cell,";
+  const nextPageLines = [
+    { text: "Table II", rect: [226, 706, 282, 718] },
+    {
+      text: "PREDICTION ACCURACY COMPARISON BY STD. DEV. OF STANDARD CELL",
+      rect: [84, 684, 442, 696],
+    },
+    {
+      text: "DELAY IN TERMS OF RRMSE(%).",
+      rect: [165, 666, 361, 678],
+    },
+    {
+      text: "Function PRR[11] DNN[14] HGAT (This work)",
+      rect: [84, 625, 442, 637],
+    },
+    {
+      text: "AN2 9.93 14.51 6.21 6.95 5.11 5.45 4.29 4.68 1.92 2.33",
+      rect: [84, 603, 442, 615],
+    },
+    {
+      text: "the statistical timing characterization for the total of 45 corners",
+      rect: [48, 510, 518, 522],
+    },
+    {
+      text: "could be performed with the proposed framework.",
+      rect: [48, 492, 518, 504],
+    },
+  ] as const;
+  const nextPageText = nextPageLines.map(({ text }) => text).join(" ");
+
+  assert.equal(
+    normalizeReaderSelection(`${firstPageText} ${nextPageText}`, {
+      firstPageText,
+      nextPageText,
+      nextPageLines,
+    }),
+    `${firstPageText} the statistical timing characterization for the total of 45 corners could be performed with the proposed framework.`,
+  );
+});
+
+test("keeps a title-case table reference in cross-page prose", () => {
+  const firstPageText = "The measurements remain stable.";
+  const nextPageText =
+    "Table II compares all prediction methods. The discussion continues below.";
+
+  assert.equal(
+    normalizeReaderSelection(`${firstPageText} ${nextPageText}`, {
+      firstPageText,
+      nextPageText,
+      nextPageLines: [
+        {
+          text: "Table II compares all prediction methods.",
+          rect: [48, 706, 518, 718],
+        },
+        {
+          text: "The discussion continues below.",
+          rect: [48, 688, 518, 700],
+        },
+      ],
+    }),
+    `${firstPageText} ${nextPageText}`,
+  );
+});
+
 test("uses the current Reader selection layout to clean a cross-page annotation", () => {
   const firstPageText =
     "wherein each thread is executing the same program while operating on different sets";

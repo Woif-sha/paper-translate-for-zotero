@@ -549,7 +549,8 @@ function isFloatingObjectCaptionLine(value: string): boolean {
     /^(?:Fig\.|Figure)\s+\d+[A-Z]?\s*[.:]\s+\S/iu.test(text) ||
     /^Algorithm\s+\d+[A-Z]?\s*[.:]\s+\S/iu.test(text) ||
     isCompleteAlgorithmCaption(text) ||
-    /^TABLE\s+(?:[IVXLCDM]+|\d+)(?:\s|$)/u.test(text)
+    /^TABLE\s+(?:[IVXLCDM]+|\d+)(?:\s|$)/u.test(text) ||
+    /^Table\s+(?:[IVXLCDM]+|\d+)(?:\s*$|\s*[.:]\s+\S)/u.test(text)
   );
 }
 
