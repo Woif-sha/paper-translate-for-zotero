@@ -128,6 +128,8 @@ function removeVerifiedCrossPageArtifacts(
   const nextPageText = removeLeadingCrossPageObject(
     layout.nextPageText,
     layout.nextPageLines,
+    layout.firstPageText,
+    layout.firstPageLines,
   );
   return `${firstPageText} ${nextPageText}`;
 }
@@ -161,6 +163,8 @@ function isRotatedArxivMarginLabel(line: ReaderSelectionLine): boolean {
 function removeLeadingCrossPageObject(
   value: string,
   lines: readonly ReaderSelectionLine[],
+  firstPageText: string,
+  firstPageLines: readonly ReaderSelectionLine[] | undefined,
 ): string {
   if (lines.length < 2) return value;
   const captionLineIndex = findLastConsecutiveCaptionBlockStart(lines);
@@ -189,9 +193,16 @@ function removeLeadingCrossPageObject(
         isCompleteFloatingObjectCaptionBlock(
           lines.slice(captionLineIndex, index + 1),
         ));
+    const followingBlock = followingVisualBlock(lines, index + 1, minimumGap);
     if (
       !boundaryFollowsTrailingCaption &&
-      !startsSemanticProse(followingVisualBlock(lines, index + 1, minimumGap))
+      !startsSemanticProse(followingBlock) &&
+      !startsVerifiedCrossPageProseFragment(
+        firstPageText,
+        firstPageLines,
+        followingBlock,
+        followingBlock.at(-1) === lines.at(-1),
+      )
     ) {
       continue;
     }
@@ -219,6 +230,40 @@ function removeLeadingCrossPageObject(
   }
   const retainedText = value.slice(discardedPrefixEnd).trimStart();
   return retainedText || value;
+}
+
+function startsVerifiedCrossPageProseFragment(
+  firstPageText: string,
+  firstPageLines: readonly ReaderSelectionLine[] | undefined,
+  lines: readonly ReaderSelectionLine[],
+  isFinalSelectionBlock: boolean,
+): boolean {
+  if (
+    !isFinalSelectionBlock ||
+    /[.!?。！？](?:[\p{Pe}\p{Pf}"']*)\s*$/u.test(firstPageText)
+  ) {
+    return false;
+  }
+  const previous = firstPageLines?.findLast(({ text }) => text.trim());
+  const first = lines.find(({ text }) => text.trim());
+  if (!previous || !first || isFloatingObjectCaptionLine(first.text)) {
+    return false;
+  }
+  const previousHeight = Math.abs(previous.rect[3] - previous.rect[1]);
+  const firstHeight = Math.abs(first.rect[3] - first.rect[1]);
+  if (
+    !previousHeight ||
+    !firstHeight ||
+    Math.abs(previousHeight - firstHeight) >
+      Math.max(previousHeight * 0.08, 0.25)
+  ) {
+    return false;
+  }
+  const text = lines
+    .map((line) => line.text.trim())
+    .filter(Boolean)
+    .join(" ");
+  return /^(?:\p{Ll}{2,}\s+){2}\p{Ll}{2,}/u.test(text);
 }
 
 function removeEmbeddedCrossColumnObject(

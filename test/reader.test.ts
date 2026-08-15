@@ -208,33 +208,36 @@ test("skips a table above the continued prose on the second selected page", () =
   );
 });
 
-test("skips a title-case table above continued cross-page prose", () => {
+test("skips consecutive title-case tables before partial cross-page prose", () => {
   const firstPageText = "each standard cell,";
   const nextPageLines = [
-    { text: "Table II", rect: [226, 706, 282, 718] },
+    {
+      text: "Table II",
+      rect: [162.0103, 736.59298, 187.61791, 744.10072],
+    },
     {
       text: "PREDICTION ACCURACY COMPARISON BY STD. DEV. OF STANDARD CELL",
-      rect: [84, 684, 442, 696],
+      rect: [51.837005, 727.62673, 297.7996912, 735.13472],
     },
     {
-      text: "DELAY IN TERMS OF RRMSE(%).",
-      rect: [165, 666, 361, 678],
+      text: "Ave. 10.48 18.36 6.24 7.23 4.68 5.14 3.98 4.36 2.34 2.67",
+      rect: [57.0521, 585.152736, 296.974122, 595.707244],
     },
     {
-      text: "Function PRR[11] DNN[14] HGAT (This work)",
-      rect: [84, 625, 442, 637],
+      text: "Table III",
+      rect: [160.6833, 557.78068, 188.94492, 565.28842],
     },
     {
-      text: "AN2 9.93 14.51 6.21 6.95 5.11 5.45 4.29 4.68 1.92 2.33",
-      rect: [84, 603, 442, 615],
+      text: "PREDICTION ACCURACY COMPARISON BY STATISTICAL CRITICAL PATH",
+      rect: [54.798662, 548.81443, 294.829176, 556.32217],
     },
     {
-      text: "the statistical timing characterization for the total of 45 corners",
-      rect: [48, 510, 518, 522],
+      text: "Ave. - 19.52 14.44 7.71 4.51 1.34",
+      rect: [57.7461, 454.026536, 277.632, 464.581044],
     },
     {
-      text: "could be performed with the proposed framework.",
-      rect: [48, 492, 518, 504],
+      text: "the statistical timing characterization",
+      rect: [49.6061, 418.714324, 190.031592, 427.160296],
     },
   ] as const;
   const nextPageText = nextPageLines.map(({ text }) => text).join(" ");
@@ -242,10 +245,16 @@ test("skips a title-case table above continued cross-page prose", () => {
   assert.equal(
     normalizeReaderSelection(`${firstPageText} ${nextPageText}`, {
       firstPageText,
+      firstPageLines: [
+        {
+          text: firstPageText,
+          rect: [490.3867578, 40.4170686, 562.3837378, 48.8630406],
+        },
+      ],
       nextPageText,
       nextPageLines,
     }),
-    `${firstPageText} the statistical timing characterization for the total of 45 corners could be performed with the proposed framework.`,
+    `${firstPageText} the statistical timing characterization`,
   );
 });
 
@@ -268,6 +277,26 @@ test("keeps a title-case table reference in cross-page prose", () => {
           rect: [48, 688, 518, 700],
         },
       ],
+    }),
+    `${firstPageText} ${nextPageText}`,
+  );
+});
+
+test("keeps a trailing lowercase table label with non-body line height", () => {
+  const firstPageText = "The comparison includes";
+  const nextPageLines = [
+    { text: "Table II", rect: [210, 706, 282, 713] },
+    { text: "RUNTIME COMPARISON", rect: [165, 684, 328, 691] },
+    { text: "training data hours", rect: [84, 640, 188, 647] },
+  ] as const;
+  const nextPageText = nextPageLines.map(({ text }) => text).join(" ");
+
+  assert.equal(
+    normalizeReaderSelection(`${firstPageText} ${nextPageText}`, {
+      firstPageText,
+      firstPageLines: [{ text: firstPageText, rect: [48, 84, 220, 96] }],
+      nextPageText,
+      nextPageLines,
     }),
     `${firstPageText} ${nextPageText}`,
   );
