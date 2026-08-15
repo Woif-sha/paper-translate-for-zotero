@@ -235,13 +235,17 @@ function removeEmbeddedCrossColumnObject(
     lineHeight * FLOAT_GAP_LINE_HEIGHT_MULTIPLIER,
   );
 
-  for (let start = 1; start < lines.length - 1; start += 1) {
+  for (let start = 1; start < lines.length; start += 1) {
     if (!isForwardColumnWrap(lines[start - 1], lines[start], minimumGap)) {
       continue;
     }
+    const footnoteStart = findVerifiedFootnoteStart(lines.slice(0, start));
     const columnLines = lines.slice(start);
     const captionStart = findLastConsecutiveCaptionBlockStart(columnLines);
-    if (captionStart < 0) continue;
+    if (captionStart < 0) {
+      if (footnoteStart < 0) continue;
+      return removeExactLineRange(value, lines, footnoteStart, start - 1);
+    }
     const leadingLines = columnLines.slice(0, captionStart);
     const captionEnd = findCaptionBlockEnd(
       columnLines,
@@ -267,27 +271,72 @@ function removeEmbeddedCrossColumnObject(
     }
 
     const absoluteEnd = start + objectEnd;
-    const retainedPrefixEnd = matchExactLinePrefix(
+    return removeExactLineRange(
       value,
-      lines.slice(0, start),
+      lines,
+      footnoteStart >= 0 ? footnoteStart : start,
+      absoluteEnd,
     );
-    const discardedBlockEnd = matchExactLinePrefix(
-      value,
-      lines.slice(0, absoluteEnd + 1),
-    );
-    if (
-      retainedPrefixEnd === undefined ||
-      discardedBlockEnd === undefined ||
-      !/^\s/u.test(value.slice(retainedPrefixEnd)) ||
-      !/^\s/u.test(value.slice(discardedBlockEnd))
-    ) {
-      return value;
-    }
-    return `${value.slice(0, retainedPrefixEnd).trimEnd()} ${value
-      .slice(discardedBlockEnd)
-      .trimStart()}`;
   }
   return value;
+}
+
+function findVerifiedFootnoteStart(
+  lines: readonly ReaderSelectionLine[],
+): number {
+  if (lines.length < 3) return -1;
+  const markerIndex = lines.findLastIndex(
+    ({ text }, index) => index > 0 && /^\d{1,3}$/u.test(text.trim()),
+  );
+  if (markerIndex < 1 || markerIndex >= lines.length - 1) return -1;
+
+  const previous = lines[markerIndex - 1];
+  const marker = lines[markerIndex];
+  const firstTextLine = lines[markerIndex + 1];
+  const previousHeight = Math.abs(previous.rect[3] - previous.rect[1]);
+  const markerHeight = Math.abs(marker.rect[3] - marker.rect[1]);
+  const footnoteLines = lines.slice(markerIndex + 1);
+  if (
+    !previousHeight ||
+    !markerHeight ||
+    markerHeight >= previousHeight * 0.8 ||
+    previous.rect[1] <= marker.rect[3] ||
+    firstTextLine.rect[0] < marker.rect[2] ||
+    firstTextLine.rect[0] - marker.rect[2] > previousHeight ||
+    Math.min(marker.rect[3], firstTextLine.rect[3]) <=
+      Math.max(marker.rect[1], firstTextLine.rect[1]) ||
+    footnoteLines.some(
+      ({ rect }) => Math.abs(rect[3] - rect[1]) >= previousHeight * 0.9,
+    )
+  ) {
+    return -1;
+  }
+  const text = footnoteLines.map((line) => line.text.trim()).join(" ");
+  return /\p{L}.*\s+\p{L}/u.test(text) ? markerIndex : -1;
+}
+
+function removeExactLineRange(
+  value: string,
+  lines: readonly ReaderSelectionLine[],
+  start: number,
+  end: number,
+): string {
+  const retainedPrefixEnd = matchExactLinePrefix(value, lines.slice(0, start));
+  const discardedBlockEnd = matchExactLinePrefix(
+    value,
+    lines.slice(0, end + 1),
+  );
+  if (
+    retainedPrefixEnd === undefined ||
+    discardedBlockEnd === undefined ||
+    !/^\s/u.test(value.slice(retainedPrefixEnd)) ||
+    !/^\s/u.test(value.slice(discardedBlockEnd))
+  ) {
+    return value;
+  }
+  return `${value.slice(0, retainedPrefixEnd).trimEnd()} ${value
+    .slice(discardedBlockEnd)
+    .trimStart()}`;
 }
 
 function formsAlignedProseContinuation(

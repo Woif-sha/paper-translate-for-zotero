@@ -618,6 +618,91 @@ test("removes consecutive embedded figures when a selection crosses columns", ()
   );
 });
 
+test("removes a bottom footnote before embedded figures when a selection crosses columns", () => {
+  const selectedLines = [
+    {
+      text: "any information the",
+      rect: [222.3102519, 119.22043989, 301.2862363, 128.38694769],
+    },
+    { text: "1", rect: [63.8509, 100.8517904, 66.7702, 106.3517516] },
+    {
+      text: "Actual mobility modeling in BSIM4 is more complex and depends on the",
+      rect: [67.2568, 97.6444108, 301.2882361, 104.9775982],
+    },
+    {
+      text: "selected mobility model with parameter ”MobMod” [15]",
+      rect: [56.06629375, 89.5872463, 237.61328245, 96.9204337],
+    },
+    {
+      text: "Fig. 1. Example circuit to explain SPICE basics.",
+      rect: [356.2947, 655.7556108, 514.85191266, 663.0887982],
+    },
+    {
+      text: "Circuit Matrix as Sum of Submatrices",
+      rect: [369.28208384, 630.30643632, 502.80015584, 637.56302272],
+    },
+    {
+      text: "Fig. 2. Definition of topology matrix with single column circuit element",
+      rect: [312.9646, 458.2602108, 558.18109306, 465.5933982],
+    },
+    {
+      text: "stamps and single column circuit matrix.",
+      rect: [312.9646, 450.2030463, 443.58252436, 457.5362337],
+    },
+    {
+      text: "reliability model might need (e.g., transistor toggling rate,",
+      rect: [312.9646, 418.9708076, 558.19593017, 428.1373154],
+    },
+    {
+      text: "integral of voltages).",
+      rect: [312.9646, 408.227894, 395.37656519, 417.3944018],
+    },
+  ] as const;
+
+  assert.equal(
+    normalizeSinglePageReaderSelection(selectedLines),
+    "any information the reliability model might need (e.g., transistor toggling rate, integral of voltages).",
+  );
+});
+
+test("removes a bottom footnote from a direct cross-column selection", () => {
+  const selectedLines = [
+    { text: "any information the", rect: [222, 119, 301, 128] },
+    { text: "1", rect: [64, 101, 67, 106.5] },
+    {
+      text: "A selected model has additional implementation details",
+      rect: [67.5, 97.5, 301, 105],
+    },
+    { text: "described in its documentation.", rect: [56, 89.5, 238, 97] },
+    {
+      text: "reliability model might need additional data.",
+      rect: [313, 419, 558, 428],
+    },
+  ] as const;
+
+  assert.equal(
+    normalizeSinglePageReaderSelection(selectedLines),
+    "any information the reliability model might need additional data.",
+  );
+});
+
+test("keeps full-size numbered content before a cross-column selection", () => {
+  const selectedLines = [
+    { text: "The procedure uses", rect: [220, 119, 301, 128] },
+    { text: "1", rect: [56, 100, 62, 109] },
+    { text: "iteration before convergence.", rect: [67, 100, 280, 109] },
+    {
+      text: "The result remains valid.",
+      rect: [313, 419, 520, 428],
+    },
+  ] as const;
+
+  assert.equal(
+    normalizeSinglePageReaderSelection(selectedLines),
+    "The procedure uses 1 iteration before convergence. The result remains valid.",
+  );
+});
+
 test("uses the same cross-column block rule for tables and algorithms", () => {
   const cases = [
     [
