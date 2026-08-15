@@ -154,9 +154,7 @@ function removeLeadingCrossPageObject(
   lines: readonly ReaderSelectionLine[],
 ): string {
   if (lines.length < 2) return value;
-  const captionLineIndex = lines.findIndex(({ text }) =>
-    isFloatingObjectCaptionLine(text),
-  );
+  const captionLineIndex = findLastConsecutiveCaptionBlockStart(lines);
   if (
     captionLineIndex < 0 ||
     containsLeadingSemanticContent(lines.slice(0, captionLineIndex))
@@ -212,6 +210,50 @@ function removeLeadingCrossPageObject(
   }
   const retainedText = value.slice(discardedPrefixEnd).trimStart();
   return retainedText || value;
+}
+
+function findLastConsecutiveCaptionBlockStart(
+  lines: readonly ReaderSelectionLine[],
+): number {
+  const starts = lines.flatMap(({ text }, index) =>
+    isFloatingObjectCaptionLine(text) ? [index] : [],
+  );
+  if (!starts.length) return -1;
+
+  let candidateStart = starts[0];
+  let candidateEnd = findCaptionBlockEnd(
+    lines,
+    candidateStart,
+    starts[1] ?? lines.length,
+  );
+  for (let index = 1; index < starts.length; index += 1) {
+    const nextStart = starts[index];
+    if (
+      containsLeadingSemanticContent(lines.slice(candidateEnd + 1, nextStart))
+    ) {
+      break;
+    }
+    candidateStart = nextStart;
+    candidateEnd = findCaptionBlockEnd(
+      lines,
+      candidateStart,
+      starts[index + 1] ?? lines.length,
+    );
+  }
+  return candidateStart;
+}
+
+function findCaptionBlockEnd(
+  lines: readonly ReaderSelectionLine[],
+  start: number,
+  end: number,
+): number {
+  for (let index = start; index < end; index += 1) {
+    if (isCompleteFloatingObjectCaptionBlock(lines.slice(start, index + 1))) {
+      return index;
+    }
+  }
+  return start;
 }
 
 function isCompleteFloatingObjectCaptionBlock(

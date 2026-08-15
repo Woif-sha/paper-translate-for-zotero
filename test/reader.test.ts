@@ -585,6 +585,77 @@ test("removes consecutive figures before cross-page prose", () => {
   );
 });
 
+test("removes every consecutive floating object before partial prose", () => {
+  const firstPageText =
+    "“Div count” and “Mul count” denote the division and multiplication task num-";
+  const nextPageLines = [
+    {
+      text: "LU task list Level 0 Level n Data dependency graph result",
+      rect: [165, 700, 730, 712],
+    },
+    {
+      text: "Figure 4: Levelized LU factorization task list.",
+      rect: [235, 620, 655, 632],
+    },
+    {
+      text: ">ĠĠu ĐŽŽYĥ >ĠĠu 6 >ĠĠu Ŷ u Ž d ŁJĐĞ dĂ&U ŽYŝ ŝ ĐŽŽYĥ dh6, dhŶ",
+      rect: [242, 500, 735, 512],
+    },
+    {
+      text: "Figure 5: GPU data structure for the LU factorization task list.",
+      rect: [160, 400, 735, 412],
+    },
+    {
+      text: "bers in the current task level.",
+      rect: [160, 310, 445, 322],
+    },
+  ] as const;
+  const nextPageText = nextPageLines.map(({ text }) => text).join(" ");
+
+  assert.equal(
+    normalizeReaderSelection(`${firstPageText} ${nextPageText}`, {
+      firstPageText,
+      nextPageText,
+      nextPageLines,
+    }),
+    `${firstPageText} bers in the current task level.`,
+  );
+});
+
+test("keeps semantic prose between separate floating objects", () => {
+  const firstPageText = "The selection continues across the page break";
+  const nextPageLines = [
+    { text: "Thread 1 Thread 2", rect: [120, 700, 480, 712] },
+    {
+      text: "Figure 3: GPU memory architecture.",
+      rect: [48, 660, 360, 672],
+    },
+    {
+      text: "This paragraph must remain selected.",
+      rect: [48, 580, 518, 592],
+    },
+    { text: "CPU 1 CPU 2", rect: [120, 500, 480, 512] },
+    {
+      text: "Figure 4: CPU memory architecture.",
+      rect: [48, 460, 360, 472],
+    },
+    {
+      text: "The final paragraph also remains selected.",
+      rect: [48, 380, 518, 392],
+    },
+  ] as const;
+  const nextPageText = nextPageLines.map(({ text }) => text).join(" ");
+
+  assert.equal(
+    normalizeReaderSelection(`${firstPageText} ${nextPageText}`, {
+      firstPageText,
+      nextPageText,
+      nextPageLines,
+    }),
+    `${firstPageText} This paragraph must remain selected. CPU 1 CPU 2 Figure 4: CPU memory architecture. The final paragraph also remains selected.`,
+  );
+});
+
 test("keeps semantic headings and bullets before a later figure", () => {
   const firstPageText = "The previous page ends here.";
   for (const semanticLine of [
