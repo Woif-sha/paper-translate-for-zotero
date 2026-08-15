@@ -191,20 +191,39 @@ function removeLeadingCrossPageObject(
   }
   if (cutAfterLine < 0) return value;
 
-  const discardedPrefix = lines
-    .slice(0, cutAfterLine + 1)
-    .map(({ text }) => text.trim())
-    .filter(Boolean)
-    .join(" ");
+  const discardedPrefixEnd = matchExactLinePrefix(
+    value,
+    lines.slice(0, cutAfterLine + 1),
+  );
   if (
-    !discardedPrefix ||
-    !value.startsWith(discardedPrefix) ||
-    !/^\s/u.test(value.slice(discardedPrefix.length))
+    discardedPrefixEnd === undefined ||
+    !/^\s/u.test(value.slice(discardedPrefixEnd))
   ) {
     return value;
   }
-  const retainedText = value.slice(discardedPrefix.length).trimStart();
+  const retainedText = value.slice(discardedPrefixEnd).trimStart();
   return retainedText || value;
+}
+
+function matchExactLinePrefix(
+  value: string,
+  lines: readonly ReaderSelectionLine[],
+): number | undefined {
+  let offset = 0;
+  let matchedLine = false;
+  for (const line of lines) {
+    const text = line.text.trim();
+    if (!text) continue;
+    if (matchedLine) {
+      const separator = /^\s+/u.exec(value.slice(offset));
+      if (!separator) return undefined;
+      offset += separator[0].length;
+    }
+    if (!value.startsWith(text, offset)) return undefined;
+    offset += text.length;
+    matchedLine = true;
+  }
+  return matchedLine ? offset : undefined;
 }
 
 function containsSemanticContent(

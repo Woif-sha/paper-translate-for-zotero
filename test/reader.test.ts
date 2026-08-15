@@ -237,25 +237,34 @@ test("uses the current Reader selection layout to clean a cross-page annotation"
 test("removes selected figure text before a cross-page figure caption", () => {
   const firstPageText = "As matrices in circuit simulations are";
   const nextPageLines = [
-    { text: "4", rect: [910, 700, 921, 712] },
     {
       text: "Thread 1 Thread 2 level nodes cluster mode pipeline mode",
       rect: [120, 650, 880, 662],
+      paragraphBreakAfter: true,
     },
     {
       text: "(a) Levelization (b) Task assignment (c) Timing diagram (d) Pipeline illustration",
       rect: [120, 630, 880, 642],
+      paragraphBreakAfter: true,
     },
     {
       text: "Fig. 3: Levelization-based dual-mode parallel scheduling method [6], [7]. This example does not correspond to Fig. 2.",
       rect: [57, 580, 852, 592],
+      paragraphBreakAfter: true,
     },
     {
       text: "generally much sparser than matrices from other applications [4].",
       rect: [20, 500, 690, 512],
+      paragraphBreakAfter: false,
     },
   ] as const;
-  const nextPageText = nextPageLines.map(({ text }) => text).join(" ");
+  const nextPageText = nextPageLines
+    .map(
+      ({ text, paragraphBreakAfter }) =>
+        `${text}${paragraphBreakAfter ? "  " : " "}`,
+    )
+    .join("")
+    .trim();
   const nextPageRects = nextPageLines.map(({ rect }) => rect);
   const firstRect = [501, 837, 924, 959];
   const annotation = {
@@ -290,9 +299,10 @@ test("removes selected figure text before a cross-page figure caption", () => {
             chars: [{ c: firstPageText, lineBreakAfter: true }],
           },
           3: {
-            chars: nextPageLines.map(({ text }) => ({
+            chars: nextPageLines.map(({ text, paragraphBreakAfter }) => ({
               c: text,
               lineBreakAfter: true,
+              paragraphBreakAfter,
             })),
           },
         },
