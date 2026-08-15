@@ -399,6 +399,61 @@ test("removes question-shaped flowchart labels before trailing prose", () => {
   );
 });
 
+test("removes pseudocode before a wrapped colon-style algorithm caption", () => {
+  const firstPageText = "which explores";
+  const nextPageLines = [
+    {
+      text: "1 interrupted = 0; /* shared variable for all threads */",
+      rect: [125, 620, 596, 632],
+    },
+    { text: "2 for threads in parallel do", rect: [125, 600, 440, 612] },
+    {
+      text: "3 for row i assigned to this thread do",
+      rect: [155, 580, 500, 592],
+    },
+    { text: "4 x = A(i,:);", rect: [205, 560, 350, 572] },
+    {
+      text: "5 for j = 1 : i - 1 where L(i,j) is nonzero do",
+      rect: [205, 540, 575, 552],
+    },
+    { text: "6 while !finish[j] do", rect: [235, 520, 430, 532] },
+    { text: "7 if interrupted then", rect: [265, 500, 425, 512] },
+    { text: "8 exit thread;", rect: [295, 480, 405, 492] },
+    {
+      text: "9 x(j + 1 : N) = x(j) × U(j, j + 1 : N);",
+      rect: [235, 450, 585, 462],
+    },
+    {
+      text: "10 if |x(i)| < ε × max i+1≤k≤N {|x(k)|} then",
+      rect: [205, 420, 590, 432],
+    },
+    { text: "11 interrupted = 1;", rect: [235, 400, 410, 412] },
+    { text: "12 exit thread;", rect: [235, 380, 380, 392] },
+    { text: "13 L(i, 1 : i) = x(1 : i);", rect: [205, 360, 440, 372] },
+    {
+      text: "14 U(i, i : N) = x(i : N)/x(i);",
+      rect: [205, 340, 485, 352],
+    },
+    { text: "15 finish[i] = 1;", rect: [205, 320, 385, 332] },
+    {
+      text: "Algorithm 4: Pipeline mode of fast factorization with",
+      rect: [135, 280, 585, 292],
+    },
+    { text: "pivot check.", rect: [135, 260, 300, 272] },
+    { text: "parallelism", rect: [125, 190, 250, 202] },
+  ] as const;
+  const nextPageText = nextPageLines.map(({ text }) => text).join(" ");
+
+  assert.equal(
+    normalizeReaderSelection(`${firstPageText} ${nextPageText}`, {
+      firstPageText,
+      nextPageText,
+      nextPageLines,
+    }),
+    `${firstPageText} parallelism`,
+  );
+});
+
 test("removes selected figure text after a cross-page figure caption", () => {
   const firstPageText = "The sentence continues across the page break";
   const nextPageLines = [

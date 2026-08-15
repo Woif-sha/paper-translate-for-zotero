@@ -303,7 +303,14 @@ function isCompleteSingleLineObjectHeading(value: string): boolean {
   const text = value.trim();
   return (
     /^(?:Fig\.|Figure)\s+\d+[A-Z]?\s*[.:]\s+\S.*[.!?]$/iu.test(text) ||
-    /^Algorithm\s+\d+[A-Z]?\s+\S.*\[\d+(?:\s*,\s*\d+)*\]\s*$/iu.test(text)
+    isCompleteAlgorithmCaption(text)
+  );
+}
+
+function isCompleteAlgorithmCaption(value: string): boolean {
+  return (
+    /^Algorithm\s+\d+[A-Z]?\s*[.:]\s+\S.*[.!?]$/iu.test(value) ||
+    /^Algorithm\s+\d+[A-Z]?\s+\S.*\[\d+(?:\s*,\s*\d+)*\]\s*$/iu.test(value)
   );
 }
 
@@ -321,7 +328,8 @@ function isFloatingObjectCaptionLine(value: string): boolean {
   const text = value.trim();
   return (
     /^(?:Fig\.|Figure)\s+\d+[A-Z]?\s*[.:]\s+\S/iu.test(text) ||
-    /^Algorithm\s+\d+[A-Z]?\s+\S.*\[\d+(?:\s*,\s*\d+)*\]\s*$/iu.test(text) ||
+    /^Algorithm\s+\d+[A-Z]?\s*[.:]\s+\S/iu.test(text) ||
+    isCompleteAlgorithmCaption(text) ||
     /^TABLE\s+(?:[IVXLCDM]+|\d+)(?:\s|$)/u.test(text)
   );
 }
