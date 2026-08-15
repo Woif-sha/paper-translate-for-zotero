@@ -353,6 +353,52 @@ test("removes a wrapped trailing figure caption before partial prose", () => {
   );
 });
 
+test("removes question-shaped flowchart labels before trailing prose", () => {
+  const firstPageText = "although nodes 8 and 10";
+  const nextPageLines = [
+    { text: "Create EGraph", rect: [530, 610, 705, 622] },
+    {
+      text: "Structure of LU factors changed?",
+      rect: [180, 590, 500, 602],
+    },
+    {
+      text: "Cluster mode fast factorization with pivot check",
+      rect: [178, 520, 485, 545],
+    },
+    {
+      text: "Pipeline mode fast factorization with pivot check",
+      rect: [178, 440, 485, 465],
+    },
+    { text: "Restart node determination", rect: [540, 440, 840, 452] },
+    {
+      text: "Pipelined tail factorization with pivoting",
+      rect: [540, 390, 840, 415],
+    },
+    { text: "Re-pivoting needed?", rect: [180, 480, 480, 492] },
+    { text: "Re-pivoting needed?", rect: [180, 360, 480, 372] },
+    { text: "Yes Yes Yes No No No", rect: [300, 340, 700, 352] },
+    {
+      text: "Circuit simulation iterations",
+      rect: [120, 330, 145, 570],
+    },
+    {
+      text: "Fig. 6: Flow of parallel fast LU factorization algorithm.",
+      rect: [118, 280, 850, 292],
+    },
+    { text: "are finished.", rect: [82, 190, 245, 202] },
+  ] as const;
+  const nextPageText = nextPageLines.map(({ text }) => text).join(" ");
+
+  assert.equal(
+    normalizeReaderSelection(`${firstPageText} ${nextPageText}`, {
+      firstPageText,
+      nextPageText,
+      nextPageLines,
+    }),
+    `${firstPageText} are finished.`,
+  );
+});
+
 test("removes selected figure text after a cross-page figure caption", () => {
   const firstPageText = "The sentence continues across the page break";
   const nextPageLines = [
@@ -695,6 +741,34 @@ test("keeps second-page prose that appears before a floating object", () => {
           rect: [48, 612, 518, 624],
         },
       ],
+    }),
+    `${firstPageText} ${nextPageText}`,
+  );
+});
+
+test("keeps a leading body question before a later floating object", () => {
+  const firstPageText = "The previous discussion continues.";
+  const nextPageLines = [
+    {
+      text: "Does the same conclusion hold?",
+      rect: [48, 716, 518, 728],
+    },
+    {
+      text: "Fig. 3. GPU memory architecture.",
+      rect: [48, 650, 286, 662],
+    },
+    {
+      text: "The discussion resumes below the figure.",
+      rect: [48, 580, 518, 592],
+    },
+  ] as const;
+  const nextPageText = nextPageLines.map(({ text }) => text).join(" ");
+
+  assert.equal(
+    normalizeReaderSelection(`${firstPageText} ${nextPageText}`, {
+      firstPageText,
+      nextPageText,
+      nextPageLines,
     }),
     `${firstPageText} ${nextPageText}`,
   );

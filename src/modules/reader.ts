@@ -159,7 +159,7 @@ function removeLeadingCrossPageObject(
   );
   if (
     captionLineIndex < 0 ||
-    containsSemanticContent(lines.slice(0, captionLineIndex))
+    containsLeadingSemanticContent(lines.slice(0, captionLineIndex))
   ) {
     return value;
   }
@@ -258,14 +258,37 @@ function matchExactLinePrefix(
   return matchedLine ? offset : undefined;
 }
 
-function containsSemanticContent(
+function containsLeadingSemanticContent(
   lines: readonly ReaderSelectionLine[],
 ): boolean {
-  return lines.some(
-    (line, index) =>
-      isStructuredSemanticLine(line.text) ||
-      startsSemanticProse(lines.slice(index, index + 1)) ||
-      startsSemanticProse(lines.slice(index, index + 2)),
+  const firstContentIndex = lines.findIndex(({ text }) => text.trim());
+  if (firstContentIndex < 0) return false;
+  const block = [lines[firstContentIndex]];
+  for (let index = firstContentIndex + 1; index < lines.length; index += 1) {
+    if (!lines[index].text.trim()) continue;
+    if (!areContinuousProseLines(block.at(-1)!, lines[index])) break;
+    block.push(lines[index]);
+  }
+  return (
+    block.some(({ text }) => isStructuredSemanticLine(text)) ||
+    startsSemanticProse(block)
+  );
+}
+
+function areContinuousProseLines(
+  upper: ReaderSelectionLine,
+  lower: ReaderSelectionLine,
+): boolean {
+  const upperHeight = Math.abs(upper.rect[3] - upper.rect[1]);
+  const lowerHeight = Math.abs(lower.rect[3] - lower.rect[1]);
+  const lineHeight = Math.max(upperHeight, lowerHeight);
+  if (!lineHeight) return false;
+  const maximumOffset = lineHeight * FLOAT_GAP_LINE_HEIGHT_MULTIPLIER;
+  const verticalGap = upper.rect[1] - lower.rect[3];
+  return (
+    verticalGap >= -lineHeight &&
+    verticalGap <= maximumOffset &&
+    Math.abs(upper.rect[0] - lower.rect[0]) <= maximumOffset
   );
 }
 
