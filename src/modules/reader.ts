@@ -66,12 +66,21 @@ type ReaderTextAnnotation = {
   };
 };
 
+type ResolvedReaderSelectionLayout =
+  | { kind: "singlePage"; text: string; lines: readonly ReaderSelectionLine[] }
+  | ({ kind: "crossPage" } & ReaderSelectionLayout);
+
 export function normalizeReaderAnnotationSelection(
   reader: unknown,
   annotation: ReaderTextAnnotation,
 ): string {
   const layout = resolveReaderSelectionLayout(reader, annotation);
   if (!layout) return normalizeReaderSelection(annotation.text);
+  if (layout.kind === "singlePage") {
+    return normalizeReaderSelection(
+      removeEmbeddedCrossColumnObject(layout.text, layout.lines),
+    );
+  }
   return normalizeReaderSelection(annotation.text, layout);
 }
 
@@ -210,6 +219,125 @@ function removeLeadingCrossPageObject(
   }
   const retainedText = value.slice(discardedPrefixEnd).trimStart();
   return retainedText || value;
+}
+
+function removeEmbeddedCrossColumnObject(
+  value: string,
+  lines: readonly ReaderSelectionLine[],
+): string {
+  if (lines.length < 3) return value;
+  const lineHeight = median(
+    lines.map(({ rect }) => Math.abs(rect[3] - rect[1])),
+  );
+  if (!lineHeight) return value;
+  const minimumGap = Math.max(
+    MINIMUM_FLOAT_GAP,
+    lineHeight * FLOAT_GAP_LINE_HEIGHT_MULTIPLIER,
+  );
+
+  for (let start = 1; start < lines.length - 1; start += 1) {
+    if (!isForwardColumnWrap(lines[start - 1], lines[start], minimumGap)) {
+      continue;
+    }
+    const columnLines = lines.slice(start);
+    const captionStart = findLastConsecutiveCaptionBlockStart(columnLines);
+    if (captionStart < 0) continue;
+    const leadingLines = columnLines.slice(0, captionStart);
+    const captionEnd = findCaptionBlockEnd(
+      columnLines,
+      captionStart,
+      columnLines.length,
+    );
+    const objectEnd = findObjectEndAfterCaption(
+      columnLines,
+      captionEnd,
+      minimumGap,
+    );
+    if (objectEnd < captionEnd || objectEnd >= columnLines.length - 1) continue;
+    if (
+      containsLeadingSemanticContent(leadingLines) ||
+      formsAlignedProseContinuation(
+        lines[start - 1],
+        leadingLines,
+        columnLines[objectEnd + 1],
+        minimumGap,
+      )
+    ) {
+      continue;
+    }
+
+    const absoluteEnd = start + objectEnd;
+    const retainedPrefixEnd = matchExactLinePrefix(
+      value,
+      lines.slice(0, start),
+    );
+    const discardedBlockEnd = matchExactLinePrefix(
+      value,
+      lines.slice(0, absoluteEnd + 1),
+    );
+    if (
+      retainedPrefixEnd === undefined ||
+      discardedBlockEnd === undefined ||
+      !/^\s/u.test(value.slice(retainedPrefixEnd)) ||
+      !/^\s/u.test(value.slice(discardedBlockEnd))
+    ) {
+      return value;
+    }
+    return `${value.slice(0, retainedPrefixEnd).trimEnd()} ${value
+      .slice(discardedBlockEnd)
+      .trimStart()}`;
+  }
+  return value;
+}
+
+function formsAlignedProseContinuation(
+  previousColumnLine: ReaderSelectionLine,
+  leadingLines: readonly ReaderSelectionLine[],
+  followingLine: ReaderSelectionLine,
+  maximumOffset: number,
+): boolean {
+  const first = leadingLines.find(({ text }) => text.trim());
+  if (
+    !first ||
+    Math.abs(first.rect[0] - followingLine.rect[0]) > maximumOffset
+  ) {
+    return false;
+  }
+  const text = first.text.trim();
+  if (
+    /^(?:for|if|while|return|exit|continue|barrier)\b/iu.test(text) ||
+    /[=;{}]|(?:->|→)/u.test(text)
+  ) {
+    return false;
+  }
+  return (
+    /^\p{Ll}/u.test(text) ||
+    /[.!?。！？](?:[\p{Pe}\p{Pf}"']*)\s*$/u.test(previousColumnLine.text.trim())
+  );
+}
+
+function isForwardColumnWrap(
+  previous: ReaderSelectionLine,
+  next: ReaderSelectionLine,
+  minimumGap: number,
+): boolean {
+  return (
+    next.rect[0] - previous.rect[0] > minimumGap &&
+    next.rect[1] - previous.rect[3] > minimumGap
+  );
+}
+
+function findObjectEndAfterCaption(
+  lines: readonly ReaderSelectionLine[],
+  captionEnd: number,
+  minimumGap: number,
+): number {
+  for (let index = captionEnd; index < lines.length - 1; index += 1) {
+    if (lines[index].rect[1] - lines[index + 1].rect[3] > minimumGap) {
+      return index;
+    }
+  }
+  return -1;
 }
 
 function findLastConsecutiveCaptionBlockStart(
@@ -389,16 +517,12 @@ function median(values: readonly number[]): number {
 function resolveReaderSelectionLayout(
   reader: unknown,
   annotation: ReaderTextAnnotation,
-): ReaderSelectionLayout | undefined {
-  // Zotero flattens a two-page selection into annotation.text. Runtime ranges
-  // are used only to prove page and line boundaries; exact identity checks keep
+): ResolvedReaderSelectionLayout | undefined {
+  // Zotero flattens a selection into annotation.text. Runtime ranges are used
+  // only to prove page and line boundaries; exact identity checks keep
   // annotation.text as the sole translation input.
   const position = annotation.position;
-  if (
-    !Number.isInteger(position?.pageIndex) ||
-    !isRectList(position?.rects) ||
-    !isRectList(position?.nextPageRects)
-  ) {
+  if (!Number.isInteger(position?.pageIndex) || !isRectList(position?.rects)) {
     return undefined;
   }
   const view = resolveCurrentReaderView(reader);
@@ -407,9 +531,28 @@ function resolveReaderSelectionLayout(
         (left, right) => Number(left?.pageIndex) - Number(right?.pageIndex),
       )
     : [];
-  if (ranges.length !== 2) return undefined;
-  const [firstRange, nextRange] = ranges;
   const firstPageIndex = Number(position.pageIndex);
+  if (ranges.length === 1) {
+    const [range] = ranges;
+    if (
+      range?.pageIndex !== firstPageIndex ||
+      range?.position?.pageIndex !== firstPageIndex ||
+      !sameRects(range.position.rects, position.rects) ||
+      typeof range.text !== "string" ||
+      annotation.text !== range.text
+    ) {
+      return undefined;
+    }
+    const lines = extractSelectedRuntimeLines(
+      view?._pdfPages?.[firstPageIndex]?.chars,
+      range,
+    );
+    return lines ? { kind: "singlePage", text: range.text, lines } : undefined;
+  }
+  if (ranges.length !== 2 || !isRectList(position.nextPageRects)) {
+    return undefined;
+  }
+  const [firstRange, nextRange] = ranges;
   if (
     firstRange?.pageIndex !== firstPageIndex ||
     nextRange?.pageIndex !== firstPageIndex + 1 ||
@@ -431,6 +574,7 @@ function resolveReaderSelectionLayout(
     firstRange,
   );
   return {
+    kind: "crossPage",
     firstPageText: firstRange.text,
     firstPageLines,
     nextPageText: nextRange.text,

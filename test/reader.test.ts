@@ -6,6 +6,44 @@ import {
 } from "../src/modules/reader";
 import { normalizeTaskText } from "../src/utils/task";
 
+function normalizeSinglePageReaderSelection(
+  selectedLines: readonly {
+    text: string;
+    rect: readonly [number, number, number, number];
+  }[],
+): string {
+  const selectedText = selectedLines.map(({ text }) => text).join(" ");
+  const rects = selectedLines.map(({ rect }) => rect);
+  const annotation = {
+    text: selectedText,
+    position: { pageIndex: 6, rects },
+  };
+  const reader = {
+    _internalReader: {
+      _lastView: {
+        _selectionRanges: [
+          {
+            pageIndex: 6,
+            anchorOffset: 0,
+            headOffset: selectedLines.length,
+            text: selectedText,
+            position: { pageIndex: 6, rects },
+          },
+        ],
+        _pdfPages: {
+          6: {
+            chars: selectedLines.map(({ text }) => ({
+              c: text,
+              lineBreakAfter: true,
+            })),
+          },
+        },
+      },
+    },
+  };
+  return normalizeReaderAnnotationSelection(reader, annotation);
+}
+
 test("removes IEEE cross-page footer and access notice noise", () => {
   const selected = [
     "The key 979-8-3503-9354-5/24/$31.00 ©2024 IEEE 2D-1 171 2024 29th Asia and South Pacific Design Automation Conference (ASP-DAC) | 979-8-3503-9354-5/24/$31.00 ©2024 IEEE | DOI: 10.1109/ASP-DAC58780.2024.10473881 Authorized licensed use limited to: Southeast University. Downloaded on July 16, 2026 at 07:25:45 UTC from IEEE Xplore. Restrictions apply. is to remove",
@@ -479,6 +517,81 @@ test("removes selected figure text after a cross-page figure caption", () => {
       nextPageLines,
     }),
     `${firstPageText} on the second selected page.`,
+  );
+});
+
+test("removes an embedded figure block when a selection crosses columns", () => {
+  const selectedLines = [
+    { text: "Assume", rect: [0, 42, 205, 54] },
+    {
+      text: "1 2 3 4 5 6 7 8 9 10 1 2 3 4 5 6 7 8 9 10",
+      rect: [407, 700, 735, 712],
+    },
+    { text: "Nonzeros Fill-ins", rect: [407, 520, 578, 532] },
+    {
+      text: "Fig. 7: Example of re-pivoting on row 6: columns 6 and 10",
+      rect: [234, 480, 737, 492],
+    },
+    {
+      text: "are exchanged, incurring an additional dependency of row 10.",
+      rect: [234, 460, 737, 472],
+    },
+    { text: "that columns 6", rect: [234, 380, 420, 392] },
+  ] as const;
+  assert.equal(
+    normalizeSinglePageReaderSelection(selectedLines),
+    "Assume that columns 6",
+  );
+});
+
+test("uses the same cross-column block rule for tables and algorithms", () => {
+  const cases = [
+    [
+      { text: "Assume", rect: [0, 42, 205, 54] },
+      { text: "TABLE II", rect: [470, 700, 550, 712] },
+      { text: "RUNTIME COMPARISON", rect: [390, 680, 625, 692] },
+      { text: "Method CPU GPU", rect: [350, 660, 700, 672] },
+      { text: "Baseline 21.4 8.3", rect: [350, 640, 700, 652] },
+      { text: "that columns 6", rect: [234, 560, 420, 572] },
+    ],
+    [
+      { text: "Assume", rect: [0, 42, 205, 54] },
+      { text: "1 for threads in parallel do", rect: [407, 700, 700, 712] },
+      { text: "2 x = A(i,:);", rect: [430, 680, 590, 692] },
+      {
+        text: "Algorithm 4: Pipeline mode of fast factorization with pivot check.",
+        rect: [234, 640, 737, 652],
+      },
+      { text: "that columns 6", rect: [234, 560, 420, 572] },
+    ],
+  ] as const;
+
+  for (const selectedLines of cases) {
+    assert.equal(
+      normalizeSinglePageReaderSelection(selectedLines),
+      "Assume that columns 6",
+    );
+  }
+});
+
+test("keeps partial body prose before a later cross-column figure", () => {
+  const selectedLines = [
+    { text: "Assume", rect: [0, 42, 205, 54] },
+    { text: "that columns 6", rect: [234, 700, 737, 712] },
+    { text: "1 2 3 4 5 6 7 8 9 10", rect: [407, 600, 735, 612] },
+    {
+      text: "Fig. 7: Example of re-pivoting on row 6.",
+      rect: [234, 560, 737, 572],
+    },
+    {
+      text: "The next paragraph remains selected.",
+      rect: [234, 480, 737, 492],
+    },
+  ] as const;
+
+  assert.equal(
+    normalizeSinglePageReaderSelection(selectedLines),
+    selectedLines.map(({ text }) => text).join(" "),
   );
 });
 
