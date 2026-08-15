@@ -176,7 +176,9 @@ function removeLeadingCrossPageObject(
     const lower = lines[index + 1].rect;
     const gap = upper[1] - lower[3];
     if (gap <= minimumGap) continue;
-    if (!startsSemanticProse(lines.slice(index + 1, index + 3))) {
+    if (
+      !startsSemanticProse(followingVisualBlock(lines, index + 1, minimumGap))
+    ) {
       continue;
     }
     cutAfterLine = index;
@@ -203,6 +205,21 @@ function removeLeadingCrossPageObject(
   }
   const retainedText = value.slice(discardedPrefixEnd).trimStart();
   return retainedText || value;
+}
+
+function followingVisualBlock(
+  lines: readonly ReaderSelectionLine[],
+  start: number,
+  minimumGap: number,
+): readonly ReaderSelectionLine[] {
+  let end = start + 1;
+  while (end < lines.length) {
+    const upper = lines[end - 1].rect;
+    const lower = lines[end].rect;
+    if (upper[1] - lower[3] > minimumGap) break;
+    end += 1;
+  }
+  return lines.slice(start, end);
 }
 
 function matchExactLinePrefix(
