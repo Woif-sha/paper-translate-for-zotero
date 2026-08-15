@@ -544,6 +544,41 @@ test("removes an embedded figure block when a selection crosses columns", () => 
   );
 });
 
+test("removes consecutive embedded figures when a selection crosses columns", () => {
+  const selectedLines = [
+    { text: "one", rect: [304, 42, 326, 54] },
+    {
+      text: "Fig. 8: Typical distribution of nonzero elements of LU factors.",
+      rect: [328, 700, 830, 712],
+    },
+    {
+      text: "Sparse triangular block Rectangular block Partitioning position (P0)",
+      rect: [328, 620, 830, 632],
+    },
+    {
+      text: "Triangular piece Rectangular slice R1 R2 T1 T2 P0 P1 Rm Tm Pm-1 Pm=N",
+      rect: [328, 560, 830, 572],
+    },
+    {
+      text: "Fig. 9: Partitioning lower triangular matrix. (a) Coarse-grained",
+      rect: [328, 500, 830, 512],
+    },
+    {
+      text: "partitioning. (b) Fine-grained partitioning. (c) Final partitioning.",
+      rect: [328, 480, 830, 492],
+    },
+    {
+      text: "should group the elements with some similar features such that they can be",
+      rect: [328, 400, 830, 412],
+    },
+  ] as const;
+
+  assert.equal(
+    normalizeSinglePageReaderSelection(selectedLines),
+    "one should group the elements with some similar features such that they can be",
+  );
+});
+
 test("uses the same cross-column block rule for tables and algorithms", () => {
   const cases = [
     [

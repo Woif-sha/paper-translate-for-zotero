@@ -322,7 +322,8 @@ function isForwardColumnWrap(
   minimumGap: number,
 ): boolean {
   return (
-    next.rect[0] - previous.rect[0] > minimumGap &&
+    (next.rect[0] - previous.rect[0] > minimumGap ||
+      next.rect[0] >= previous.rect[2]) &&
     next.rect[1] - previous.rect[3] > minimumGap
   );
 }
