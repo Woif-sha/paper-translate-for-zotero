@@ -11,9 +11,24 @@ function normalizeSinglePageReaderSelection(
     text: string;
     rect: readonly [number, number, number, number];
   }[],
+  unspacedLineBreaks: ReadonlySet<number> = new Set(),
 ): string {
-  const selectedText = selectedLines.map(({ text }) => text).join(" ");
+  const selectedText = selectedLines
+    .map(({ text }, index) =>
+      index < selectedLines.length - 1
+        ? `${text}${unspacedLineBreaks.has(index) ? "" : " "}`
+        : text,
+    )
+    .join("");
   const rects = selectedLines.map(({ rect }) => rect);
+  const chars = selectedLines.flatMap(({ text }, index) => [
+    {
+      c: text,
+      spaceAfter:
+        index < selectedLines.length - 1 && !unspacedLineBreaks.has(index),
+    },
+    { c: "", ignorable: true, lineBreakAfter: true },
+  ]);
   const annotation = {
     text: selectedText,
     position: { pageIndex: 6, rects },
@@ -25,17 +40,14 @@ function normalizeSinglePageReaderSelection(
           {
             pageIndex: 6,
             anchorOffset: 0,
-            headOffset: selectedLines.length,
+            headOffset: chars.length,
             text: selectedText,
             position: { pageIndex: 6, rects },
           },
         ],
         _pdfPages: {
           6: {
-            chars: selectedLines.map(({ text }) => ({
-              c: text,
-              lineBreakAfter: true,
-            })),
+            chars,
           },
         },
       },
@@ -546,36 +558,63 @@ test("removes an embedded figure block when a selection crosses columns", () => 
 
 test("removes consecutive embedded figures when a selection crosses columns", () => {
   const selectedLines = [
-    { text: "one", rect: [304, 42, 326, 54] },
+    {
+      text: "one",
+      rect: [285.6355256, 33.5840784, 300.02152, 42.2216526],
+    },
     {
       text: "Fig. 8: Typical distribution of nonzero elements of LU factors.",
-      rect: [328, 700, 830, 712],
+      rect: [311.978, 570.9530784, 563.03552, 579.5906526],
     },
     {
-      text: "Sparse triangular block Rectangular block Partitioning position (P0)",
-      rect: [328, 620, 830, 632],
+      text: "Rectangular block",
+      rect: [317.8932119, 493.9971153, 355.4965555, 499.2903283],
     },
     {
-      text: "Triangular piece Rectangular slice R1 R2 T1 T2 P0 P1 Rm Tm Pm-1 Pm=N",
-      rect: [328, 560, 830, 572],
+      text: "Sparse triangular block",
+      rect: [314.9804249, 514.4086109, 348.3445976, 525.445664],
+    },
+    {
+      text: "Dense triangular block",
+      rect: [365.3423873, 495.6795915, 399.7566737, 506.7166445],
+    },
+    {
+      text: "Partitioning position (P0)",
+      rect: [367.9067296, 510.172835, 392.7403666, 521.548246],
+    },
+    {
+      text: "(a) (b) (c) R1R2 T1 T2 P0 P1 Rm Tm Pm-1 Pm=N",
+      rect: [341.6073959, 477.6859511, 562.5071492, 511.2910183],
+    },
+    {
+      text: "Triangular piece Rectangular slice",
+      rect: [413.6730779, 501.979896, 476.5443851, 519.8985545],
     },
     {
       text: "Fig. 9: Partitioning lower triangular matrix. (a) Coarse-grained",
-      rect: [328, 500, 830, 512],
+      rect: [311.978, 460.8120784, 563.03552, 469.4496526],
     },
     {
-      text: "partitioning. (b) Fine-grained partitioning. (c) Final partitioning.",
-      rect: [328, 480, 830, 492],
+      text: "partitioning. (b) Fine-grained partitioning. (c) Final partition",
+      rect: [311.978, 448.8570784, 563.03552, 457.4946526],
     },
     {
-      text: "should group the elements with some similar features such that they can be",
-      rect: [328, 400, 830, 412],
+      text: "ing.",
+      rect: [311.978, 436.9020784, 327.2008528, 445.5396526],
+    },
+    {
+      text: "should group the elements with some similar features such that",
+      rect: [311.978, 402.1970784, 563.03552, 410.8346526],
+    },
+    {
+      text: "they can be scheduled together.",
+      rect: [311.978, 390.2420784, 440.595166, 398.8796526],
     },
   ] as const;
 
   assert.equal(
-    normalizeSinglePageReaderSelection(selectedLines),
-    "one should group the elements with some similar features such that they can be",
+    normalizeSinglePageReaderSelection(selectedLines, new Set([9])),
+    "one should group the elements with some similar features such that they can be scheduled together.",
   );
 });
 

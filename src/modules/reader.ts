@@ -322,8 +322,7 @@ function isForwardColumnWrap(
   minimumGap: number,
 ): boolean {
   return (
-    (next.rect[0] - previous.rect[0] > minimumGap ||
-      next.rect[0] >= previous.rect[2]) &&
+    next.rect[0] - previous.rect[0] > minimumGap &&
     next.rect[1] - previous.rect[3] > minimumGap
   );
 }
@@ -417,7 +416,7 @@ function matchExactLinePrefix(
   for (const line of lines) {
     const text = line.text.trim();
     if (!text) continue;
-    if (matchedLine) {
+    if (matchedLine && !value.startsWith(text, offset)) {
       const separator = /^\s+/u.exec(value.slice(offset));
       if (!separator) return undefined;
       offset += separator[0].length;
