@@ -124,3 +124,13 @@ test("marks invalid closed LaTeX visibly without exposing its delimiters", () =>
   assert.match(markup, /\\unknownCommand\{x\}/u);
   assert.doesNotMatch(markup, /\$\\unknownCommand/u);
 });
+
+test("renders Unicode primes from PDF selections as valid LaTeX", () => {
+  const markup = renderTranslationMarkup(
+    "静态选主元后的矩阵为 $A′ = PA$（不缩放）或 $A′ = S_rPAS_c$（带缩放）。",
+  );
+
+  assert.doesNotMatch(markup, /translation-display-math-error/u);
+  assert.equal(markup.match(/<math/gu)?.length, 2);
+  assert.match(markup, /<mo[^>]*>′<\/mo>/u);
+});

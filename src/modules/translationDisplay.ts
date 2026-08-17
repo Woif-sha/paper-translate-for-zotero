@@ -190,8 +190,9 @@ function isEscaped(value: string, position: number): boolean {
 }
 
 function renderMath(value: string, displayMode: boolean): string {
+  const latex = value.replace(/\u2032/gu, "'");
   try {
-    return katex.renderToString(value, {
+    return katex.renderToString(latex, {
       displayMode,
       output: "mathml",
       maxExpand: 1_000,
