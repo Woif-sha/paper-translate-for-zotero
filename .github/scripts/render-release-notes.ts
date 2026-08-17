@@ -46,7 +46,7 @@ export function renderReleaseNotes(
   ]);
   let result = template;
   for (const [placeholder, value] of replacements) {
-    result = result.replaceAll(placeholder, value);
+    result = result.replaceAll(placeholder, () => value);
   }
   const unresolved = result.match(/\{\{[A-Z_]+\}\}/gu);
   if (unresolved) {

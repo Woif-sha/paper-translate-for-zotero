@@ -65,3 +65,15 @@ test("rejects a missing or unstructured changelog section", () => {
     /level-3 sections/u,
   );
 });
+
+test("renders changelog dollar notation as literal release-note text", () => {
+  const result = renderReleaseNotes(
+    "## 更新内容\n\n{{CHANGELOG_ENTRY}}\n\n## 完整记录",
+    "## 1.4.7 - 2026-08-17\n\n### 修复\n\n- 修复 `$A′ = PA$` 的显示。\n",
+    "1.4.7",
+    "Woif-sha/paper-translate-for-zotero",
+  );
+
+  assert.equal(result.match(/^## 更新内容$/gmu)?.length, 1);
+  assert.match(result, /`\$A′ = PA\$`/u);
+});
