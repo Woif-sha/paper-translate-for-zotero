@@ -1524,6 +1524,124 @@ test("removes an ACM journal footer at the verified first-page boundary", () => 
   );
 });
 
+test("removes an ACM running header selected across a page boundary", () => {
+  const firstPageLine = {
+    text: "The third step is replaced with a",
+    rect: [55, 60, 558, 80],
+  } as const;
+  const nextPageHeader = [
+    { text: "36: 6", rect: [55, 744, 92, 759] },
+    {
+      text: "\u00b7 T. A. Davis and E. Palamadai Natarajan",
+      rect: [200, 744, 455, 759],
+    },
+  ] as const;
+  const nextPageLine = {
+    text: "simpler left-looking method that does not perform partial pivoting.",
+    rect: [55, 700, 558, 720],
+  } as const;
+  const nextPageText = [...nextPageHeader, nextPageLine]
+    .map(({ text }) => text)
+    .join(" ");
+  const annotation = {
+    text: `${firstPageLine.text} ${nextPageText}`,
+    position: {
+      pageIndex: 4,
+      rects: [firstPageLine.rect],
+      nextPageRects: [...nextPageHeader, nextPageLine].map(({ rect }) => rect),
+    },
+  };
+  const firstPageChars = [
+    {
+      c: "Algorithm 907: KLU, A Direct Sparse Solver for Circuit Simulation Problems",
+      inlineRect: [55, 744, 520, 759],
+      lineBreakAfter: true,
+    },
+    {
+      c: firstPageLine.text,
+      inlineRect: firstPageLine.rect,
+      lineBreakAfter: true,
+    },
+    {
+      c: "ACM Transactions on Mathematical Software, Vol. 37, No. 3, Article 36, Pub. date: September 2010.",
+      inlineRect: [110, 37, 565, 49],
+      lineBreakAfter: true,
+    },
+  ];
+  const nextPageChars = [
+    ...nextPageHeader,
+    nextPageLine,
+    {
+      text: "ACM Transactions on Mathematical Software, Vol. 37, No. 3, Article 36, Pub. date: September 2010.",
+      rect: [55, 37, 510, 49],
+    },
+  ].map(({ text, rect }) => ({
+    c: text,
+    inlineRect: rect,
+    lineBreakAfter: true,
+  }));
+  const reader = {
+    _internalReader: {
+      _lastView: {
+        _selectionRanges: [
+          {
+            pageIndex: 4,
+            anchorOffset: 1,
+            headOffset: 2,
+            text: firstPageLine.text,
+            position: { pageIndex: 4, rects: annotation.position.rects },
+          },
+          {
+            pageIndex: 5,
+            anchorOffset: 0,
+            headOffset: nextPageHeader.length + 1,
+            text: nextPageText,
+            position: {
+              pageIndex: 5,
+              rects: annotation.position.nextPageRects,
+            },
+          },
+        ],
+        _pdfPages: {
+          4: { chars: firstPageChars },
+          5: { chars: nextPageChars },
+        },
+      },
+    },
+  };
+
+  assert.equal(
+    normalizeReaderAnnotationSelection(reader, annotation),
+    `${firstPageLine.text} ${nextPageLine.text}`,
+  );
+});
+
+test("keeps a semantic heading at the top of the next page", () => {
+  const firstPageText = "The preceding discussion ends here.";
+  const nextPageLines = [
+    { text: "Implementation details", rect: [55, 744, 250, 759] },
+    {
+      text: "the implementation uses a sparse left-looking method.",
+      rect: [55, 700, 558, 720],
+    },
+  ] as const;
+  const nextPageText = nextPageLines.map(({ text }) => text).join(" ");
+
+  assert.equal(
+    normalizeReaderSelection(`${firstPageText} ${nextPageText}`, {
+      firstPageText,
+      firstPageLines: [{ text: firstPageText, rect: [55, 60, 558, 80] }],
+      nextPageText,
+      nextPageLines,
+      nextPageDocumentLines: [
+        ...nextPageLines,
+        { text: "Journal footer", rect: [55, 37, 250, 49] },
+      ],
+    }),
+    `${firstPageText} ${nextPageText}`,
+  );
+});
+
 test("removes structurally verified cross-page furniture without publisher text", () => {
   const firstPageText =
     "The factorization argument continues through Unrelated running footer";

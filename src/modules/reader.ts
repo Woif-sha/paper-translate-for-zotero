@@ -141,10 +141,11 @@ function removeVerifiedCrossPageArtifacts(
     ),
     layout.firstPageLines,
   );
-  const nextPageText = removeLeadingCrossPageObject(
+  const nextPageText = removeLeadingCrossPageArtifact(
     layout.nextPageText,
     layout.nextPageLines,
     layout.firstPageLines,
+    layout.nextPageDocumentLines,
   );
   return `${firstPageText} ${nextPageText}`;
 }
@@ -281,6 +282,81 @@ function isRotatedArxivMarginLabel(line: ReaderSelectionLine): boolean {
   return width > 0 && height > width * 3;
 }
 
+function removeLeadingCrossPageArtifact(
+  value: string,
+  lines: readonly ReaderSelectionLine[],
+  firstPageLines: readonly ReaderSelectionLine[] | undefined,
+  nextPageDocumentLines: readonly ReaderSelectionLine[] | undefined,
+): string {
+  const furnitureEnd = findLeadingCrossPageFurnitureEnd(
+    lines,
+    firstPageLines,
+    nextPageDocumentLines,
+  );
+  if (furnitureEnd >= 0) {
+    return removeExactLeadingLines(value, lines, furnitureEnd);
+  }
+  return removeLeadingCrossPageObject(value, lines, firstPageLines);
+}
+
+function findLeadingCrossPageFurnitureEnd(
+  lines: readonly ReaderSelectionLine[],
+  firstPageLines: readonly ReaderSelectionLine[] | undefined,
+  nextPageDocumentLines: readonly ReaderSelectionLine[] | undefined,
+): number {
+  const previous = firstPageLines?.findLast(({ text }) => text.trim());
+  if (!previous || !nextPageDocumentLines?.length || lines.length < 2) {
+    return -1;
+  }
+  for (let index = 0; index < lines.length - 1; index += 1) {
+    const upper = lines[index];
+    const lower = lines[index + 1];
+    const upperHeight = lineHeight(upper);
+    const lowerHeight = lineHeight(lower);
+    const minimumGap = Math.max(
+      MINIMUM_FLOAT_GAP,
+      Math.min(upperHeight, lowerHeight),
+    );
+    if (
+      !upperHeight ||
+      !lowerHeight ||
+      upper.rect[1] - lower.rect[3] < minimumGap ||
+      !lines
+        .slice(0, index + 1)
+        .every((line) => isPageTopLine(line, nextPageDocumentLines)) ||
+      !startsVerifiedCrossPageBodyBlock(
+        firstPageLines,
+        lines.slice(index + 1),
+      ) ||
+      !continuesSemanticText(previous.text, lower.text)
+    ) {
+      continue;
+    }
+    return index;
+  }
+  return -1;
+}
+
+function isPageTopLine(
+  candidate: ReaderSelectionLine,
+  pageLines: readonly ReaderSelectionLine[],
+): boolean {
+  const bounds = pageVerticalBounds(pageLines);
+  if (!bounds) return false;
+  const center = (candidate.rect[1] + candidate.rect[3]) / 2;
+  return center >= bounds.top - (bounds.top - bounds.bottom) * 0.12;
+}
+
+function continuesSemanticText(previous: string, next: string): boolean {
+  const previousText = previous.trim();
+  const nextText = next.trim();
+  return (
+    !!previousText &&
+    !/[.!?。！？](?:[\p{Pe}\p{Pf}"']*)\s*$/u.test(previousText) &&
+    /^\p{Ll}/u.test(nextText)
+  );
+}
+
 function removeLeadingCrossPageObject(
   value: string,
   lines: readonly ReaderSelectionLine[],
@@ -333,9 +409,17 @@ function removeLeadingCrossPageObject(
   }
   if (cutAfterLine < 0) return value;
 
+  return removeExactLeadingLines(value, lines, cutAfterLine);
+}
+
+function removeExactLeadingLines(
+  value: string,
+  lines: readonly ReaderSelectionLine[],
+  end: number,
+): string {
   const discardedPrefixEnd = matchExactLinePrefix(
     value,
-    lines.slice(0, cutAfterLine + 1),
+    lines.slice(0, end + 1),
   );
   if (
     discardedPrefixEnd === undefined ||
