@@ -47,7 +47,7 @@ test("parses streamed text and requires the explicit DONE marker", () => {
     [
       'data: {"choices":[{"delta":{"content":"译"}}]}',
       "",
-      'data: {"choices":[{"delta":{"content":"文"}}]}',
+      'data: {"choices":[{"delta":{"content":"文"},"finish_reason":"stop"}]}',
       "",
       "data: [DONE]",
       "",
@@ -170,7 +170,7 @@ test("finishes at DONE without waiting for the provider to close the stream", as
       controller.enqueue(
         encoder.encode(
           [
-            'data: {"choices":[{"delta":{"content":"译文"}}]}',
+            'data: {"choices":[{"delta":{"content":"译文"},"finish_reason":"stop"}]}',
             "",
             "data: [DONE]",
             "",

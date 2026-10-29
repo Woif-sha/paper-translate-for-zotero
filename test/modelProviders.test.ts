@@ -35,7 +35,7 @@ test("migrates the existing Codex preferences into the active Codex provider", (
     ],
   });
   assert.equal(migrated.activeModelId, "model-codex-gpt-5-4");
-  assert.equal(migrated.schemaVersion, 2);
+  assert.equal(migrated.schemaVersion, 3);
 });
 
 test("flattens multiple providers while preserving one explicit active model", () => {
@@ -224,13 +224,13 @@ test("upgrades the first saved provider name without changing user providers", (
 
   const upgraded = getModelProviderConfiguration();
 
-  assert.equal(upgraded.schemaVersion, 2);
+  assert.equal(upgraded.schemaVersion, 3);
   assert.deepEqual(
     upgraded.providers.map((provider) => provider.name),
     ["服务商 A", "我的服务商"],
   );
   assert.match(
     String(preferences.get(`${prefix}.paper.modelProviders`)),
-    /"schemaVersion":2/u,
+    /"schemaVersion":3/u,
   );
 });

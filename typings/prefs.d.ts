@@ -19,6 +19,7 @@ declare namespace _ZoteroTypes {
       "paper.codexEffort": string;
       "paper.modelProviders": string;
       "paper.activeModelId": string;
+      "paper.providerEditorDraft": string;
     };
   }
 }

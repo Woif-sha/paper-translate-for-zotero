@@ -1,3 +1,8 @@
+import {
+  normalizeApiSettings,
+  resolveApiEndpoint,
+  type ApiSettings,
+} from "./protocols";
 import { DEFAULT_CODEX_API_URL } from "../codex/legacyClient";
 import { getPref, setPref } from "../utils/prefs";
 
@@ -9,7 +14,7 @@ export type ProviderModel = {
   effort: string;
 };
 
-export type ModelProviderGroup = {
+export type ModelProviderGroup = ApiSettings & {
   id: string;
   name: string;
   authMode: ModelAuthMode;
@@ -19,20 +24,21 @@ export type ModelProviderGroup = {
 };
 
 export type ModelProviderConfiguration = {
-  schemaVersion: 2;
+  schemaVersion: 3;
   providers: ModelProviderGroup[];
   activeModelId: string;
 };
 
-export type RuntimeModel = ProviderModel & {
-  providerId: string;
-  providerName: string;
-  authMode: ModelAuthMode;
-  apiBase: string;
-  apiKey: string;
-  label: string;
-  active: boolean;
-};
+export type RuntimeModel = ProviderModel &
+  ApiSettings & {
+    providerId: string;
+    providerName: string;
+    authMode: ModelAuthMode;
+    apiBase: string;
+    apiKey: string;
+    label: string;
+    active: boolean;
+  };
 
 type LegacyModelConfiguration = {
   model: string;
@@ -41,7 +47,7 @@ type LegacyModelConfiguration = {
 
 const PROVIDERS_PREF = "paper.modelProviders";
 const ACTIVE_MODEL_PREF = "paper.activeModelId";
-const MODEL_PROVIDER_SCHEMA_VERSION = 2;
+const MODEL_PROVIDER_SCHEMA_VERSION = 3;
 const listeners = new Set<() => void>();
 
 export function migrateLegacyModelConfiguration(
@@ -117,6 +123,9 @@ export function validateProviderGroup(
   }
   return {
     id: requiredValue(provider.id, "Provider ID"),
+    ...(provider.authMode === "openai_compatible"
+      ? normalizeApiSettings(provider)
+      : { timeoutSeconds: normalizeApiSettings(provider).timeoutSeconds }),
     name: provider.name.trim(),
     authMode: provider.authMode,
     apiBase:
@@ -177,6 +186,7 @@ export function flattenRuntimeModels(
       .filter((entry) => entry.model.trim())
       .map((entry) => ({
         ...entry,
+        ...normalizeApiSettings(provider),
         providerId: provider.id,
         providerName: provider.name,
         authMode: provider.authMode,
@@ -199,6 +209,7 @@ export function resolveDraftRuntimeModel(
   const normalizedModel = normalized.models[0];
   return {
     ...normalizedModel,
+    ...normalizeApiSettings(normalized),
     providerId: normalized.id,
     providerName: normalized.name,
     authMode: normalized.authMode,
@@ -242,6 +253,13 @@ export function setModelProviderConfiguration(
   activeModelId: string,
 ): ModelProviderConfiguration {
   const configuration = validateProviderConfiguration(providers, activeModelId);
+  for (const provider of configuration.providers) {
+    if (provider.authMode === "openai_compatible")
+      resolveApiEndpoint(
+        provider.apiBase,
+        provider.protocol ?? "chat_completions",
+      );
+  }
   persistConfiguration(configuration);
   notifyListeners();
   return configuration;
@@ -287,7 +305,7 @@ function persistConfiguration(configuration: ModelProviderConfiguration): void {
 }
 
 function parseStoredConfiguration(value: unknown): {
-  schemaVersion: 1 | 2;
+  schemaVersion: 1 | 2 | 3;
   providers: ModelProviderGroup[];
 } {
   if (!value || typeof value !== "object") {
@@ -297,7 +315,11 @@ function parseStoredConfiguration(value: unknown): {
     schemaVersion?: unknown;
     providers?: unknown;
   };
-  if (stored.schemaVersion !== 1 && stored.schemaVersion !== 2) {
+  if (
+    stored.schemaVersion !== 1 &&
+    stored.schemaVersion !== 2 &&
+    stored.schemaVersion !== 3
+  ) {
     throw new Error(
       `不支持的模型服务商配置版本：${String(stored.schemaVersion)}`,
     );
@@ -317,6 +339,7 @@ function parseStoredConfiguration(value: unknown): {
       id: String(raw.id || ""),
       name: String(raw.name || ""),
       authMode: raw.authMode,
+      ...normalizeApiSettings(raw),
       apiBase: String(raw.apiBase || ""),
       apiKey: String(raw.apiKey || ""),
       models: Array.isArray(raw.models)
@@ -335,7 +358,7 @@ function parseStoredConfiguration(value: unknown): {
 }
 
 function migrateStoredProviderNames(configuration: {
-  schemaVersion: 1 | 2;
+  schemaVersion: 1 | 2 | 3;
   providers: ModelProviderGroup[];
 }): ModelProviderGroup[] {
   if (configuration.schemaVersion !== 1) return configuration.providers;

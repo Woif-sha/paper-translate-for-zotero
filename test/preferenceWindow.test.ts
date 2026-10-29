@@ -17,7 +17,7 @@ test("registers the exact plugin name and a correctly sized settings icon", asyn
 
   await registerPrefsWindow();
 
-  assert.equal(options.label, "paper-translate-for-zotero");
+  assert.equal(options.label, "Paper Translate for Zotero");
   assert.equal(options.id, "papertranslateforzotero-preferences");
   assert.match(options.image, /section-20\.png$/);
 });
@@ -72,9 +72,13 @@ test("keeps dynamic provider controls localized and compact", async () => {
       ),
     ),
   );
-  const dynamicKeys = [...script.matchAll(/getString\("(pref-[^"]+)"\)/gu)].map(
-    (match) => match[1],
+  const pickerScript = await readFile(
+    new URL("../src/modules/modelPicker.ts", import.meta.url),
+    "utf8",
   );
+  const dynamicKeys = [
+    ...(script + pickerScript).matchAll(/getString\("(pref-[^"]+)"\)/gu),
+  ].map((match) => match[1]);
 
   assert.ok(dynamicKeys.length > 0);
   for (const addonLocale of addonLocales) {
@@ -86,5 +90,4 @@ test("keeps dynamic provider controls localized and compact", async () => {
   assert.match(script, /nextProviderName/u);
   assert.match(addonLocales[0], /^pref-provider-save\s*=\s*保存$/mu);
   assert.match(script, /getString\("pref-codex-test"\)/u);
-  assert.match(script, /row\.append\(select, test, remove\)/u);
 });

@@ -3,41 +3,88 @@
 </linkset>
 <vbox
   id="zotero-prefpane-__addonRef__"
+  class="pt-provider-preferences"
   onload="Zotero.__addonInstance__.hooks.onPrefsLoad(event)"
 >
-  <groupbox>
-    <label><html:h2 data-l10n-id="pref-translation"></html:h2></label>
-    <checkbox
-      data-l10n-id="pref-enable-auto"
-      native="true"
-      preference="__prefsPrefix__.enableAuto"
-    />
-    <html:label
-      data-l10n-id="pref-source-language"
-      for="__addonRef__-sourceLanguage"
-    ></html:label>
-    <html:input id="__addonRef__-sourceLanguage" type="text"></html:input>
-    <html:label
-      data-l10n-id="pref-target-language"
-      for="__addonRef__-targetLanguage"
-    ></html:label>
-    <html:input
-      id="__addonRef__-targetLanguage"
-      type="text"
-      value="zh-CN"
-      readonly="readonly"
-      disabled="disabled"
-      tabindex="-1"
-    ></html:input>
-  </groupbox>
-  <groupbox>
-    <label><html:h2 data-l10n-id="pref-backend"></html:h2></label>
-    <html:div id="__addonRef__-model-providers"></html:div>
+  <html:div
+    class="pt-provider-tabs"
+    role="tablist"
+    data-l10n-id="pref-settings-tabs"
+  >
     <html:button
-      id="__addonRef__-add-provider"
-      type="button"
-      data-l10n-id="pref-provider-add"
-      style="margin-top: 10px; align-self: flex-start"
+      class="pt-provider-tab"
+      id="__addonRef__-providers-tab"
+      role="tab"
+      aria-selected="true"
+      aria-controls="__addonRef__-providers-panel"
+      tabindex="0"
+      data-l10n-id="pref-backend"
     ></html:button>
-  </groupbox>
+    <html:button
+      class="pt-provider-tab"
+      id="__addonRef__-translation-tab"
+      role="tab"
+      aria-selected="false"
+      aria-controls="__addonRef__-translation-panel"
+      tabindex="-1"
+      data-l10n-id="pref-translation"
+    ></html:button>
+  </html:div>
+  <vbox
+    class="pt-preference-panel"
+    id="__addonRef__-providers-panel"
+    role="tabpanel"
+    aria-labelledby="__addonRef__-providers-tab"
+  >
+    <groupbox class="pt-provider-group">
+      <html:p
+        class="pt-provider-description"
+        data-l10n-id="pref-provider-description"
+      ></html:p>
+      <html:div
+        class="pt-provider-group-label"
+        data-l10n-id="pref-provider-group-label"
+      ></html:div>
+      <html:div id="__addonRef__-model-providers"></html:div>
+      <html:button
+        id="__addonRef__-add-provider"
+        type="button"
+        data-l10n-id="pref-provider-add"
+        class="pt-provider-add"
+      ></html:button>
+    </groupbox>
+  </vbox>
+  <vbox
+    class="pt-preference-panel"
+    id="__addonRef__-translation-panel"
+    role="tabpanel"
+    aria-labelledby="__addonRef__-translation-tab"
+    hidden="true"
+  >
+    <groupbox>
+      <label><html:h2 data-l10n-id="pref-translation"></html:h2></label>
+      <checkbox
+        data-l10n-id="pref-enable-auto"
+        native="true"
+        preference="__prefsPrefix__.enableAuto"
+      />
+      <html:label
+        data-l10n-id="pref-source-language"
+        for="__addonRef__-sourceLanguage"
+      ></html:label>
+      <html:input id="__addonRef__-sourceLanguage" type="text"></html:input>
+      <html:label
+        data-l10n-id="pref-target-language"
+        for="__addonRef__-targetLanguage"
+      ></html:label>
+      <html:input
+        id="__addonRef__-targetLanguage"
+        type="text"
+        value="zh-CN"
+        readonly="readonly"
+        disabled="disabled"
+        tabindex="-1"
+      ></html:input>
+    </groupbox>
+  </vbox>
 </vbox>

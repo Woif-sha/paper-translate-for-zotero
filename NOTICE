@@ -32,15 +32,33 @@ This project contains and adapts code from:
    adapt the design boundaries in src/utils/modelProviders.ts,
    src/utils/providerTransport.ts, src/utils/llmClient.ts, and
    src/modules/preferenceScript.ts at the pinned revision. This project keeps
-   only Codex Auth and generic OpenAI Compatible modes and does not copy the
-   upstream provider-specific protocol, preset, capability, reasoning, token,
-   local-model, web-chat, Copilot, Anthropic, Gemini, or App Server branches.
+   only Codex Auth and generic OpenAI Compatible modes in its initial API-key
+   implementation; the original adaptation did not copy upstream provider-
+   specific protocols or presets. Local-model, WebChat, Copilot, Gemini and
+   App Server runtime branches remain outside this project.
    Version 1.2.0 also consults the Responses input_image conversion and data
    URL handling in src/utils/llmClient.ts, Reader document discovery in
    src/modules/contextPanel/readerSelection.ts, page-location conventions in
    src/modules/contextPanel/livePdfSelectionLocator.ts, MinerU figure metadata
    handling in src/modules/contextPanel/mineruFigureBlocks.ts, and the overlay
    interaction pattern in src/modules/contextPanel/screenshot.ts.
+
+   Version 1.5.0 additionally consults revision
+   7e26a134fe0808070d63df49a25ca9ba3bf031c9: src/utils/modelProviders.ts,
+   src/utils/providerProtocol.ts, src/utils/providerTransport.ts,
+   src/utils/apiHelpers.ts, src/utils/llmClient.ts and
+   src/modules/preferenceScript.ts. The independently implemented adaptation
+   adds explicit public Responses and Anthropic Messages transports, URL
+   presets, protocol-specific image conversion and separate text/image tests.
+   It does not reuse model-name inference, automatic protocol fallback,
+   conversation state, file upload or provider-specific Agent runtimes.
+
+   Version 1.5.2 adapts the collapsible provider-row interaction and layout
+   from src/modules/preferenceScript.ts at the same reviewed revision
+   7e26a134fe0808070d63df49a25ca9ba3bf031c9. It includes the unmodified
+   addon/content/icons/providers/openai.svg, anthropic.svg and deepseek.svg
+   assets from that revision. This adaptation does not share upstream runtime
+   objects, provider preferences or credentials.
 
    Only the Reader interaction and coordinate-mapping patterns are reused for
    OCR. This project does not reuse screenshot.ts captureRegion, PDF canvas
