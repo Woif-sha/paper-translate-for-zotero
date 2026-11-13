@@ -1,9 +1,15 @@
+import { ApiStreamParser } from "./apiStreamParser";
+import {
+  normalizeApiSettings,
+  resolveApiEndpoint,
+  type ApiSettings,
+} from "./protocols";
 import type {
   LegacyCodexImageInput,
   LegacyCodexResult,
 } from "../codex/legacyClient";
 
-export type OpenAICompatibleRequest = {
+export type OpenAICompatibleRequest = ApiSettings & {
   apiBase: string;
   apiKey: string;
   model: string;
@@ -23,111 +29,70 @@ type StreamLimits = Pick<OpenAICompatibleRequest, "maxOutputCharacters">;
 
 const ERROR_RESPONSE_MAX_BYTES = 64 * 1024;
 
-export class OpenAICompatibleStreamParser {
-  private buffer = "";
-  private text = "";
-  private completed = false;
-
+export class OpenAICompatibleStreamParser extends ApiStreamParser {
   constructor(
-    private readonly onDelta?: (delta: string, accumulated: string) => void,
-    private readonly limits: StreamLimits = {},
-  ) {}
-
-  get isComplete(): boolean {
-    return this.completed;
-  }
-
-  feed(chunk: string): void {
-    this.buffer += chunk;
-    let boundary = findSseFrameBoundary(this.buffer);
-    while (boundary) {
-      this.parseFrame(this.buffer.slice(0, boundary.index));
-      this.buffer = this.buffer.slice(boundary.index + boundary.length);
-      boundary = findSseFrameBoundary(this.buffer);
-    }
-  }
-
-  finish(): LegacyCodexResult {
-    if (this.buffer.trim()) this.parseFrame(this.buffer);
-    this.buffer = "";
-    if (!this.completed) {
-      throw new Error(
-        "OpenAI Compatible streaming response ended without [DONE]",
-      );
-    }
-    if (!this.text.trim()) {
-      throw new Error("OpenAI Compatible response contained no assistant text");
-    }
-    return {
-      text: this.text,
-      usedWebSearch: false,
-      webSearchCalls: 0,
-      citedUrls: [],
-    };
-  }
-
-  private parseFrame(frame: string): void {
-    const payload = frame
-      .split(/\r\n|\r|\n/u)
-      .filter((line) => line.startsWith("data:"))
-      .map((line) => line.slice(5).trimStart())
-      .join("\n");
-    if (!payload) return;
-    if (payload === "[DONE]") {
-      this.completed = true;
-      return;
-    }
-    let event: Record<string, any>;
-    try {
-      event = JSON.parse(payload) as Record<string, any>;
-    } catch (error) {
-      throw new Error(`Invalid OpenAI Compatible SSE JSON: ${String(error)}`);
-    }
-    if (event.error) {
-      throw new Error(
-        `OpenAI Compatible endpoint error: ${JSON.stringify(event.error)}`,
-      );
-    }
-    const delta = event.choices?.[0]?.delta?.content;
-    if (delta === undefined || delta === null || delta === "") return;
-    if (typeof delta !== "string") {
-      throw new Error("OpenAI Compatible output delta is not text");
-    }
-    const next = this.text + delta;
-    if (
-      this.limits.maxOutputCharacters &&
-      next.length > this.limits.maxOutputCharacters
-    ) {
-      throw new Error(
-        `OpenAI Compatible visible output exceeded the ${this.limits.maxOutputCharacters}-character limit`,
-      );
-    }
-    this.text = next;
-    this.onDelta?.(delta, this.text);
+    onDelta?: (delta: string, accumulated: string) => void,
+    limits: StreamLimits = {},
+  ) {
+    super("chat_completions", onDelta, limits.maxOutputCharacters);
   }
 }
 
 export function resolveChatCompletionsEndpoint(apiBase: string): string {
-  const value = apiBase.trim().replace(/\/+$/u, "");
-  let parsed: URL;
-  try {
-    parsed = new URL(value);
-  } catch (error) {
-    throw new Error(`OpenAI Compatible API Base is invalid: ${String(error)}`);
-  }
-  if (parsed.protocol !== "https:") {
-    throw new Error("OpenAI Compatible API Base must use HTTPS");
-  }
-  if (/\/chat\/completions$/iu.test(parsed.pathname)) return value;
-  return `${value}/chat/completions`;
+  return resolveApiEndpoint(apiBase, "chat_completions");
 }
 
 export function buildOpenAICompatiblePayload(
   params: Pick<
     OpenAICompatibleRequest,
-    "model" | "instructions" | "prompt" | "image"
+    "model" | "instructions" | "prompt" | "image" | "protocol" | "maxTokens"
   >,
 ): Record<string, unknown> {
+  if (params.protocol === "responses") {
+    return {
+      model: params.model.trim(),
+      instructions: params.instructions,
+      input: [
+        {
+          role: "user",
+          content: [
+            { type: "input_text", text: params.prompt },
+            ...(params.image
+              ? [
+                  {
+                    type: "input_image",
+                    image_url: params.image.dataUrl,
+                    detail: params.image.detail,
+                  },
+                ]
+              : []),
+          ],
+        },
+      ],
+      stream: true,
+      store: false,
+    };
+  }
+  if (params.protocol === "anthropic_messages") {
+    const content: Record<string, unknown>[] = [
+      { type: "text", text: params.prompt },
+    ];
+    if (params.image) {
+      const match = /^data:([^;]+);base64,(.+)$/u.exec(params.image.dataUrl);
+      if (!match) throw new Error("Invalid image data URL");
+      content.push({
+        type: "image",
+        source: { type: "base64", media_type: match[1], data: match[2] },
+      });
+    }
+    return {
+      model: params.model.trim(),
+      system: params.instructions,
+      messages: [{ role: "user", content }],
+      max_tokens: params.maxTokens ?? 8192,
+      stream: true,
+    };
+  }
   const userContent = params.image
     ? [
         { type: "text", text: params.prompt },
@@ -153,8 +118,8 @@ export function buildOpenAICompatiblePayload(
 export async function runOpenAICompatibleRequest(
   params: OpenAICompatibleRequest,
 ): Promise<LegacyCodexResult> {
-  validateRequest(params);
   try {
+    validateRequest(params);
     return await runValidatedRequest(params);
   } catch (error) {
     throw redactError(error, params.apiKey);
@@ -166,17 +131,15 @@ async function runValidatedRequest(
 ): Promise<LegacyCodexResult> {
   if (params.webSearch || params.requireWebSearch) {
     throw new Error(
-      "OpenAI Compatible Chat Completions does not define web search",
+      "OpenAI Compatible Chat Completions does not define web search; API-key web search is not implemented for the selected protocol / 当前 API 协议尚未实现联网检索",
     );
   }
   const response = await resolveFetch(params.fetchFn)(
-    resolveChatCompletionsEndpoint(params.apiBase),
+    resolveApiEndpoint(params.apiBase, params.protocol ?? "chat_completions"),
     {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${params.apiKey.trim()}`,
-      },
+      redirect: "error",
+      headers: buildApiHeaders(params),
       body: JSON.stringify(buildOpenAICompatiblePayload(params)),
       signal: params.signal,
     },
@@ -195,9 +158,11 @@ async function runValidatedRequest(
   if (!response.body) {
     throw new Error("OpenAI Compatible response has no streaming body");
   }
-  const parser = new OpenAICompatibleStreamParser(params.onDelta, {
-    maxOutputCharacters: params.maxOutputCharacters,
-  });
+  const parser = new ApiStreamParser(
+    params.protocol ?? "chat_completions",
+    params.onDelta,
+    params.maxOutputCharacters,
+  );
   const reader = response.body.getReader();
   const decoder = new TextDecoder("utf-8", { fatal: true });
   let responseBytes = 0;
@@ -249,7 +214,8 @@ export async function testOpenAICompatibleConnection(params: {
 }
 
 function validateRequest(params: OpenAICompatibleRequest): void {
-  resolveChatCompletionsEndpoint(params.apiBase);
+  normalizeApiSettings(params);
+  resolveApiEndpoint(params.apiBase, params.protocol ?? "chat_completions");
   if (!params.apiKey.trim()) {
     throw new Error("OpenAI Compatible API Key is required");
   }
@@ -337,7 +303,7 @@ function endpointRejectsImageInput(status: number, detail: string): boolean {
   if (![400, 415, 422].includes(status)) return false;
   const normalized = detail.toLowerCase();
   const mentionsImageInput =
-    /\bimage_url\b|image input|image content|multimodal input|vision input/u.test(
+    /\bimage_url\b|image input|image content|multimodal input|vision input|image.*not supported/u.test(
       normalized,
     );
   const rejectsCapability =
@@ -347,7 +313,7 @@ function endpointRejectsImageInput(status: number, detail: string): boolean {
   return mentionsImageInput && rejectsCapability;
 }
 
-function redactError(error: unknown, secret: string): unknown {
+export function redactError(error: unknown, secret: string): unknown {
   if (error instanceof AggregateError) {
     return new AggregateError(
       Array.from(error.errors, (entry) => redactError(entry, secret)),
@@ -371,21 +337,20 @@ function redactError(error: unknown, secret: string): unknown {
   return redactSecret(String(error), secret);
 }
 
-function findSseFrameBoundary(
-  value: string,
-): { index: number; length: number } | null {
-  for (let index = 0; index < value.length; index += 1) {
-    const first = lineEndingLength(value, index);
-    if (!first) continue;
-    const second = lineEndingLength(value, index + first);
-    if (second) return { index, length: first + second };
-    index += first - 1;
-  }
-  return null;
-}
-
-function lineEndingLength(value: string, index: number): number {
-  if (value[index] === "\n") return 1;
-  if (value[index] !== "\r") return 0;
-  return value[index + 1] === "\n" ? 2 : 1;
+export function buildApiHeaders(
+  params: Pick<
+    OpenAICompatibleRequest,
+    "apiKey" | "protocol" | "anthropicVersion" | "workspaceId"
+  >,
+): Record<string, string> {
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+  };
+  if (params.protocol === "anthropic_messages") {
+    headers["x-api-key"] = params.apiKey.trim();
+    headers["anthropic-version"] = params.anthropicVersion || "2023-06-01";
+  } else headers.Authorization = `Bearer ${params.apiKey.trim()}`;
+  if (params.workspaceId?.trim())
+    headers["anthropic-workspace-id"] = params.workspaceId.trim();
+  return headers;
 }

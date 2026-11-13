@@ -1,6 +1,6 @@
 import {
   flattenRuntimeModels,
-  validateProviderConfiguration,
+  validateProviderConfigurationForSave,
   type ModelProviderConfiguration,
   type ModelProviderGroup,
   type RuntimeModel,
@@ -51,7 +51,10 @@ export function saveProviderConfiguration(
   dependencies: ModelSelectionDependencies,
 ): ModelProviderConfiguration {
   const current = dependencies.getConfiguration();
-  const validated = validateProviderConfiguration(providers, activeModelId);
+  const validated = validateProviderConfigurationForSave(
+    providers,
+    activeModelId,
+  );
   const previousActive = requireRuntimeModel(current, current.activeModelId);
   const nextActive = requireRuntimeModel(validated, validated.activeModelId);
   if (
@@ -82,6 +85,11 @@ function runtimeConfigurationKey(model: RuntimeModel): string {
     id: model.id,
     providerId: model.providerId,
     authMode: model.authMode,
+    protocol: model.protocol ?? "chat_completions",
+    workspaceId: model.workspaceId,
+    anthropicVersion: model.anthropicVersion,
+    maxTokens: model.maxTokens,
+    timeoutSeconds: model.timeoutSeconds,
     apiBase: model.apiBase,
     apiKey: model.apiKey,
     model: model.model,

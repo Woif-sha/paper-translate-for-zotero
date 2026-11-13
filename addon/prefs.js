@@ -13,3 +13,4 @@ pref("__prefsPrefix__.paper.codexModel", "gpt-5.4");
 pref("__prefsPrefix__.paper.codexEffort", "medium");
 pref("__prefsPrefix__.paper.modelProviders", "");
 pref("__prefsPrefix__.paper.activeModelId", "");
+pref("__prefsPrefix__.paper.providerEditorDraft", "");

@@ -1,15 +1,13 @@
 import {
   CodexLoginRequiredError,
   runLegacyCodexRequest,
-  testLegacyCodexConnection,
   type LegacyCodexRequest,
   type LegacyCodexResult,
 } from "../codex/legacyClient";
-import {
-  runOpenAICompatibleRequest,
-  testOpenAICompatibleConnection,
-} from "./openAICompatibleClient";
+import { runOpenAICompatibleRequest } from "./openAICompatibleClient";
 import { getActiveRuntimeModel, type RuntimeModel } from "./providers";
+import { normalizeApiSettings } from "./protocols";
+import { withRequestDeadline } from "./requestLifetime";
 
 export type { RuntimeModel } from "./providers";
 
@@ -31,6 +29,9 @@ const defaultTransports: ModelTransports = {
 };
 
 export function modelErrorMessage(error: unknown): string {
+  if (error instanceof AggregateError) {
+    return `${error.message}: ${Array.from(error.errors, modelErrorMessage).join("; ")}`;
+  }
   return error instanceof CodexLoginRequiredError
     ? error.message
     : String(error);
@@ -45,6 +46,32 @@ export async function runModelRequest(
   model: RuntimeModel = getActiveModelSnapshot(),
   transports: ModelTransports = defaultTransports,
 ): Promise<LegacyCodexResult> {
+  const settings = normalizeApiSettings(model);
+  return withRequestDeadline(
+    (signal) =>
+      dispatchModelRequest(
+        {
+          ...request,
+          signal,
+          onDelta: request.onDelta
+            ? (delta, accumulated) => {
+                if (!signal.aborted) request.onDelta?.(delta, accumulated);
+              }
+            : undefined,
+        },
+        model,
+        transports,
+      ),
+    settings.timeoutSeconds * 1000,
+    request.signal,
+  );
+}
+
+async function dispatchModelRequest(
+  request: ModelRequest,
+  model: RuntimeModel,
+  transports: ModelTransports,
+): Promise<LegacyCodexResult> {
   if (model.authMode === "codex_auth") {
     return transports.codex({
       ...request,
@@ -58,6 +85,7 @@ export async function runModelRequest(
     apiBase: model.apiBase,
     apiKey: model.apiKey,
     model: model.model,
+    ...normalizeApiSettings(model),
   });
 }
 
@@ -65,20 +93,21 @@ export async function testModelConnection(
   model: RuntimeModel,
   signal?: AbortSignal,
 ): Promise<string> {
-  if (model.authMode === "codex_auth") {
-    return testLegacyCodexConnection({
-      apiUrl: model.apiBase,
-      model: model.model,
-      effort: model.effort,
+  const result = await runModelRequest(
+    {
+      instructions: "Reply with exactly OK.",
+      prompt: "Say OK",
       signal,
-    });
-  }
-  return testOpenAICompatibleConnection({
-    apiBase: model.apiBase,
-    apiKey: model.apiKey,
-    model: model.model,
-    signal,
-  });
+      maxOutputCharacters: 128,
+      maxResponseBytes: 64_000,
+    },
+    { ...model, timeoutSeconds: 30 },
+  );
+  if (result.text.trim() !== "OK")
+    throw new Error(
+      "Text test returned an unexpected reply / 文本测试返回内容不符合预期",
+    );
+  return result.text.trim();
 }
 
 export function modelCacheIdentity(model: RuntimeModel): string {
@@ -88,5 +117,8 @@ export function modelCacheIdentity(model: RuntimeModel): string {
     model.id,
     model.model,
     model.apiBase,
+    model.protocol ?? "chat_completions",
+    model.workspaceId ?? "",
+    model.anthropicVersion ?? "",
   ].join(":");
 }

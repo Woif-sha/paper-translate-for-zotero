@@ -96,12 +96,20 @@ export class CodexResponsesStreamParser {
     private readonly limits: CodexStreamLimits = {},
   ) {}
 
+  get isComplete(): boolean {
+    return this.completed;
+  }
+
   feed(chunk: string): void {
     this.buffer += chunk;
     let boundary = findSseFrameBoundary(this.buffer);
     while (boundary) {
       this.parseFrame(this.buffer.slice(0, boundary.index));
       this.buffer = this.buffer.slice(boundary.index + boundary.length);
+      if (this.completed) {
+        this.buffer = "";
+        return;
+      }
       boundary = findSseFrameBoundary(this.buffer);
     }
   }
@@ -131,8 +139,7 @@ export class CodexResponsesStreamParser {
       .join("\n");
     if (!payload) return;
     if (payload === "[DONE]") {
-      this.completed = true;
-      return;
+      throw new Error("Codex response ended without response.completed");
     }
     let event: Record<string, any>;
     try {
@@ -299,6 +306,10 @@ export async function runLegacyCodexRequest(
         );
       }
       parser.feed(decoder.decode(value, { stream: true }));
+      if (parser.isComplete) {
+        await reader.cancel();
+        break;
+      }
     }
     parser.feed(decoder.decode());
   } catch (error) {

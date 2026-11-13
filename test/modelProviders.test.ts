@@ -35,7 +35,7 @@ test("migrates the existing Codex preferences into the active Codex provider", (
     ],
   });
   assert.equal(migrated.activeModelId, "model-codex-gpt-5-4");
-  assert.equal(migrated.schemaVersion, 2);
+  assert.equal(migrated.schemaVersion, 3);
 });
 
 test("flattens multiple providers while preserving one explicit active model", () => {
@@ -224,13 +224,60 @@ test("upgrades the first saved provider name without changing user providers", (
 
   const upgraded = getModelProviderConfiguration();
 
-  assert.equal(upgraded.schemaVersion, 2);
+  assert.equal(upgraded.schemaVersion, 3);
   assert.deepEqual(
     upgraded.providers.map((provider) => provider.name),
     ["服务商 A", "我的服务商"],
   );
   assert.match(
     String(preferences.get(`${prefix}.paper.modelProviders`)),
-    /"schemaVersion":2/u,
+    /"schemaVersion":3/u,
   );
+});
+
+test("keeps a conflicting legacy endpoint readable but rejects saving it", () => {
+  const preferences = new Map<string, unknown>();
+  const prefix = "extensions.zotero.PaperTranslateForZotero";
+  const provider: ModelProviderGroup = {
+    id: "provider-api",
+    name: "API",
+    authMode: "openai_compatible",
+    apiBase: "https://api.example.com/v1/responses",
+    apiKey: "fake-preserved-key",
+    models: [{ id: "model-api", model: "example-model", effort: "" }],
+  };
+  preferences.set(
+    `${prefix}.paper.modelProviders`,
+    JSON.stringify({ schemaVersion: 2, providers: [provider] }),
+  );
+  preferences.set(`${prefix}.paper.activeModelId`, "model-api");
+  (globalThis as any).Zotero = {
+    Prefs: {
+      get(key: string) {
+        return preferences.get(key);
+      },
+      set(key: string, value: unknown) {
+        preferences.set(key, value);
+      },
+    },
+  };
+
+  const migrated = getModelProviderConfiguration();
+
+  assert.equal(migrated.schemaVersion, 3);
+  assert.equal(migrated.activeModelId, "model-api");
+  assert.equal(migrated.providers[0].apiBase, provider.apiBase);
+  assert.equal(migrated.providers[0].apiKey, provider.apiKey);
+  assert.deepEqual(migrated.providers[0].models, provider.models);
+  assert.equal(migrated.providers[0].protocol, "chat_completions");
+  assert.equal(migrated.providers[0].presetId, "custom");
+  assert.deepEqual(getModelProviderConfiguration(), migrated);
+  const beforeSave = [...preferences];
+
+  assert.throws(
+    () =>
+      setModelProviderConfiguration(migrated.providers, migrated.activeModelId),
+    /API address conflicts with the selected protocol/u,
+  );
+  assert.deepEqual([...preferences], beforeSave);
 });

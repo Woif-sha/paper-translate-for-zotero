@@ -169,6 +169,8 @@ async function translateWithModel(
       instructions: TRANSLATION_DEVELOPER_INSTRUCTIONS,
       prompt,
       signal,
+      maxOutputCharacters: 64_000,
+      maxResponseBytes: 4_000_000,
       onDelta: (_delta, accumulated) =>
         onUpdate(formatTranslationLayout(source, accumulated)),
     },

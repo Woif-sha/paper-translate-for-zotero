@@ -14,7 +14,7 @@ function configuration(
   activeModelId = "model-codex",
 ): ModelProviderConfiguration {
   return {
-    schemaVersion: 2,
+    schemaVersion: 3,
     activeModelId,
     providers: [
       {
@@ -77,7 +77,7 @@ function dependencies(current: ModelProviderConfiguration): {
       setConfiguration(providers, activeModelId) {
         calls.push(`save:${activeModelId}`);
         return {
-          schemaVersion: 2,
+          schemaVersion: 3,
           providers,
           activeModelId,
         };
@@ -117,4 +117,43 @@ test("saving a changed active model configuration cancels before persistence", (
   );
 
   assert.deepEqual(harness.calls, ["cancel", "save:model-api"]);
+});
+
+test("rejects an active provider endpoint conflict before cancellation or persistence", () => {
+  const current = configuration("model-api");
+  const harness = dependencies(current);
+  const changed = configuration("model-api");
+  changed.providers[1].protocol = "chat_completions";
+  changed.providers[1].apiBase = "https://api.example.com/v1/responses";
+
+  assert.throws(
+    () =>
+      saveProviderConfiguration(
+        changed.providers,
+        changed.activeModelId,
+        harness.value,
+      ),
+    /API address conflicts with the selected protocol/u,
+  );
+  assert.deepEqual(harness.calls, []);
+});
+
+test("rejects an inactive provider endpoint conflict before cancellation or persistence", () => {
+  const current = configuration();
+  const harness = dependencies(current);
+  const changed = configuration();
+  changed.providers[0].models[0].effort = "high";
+  changed.providers[1].protocol = "chat_completions";
+  changed.providers[1].apiBase = "https://api.example.com/v1/responses";
+
+  assert.throws(
+    () =>
+      saveProviderConfiguration(
+        changed.providers,
+        changed.activeModelId,
+        harness.value,
+      ),
+    /API address conflicts with the selected protocol/u,
+  );
+  assert.deepEqual(harness.calls, []);
 });
