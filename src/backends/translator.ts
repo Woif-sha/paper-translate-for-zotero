@@ -15,24 +15,34 @@ import {
   runModelRequest,
   type RuntimeModel,
 } from "../models/runtime";
-import {
-  monitorReaderSidebarLearning,
-  synchronizeReaderSidebarContext,
-} from "../modules/sidebar";
-
 type PaperLearningScheduleDependencies = {
-  readAttemptId(
-    context: Parameters<typeof readPreparationRecord>[0],
-  ): Promise<number>;
-  continueLearning(
-    context: Parameters<typeof continuePaperLearning>[0],
-  ): Promise<void>;
-  monitor(
-    context: Parameters<typeof monitorReaderSidebarLearning>[0],
+  readAttemptId(context: ValidatedPaperContext): Promise<number>;
+  continueLearning(context: ValidatedPaperContext): Promise<void>;
+  monitor?(
+    context: ValidatedPaperContext,
     learning: Promise<void>,
     attemptId: number,
   ): void;
   report(error: unknown): void;
+};
+
+export type PaperTranslationObserver = {
+  contextPrepared(context: ValidatedPaperContext): void;
+  learningStarted(
+    context: ValidatedPaperContext,
+    learning: Promise<void>,
+    attemptId: number,
+  ): void;
+};
+
+const paperLearningDependencies: PaperLearningScheduleDependencies = {
+  async readAttemptId(context) {
+    return (await readPreparationRecord(context)).attemptId;
+  },
+  continueLearning: continuePaperLearning,
+  report(error) {
+    Zotero.logError(error instanceof Error ? error : new Error(String(error)));
+  },
 };
 
 type TranslationRequestParams = {
@@ -44,7 +54,6 @@ type TranslationRequestParams = {
 
 type TranslationRequestDependencies = {
   prepareContext: typeof preparePaperContext;
-  synchronizeContext: typeof synchronizeReaderSidebarContext;
 };
 
 type ResolvedTranslationRequest = {
@@ -67,13 +76,16 @@ export function cancelActiveTranslation(attachmentItemID?: number): void {
   activeTranslation = undefined;
 }
 
-export async function translateWithPaperContext(params: {
-  attachmentItemID: number;
-  sourceLanguage: string;
-  targetLanguage: string;
-  input: string;
-  onUpdate(text: string): void;
-}): Promise<string> {
+export async function translateWithPaperContext(
+  params: {
+    attachmentItemID: number;
+    sourceLanguage: string;
+    targetLanguage: string;
+    input: string;
+    onUpdate(text: string): void;
+  },
+  observer?: PaperTranslationObserver,
+): Promise<string> {
   activeTranslation?.controller.abort();
   const controller = new AbortController();
   activeTranslation = {
@@ -83,6 +95,7 @@ export async function translateWithPaperContext(params: {
   const model = getActiveModelSnapshot();
   try {
     const request = await resolveTranslationRequest(params);
+    if (request.context) observer?.contextPrepared(request.context);
     const translation = await translateWithModel(
       request.prompt,
       request.input,
@@ -90,7 +103,12 @@ export async function translateWithPaperContext(params: {
       controller.signal,
       params.onUpdate,
     );
-    if (request.context) schedulePaperLearningAfterTranslation(request.context);
+    if (request.context) {
+      schedulePaperLearningAfterTranslation(request.context, {
+        ...paperLearningDependencies,
+        monitor: observer?.learningStarted,
+      });
+    }
     return translation;
   } finally {
     if (activeTranslation?.controller === controller)
@@ -102,7 +120,6 @@ export async function resolveTranslationRequest(
   params: TranslationRequestParams,
   dependencies: TranslationRequestDependencies = {
     prepareContext: preparePaperContext,
-    synchronizeContext: synchronizeReaderSidebarContext,
   },
 ): Promise<ResolvedTranslationRequest> {
   let context: ValidatedPaperContext;
@@ -119,7 +136,6 @@ export async function resolveTranslationRequest(
     };
   }
 
-  dependencies.synchronizeContext(context);
   const input = context.alignedQuery || params.input;
   return {
     context,
@@ -134,25 +150,18 @@ export async function resolveTranslationRequest(
 }
 
 export function schedulePaperLearningAfterTranslation(
-  context: Parameters<typeof readPreparationRecord>[0],
-  dependencies: PaperLearningScheduleDependencies = {
-    async readAttemptId(value) {
-      return (await readPreparationRecord(value)).attemptId;
-    },
-    continueLearning: continuePaperLearning,
-    monitor: monitorReaderSidebarLearning,
-    report(error) {
-      Zotero.logError(
-        error instanceof Error ? error : new Error(String(error)),
-      );
-    },
-  },
+  context: ValidatedPaperContext,
+  dependencies: PaperLearningScheduleDependencies = paperLearningDependencies,
 ): void {
   void Promise.resolve()
     .then(async () => {
       const attemptId = await dependencies.readAttemptId(context);
       const learning = dependencies.continueLearning(context);
-      dependencies.monitor(context, learning, attemptId);
+      if (dependencies.monitor) {
+        dependencies.monitor(context, learning, attemptId);
+      } else {
+        void learning.catch(dependencies.report);
+      }
     })
     .catch((error) => dependencies.report(error));
 }
@@ -205,12 +214,18 @@ function restoreNumericScriptDirections(
   translation: string,
 ): string {
   const superscripts = new Set<string>();
-  const subscripts = new Set<string>();
-  for (const match of source.matchAll(/<(sup|sub)>(\d+)<\/\1>/gu)) {
-    (match[1] === "sup" ? superscripts : subscripts).add(match[2]);
-  }
+  const otherNumbers = new Set(
+    source
+      .replace(/<sup>(\d+)<\/sup>/gu, (_match, digits: string) => {
+        superscripts.add(digits);
+        return "";
+      })
+      .replace(/[₀-₉]+/gu, subscriptDigits)
+      .match(/\d+/gu) ?? [],
+  );
+  // A number used elsewhere in the source cannot identify a citation by itself.
   const isSourceSuperscript = (digits: string) =>
-    superscripts.has(digits) && !subscripts.has(digits);
+    superscripts.has(digits) && !otherNumbers.has(digits);
   return translation
     .replace(/~(\d+)~/gu, (value, digits: string) =>
       isSourceSuperscript(digits) ? `^${digits}^` : value,
@@ -219,11 +234,15 @@ function restoreNumericScriptDirections(
       isSourceSuperscript(digits) ? `^${digits}^` : value,
     )
     .replace(/[₀-₉]+/gu, (value) => {
-      const digits = Array.from(value, (character) =>
-        String(character.charCodeAt(0) - 0x2080),
-      ).join("");
+      const digits = subscriptDigits(value);
       return isSourceSuperscript(digits) ? `^${digits}^` : value;
     });
+}
+
+function subscriptDigits(value: string): string {
+  return Array.from(value, (character) =>
+    String(character.charCodeAt(0) - 0x2080),
+  ).join("");
 }
 
 function classifySourceBullets(value: string): Array<"list" | "inline"> {

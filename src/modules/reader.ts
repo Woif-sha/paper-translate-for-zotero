@@ -48,6 +48,13 @@ const CROSS_PAGE_NOISE_PATTERNS = [
 export type ReaderSelectionLine = {
   text: string;
   rect: readonly [number, number, number, number];
+  paragraphBreakAfter?: boolean;
+};
+
+type ReaderTextSelection = {
+  text: string;
+  // Exact text cuts must retain the corresponding lines before restoring breaks.
+  lines: readonly ReaderSelectionLine[];
 };
 
 export type ReaderSelectionLayout = {
@@ -85,10 +92,11 @@ export function normalizeReaderAnnotationSelection(
   if (!layout) return normalizeReaderSelection(annotation.text);
   if (layout.kind === "singlePage") {
     return normalizeReaderSelection(
-      removeEmbeddedCrossColumnObject(
-        layout.text,
-        layout.lines,
-        layout.documentLines,
+      restoreReaderSemanticBoundaries(
+        removeEmbeddedCrossColumnObject(
+          { text: layout.text, lines: layout.lines },
+          layout.documentLines,
+        ),
       ),
     );
   }
@@ -132,38 +140,37 @@ function removeVerifiedCrossPageArtifacts(
   if (!layout) return value;
   const expected = `${layout.firstPageText} ${layout.nextPageText}`;
   if (value !== expected) return value;
-  const firstPageText = removeTrailingArxivMarginLabel(
+  const firstPage = removeTrailingArxivMarginLabel(
     removeTrailingRepeatedPageFurniture(
-      layout.firstPageText,
-      layout.firstPageLines,
+      { text: layout.firstPageText, lines: layout.firstPageLines ?? [] },
       layout.firstPageDocumentLines,
       layout.nextPageDocumentLines,
     ),
-    layout.firstPageLines,
   );
-  const nextPageText = removeLeadingCrossPageArtifact(
-    layout.nextPageText,
-    layout.nextPageLines,
+  const nextPage = removeLeadingCrossPageArtifact(
+    { text: layout.nextPageText, lines: layout.nextPageLines },
     layout.firstPageLines,
     layout.nextPageDocumentLines,
   );
-  return `${firstPageText} ${nextPageText}`;
+  return restoreReaderSemanticBoundaries({
+    text: `${firstPage.text} ${nextPage.text}`,
+    lines: [...firstPage.lines, ...nextPage.lines],
+  });
 }
 
 function removeTrailingRepeatedPageFurniture(
-  value: string,
-  lines: readonly ReaderSelectionLine[] | undefined,
+  selection: ReaderTextSelection,
   firstPageDocumentLines: readonly ReaderSelectionLine[] | undefined,
   nextPageDocumentLines: readonly ReaderSelectionLine[] | undefined,
-): string {
-  const contentLines = lines?.filter(({ text }) => text.trim());
+): ReaderTextSelection {
+  const { text: value, lines } = selection;
+  const contentLines = lines.filter(({ text }) => text.trim());
   if (
-    !contentLines ||
     contentLines.length < 2 ||
     !firstPageDocumentLines?.length ||
     !nextPageDocumentLines?.length
   ) {
-    return value;
+    return selection;
   }
   let furnitureStart = contentLines.length;
   for (let index = contentLines.length - 1; index > 0; index -= 1) {
@@ -178,7 +185,7 @@ function removeTrailingRepeatedPageFurniture(
     }
     furnitureStart = index;
   }
-  if (furnitureStart === contentLines.length) return value;
+  if (furnitureStart === contentLines.length) return selection;
 
   const retainedEnd = matchExactLinePrefix(
     value,
@@ -190,9 +197,12 @@ function removeTrailingRepeatedPageFurniture(
     fullEnd !== value.length ||
     !/^\s/u.test(value.slice(retainedEnd))
   ) {
-    return value;
+    return selection;
   }
-  return value.slice(0, retainedEnd).trimEnd();
+  return {
+    text: value.slice(0, retainedEnd).trimEnd(),
+    lines: contentLines.slice(0, furnitureStart),
+  };
 }
 
 function isRepeatedPageBoundaryLine(
@@ -257,15 +267,20 @@ function pageVerticalBounds(
 }
 
 function removeTrailingArxivMarginLabel(
-  value: string,
-  lines: readonly ReaderSelectionLine[] | undefined,
-): string {
-  const lastLine = lines?.findLast(({ text }) => text.trim());
-  if (!lastLine || !isRotatedArxivMarginLabel(lastLine)) return value;
+  selection: ReaderTextSelection,
+): ReaderTextSelection {
+  const { text: value, lines } = selection;
+  const lastLine = lines.findLast(({ text }) => text.trim());
+  if (!lastLine || !isRotatedArxivMarginLabel(lastLine)) return selection;
   const label = lastLine.text.trim();
-  if (!value.endsWith(label)) return value;
+  if (!value.endsWith(label)) return selection;
   const prefix = value.slice(0, -label.length);
-  return /\s$/u.test(prefix) ? prefix.trimEnd() : value;
+  return /\s$/u.test(prefix)
+    ? {
+        text: prefix.trimEnd(),
+        lines: lines.slice(0, lines.indexOf(lastLine)),
+      }
+    : selection;
 }
 
 function isRotatedArxivMarginLabel(line: ReaderSelectionLine): boolean {
@@ -283,20 +298,20 @@ function isRotatedArxivMarginLabel(line: ReaderSelectionLine): boolean {
 }
 
 function removeLeadingCrossPageArtifact(
-  value: string,
-  lines: readonly ReaderSelectionLine[],
+  selection: ReaderTextSelection,
   firstPageLines: readonly ReaderSelectionLine[] | undefined,
   nextPageDocumentLines: readonly ReaderSelectionLine[] | undefined,
-): string {
+): ReaderTextSelection {
+  const lines = selection.lines;
   const furnitureEnd = findLeadingCrossPageFurnitureEnd(
     lines,
     firstPageLines,
     nextPageDocumentLines,
   );
   if (furnitureEnd >= 0) {
-    return removeExactLeadingLines(value, lines, furnitureEnd);
+    return removeExactLeadingLines(selection, furnitureEnd);
   }
-  return removeLeadingCrossPageObject(value, lines, firstPageLines);
+  return removeLeadingCrossPageObject(selection, firstPageLines);
 }
 
 function findLeadingCrossPageFurnitureEnd(
@@ -358,21 +373,21 @@ function continuesSemanticText(previous: string, next: string): boolean {
 }
 
 function removeLeadingCrossPageObject(
-  value: string,
-  lines: readonly ReaderSelectionLine[],
+  selection: ReaderTextSelection,
   firstPageLines: readonly ReaderSelectionLine[] | undefined,
-): string {
-  if (lines.length < 2) return value;
+): ReaderTextSelection {
+  const lines = selection.lines;
+  if (lines.length < 2) return selection;
   const captionLineIndex = findLastConsecutiveCaptionBlockStart(lines);
   if (
     captionLineIndex < 0 ||
     containsLeadingSemanticContent(lines.slice(0, captionLineIndex))
   ) {
-    return value;
+    return selection;
   }
 
   const lineHeight = median(lines.map(({ rect }) => rect[3] - rect[1]));
-  if (!lineHeight) return value;
+  if (!lineHeight) return selection;
   const minimumGap = Math.max(
     MINIMUM_FLOAT_GAP,
     lineHeight * FLOAT_GAP_LINE_HEIGHT_MULTIPLIER,
@@ -407,16 +422,17 @@ function removeLeadingCrossPageObject(
   ) {
     cutAfterLine = captionLineIndex;
   }
-  if (cutAfterLine < 0) return value;
+  if (cutAfterLine < 0) return selection;
 
-  return removeExactLeadingLines(value, lines, cutAfterLine);
+  return removeExactLeadingLines(selection, cutAfterLine);
 }
 
 function removeExactLeadingLines(
-  value: string,
-  lines: readonly ReaderSelectionLine[],
+  selection: ReaderTextSelection,
   end: number,
-): string {
+): ReaderTextSelection {
+  const { text: value } = selection;
+  const lines = selection.lines;
   const discardedPrefixEnd = matchExactLinePrefix(
     value,
     lines.slice(0, end + 1),
@@ -425,10 +441,12 @@ function removeExactLeadingLines(
     discardedPrefixEnd === undefined ||
     !/^\s/u.test(value.slice(discardedPrefixEnd))
   ) {
-    return value;
+    return selection;
   }
   const retainedText = value.slice(discardedPrefixEnd).trimStart();
-  return retainedText || value;
+  return retainedText
+    ? { text: retainedText, lines: lines.slice(end + 1) }
+    : selection;
 }
 
 function startsVerifiedCrossPageBodyBlock(
@@ -454,15 +472,15 @@ function startsVerifiedCrossPageBodyBlock(
 }
 
 function removeEmbeddedCrossColumnObject(
-  value: string,
-  lines: readonly ReaderSelectionLine[],
+  selection: ReaderTextSelection,
   documentLines?: readonly ReaderSelectionLine[],
-): string {
-  if (lines.length < 3) return value;
+): ReaderTextSelection {
+  const lines = selection.lines;
+  if (lines.length < 3) return selection;
   const lineHeight = median(
     lines.map(({ rect }) => Math.abs(rect[3] - rect[1])),
   );
-  if (!lineHeight) return value;
+  if (!lineHeight) return selection;
   const minimumGap = Math.max(
     MINIMUM_FLOAT_GAP,
     lineHeight * FLOAT_GAP_LINE_HEIGHT_MULTIPLIER,
@@ -480,7 +498,7 @@ function removeEmbeddedCrossColumnObject(
     const captionStart = findLastConsecutiveCaptionBlockStart(columnLines);
     if (captionStart < 0) {
       if (footnoteStart < 0) continue;
-      return removeExactLineRange(value, lines, footnoteStart, start - 1);
+      return removeExactLineRange(selection, footnoteStart, start - 1);
     }
     const leadingLines = columnLines.slice(0, captionStart);
     const captionEnd = findCaptionBlockEnd(
@@ -495,7 +513,7 @@ function removeEmbeddedCrossColumnObject(
     );
     if (objectEnd < captionEnd || objectEnd >= columnLines.length - 1) {
       if (footnoteStart < 0) continue;
-      return removeExactLineRange(value, lines, footnoteStart, start - 1);
+      return removeExactLineRange(selection, footnoteStart, start - 1);
     }
     if (
       containsLeadingSemanticContent(leadingLines) ||
@@ -507,18 +525,17 @@ function removeEmbeddedCrossColumnObject(
       )
     ) {
       if (footnoteStart < 0) continue;
-      return removeExactLineRange(value, lines, footnoteStart, start - 1);
+      return removeExactLineRange(selection, footnoteStart, start - 1);
     }
 
     const absoluteEnd = start + objectEnd;
     return removeExactLineRange(
-      value,
-      lines,
+      selection,
       footnoteStart >= 0 ? footnoteStart : start,
       absoluteEnd,
     );
   }
-  return value;
+  return selection;
 }
 
 function findVerifiedFootnoteStart(
@@ -591,11 +608,12 @@ function lineHeight(line: ReaderSelectionLine): number {
 }
 
 function removeExactLineRange(
-  value: string,
-  lines: readonly ReaderSelectionLine[],
+  selection: ReaderTextSelection,
   start: number,
   end: number,
-): string {
+): ReaderTextSelection {
+  const { text: value } = selection;
+  const lines = selection.lines;
   const retainedPrefixEnd = matchExactLinePrefix(value, lines.slice(0, start));
   const discardedBlockEnd = matchExactLinePrefix(
     value,
@@ -607,11 +625,44 @@ function removeExactLineRange(
     !/^\s/u.test(value.slice(retainedPrefixEnd)) ||
     !/^\s/u.test(value.slice(discardedBlockEnd))
   ) {
-    return value;
+    return selection;
   }
-  return `${value.slice(0, retainedPrefixEnd).trimEnd()} ${value
-    .slice(discardedBlockEnd)
-    .trimStart()}`;
+  return {
+    text: `${value.slice(0, retainedPrefixEnd).trimEnd()} ${value
+      .slice(discardedBlockEnd)
+      .trimStart()}`,
+    lines: [...lines.slice(0, start), ...lines.slice(end + 1)],
+  };
+}
+
+function restoreReaderSemanticBoundaries(
+  selection: ReaderTextSelection,
+): string {
+  const { text, lines } = selection;
+  if (!lines.length) return text;
+  const boundaries: number[] = [];
+  let offset = 0;
+  let paragraphBreakAfter = false;
+  for (const line of lines) {
+    const lineText = line.text.trim();
+    if (!lineText) continue;
+    offset += /^\s*/u.exec(text.slice(offset))![0].length;
+    if (!text.startsWith(lineText, offset)) return text;
+    if (
+      offset > 0 &&
+      (paragraphBreakAfter || isStructuredSemanticLine(lineText))
+    ) {
+      boundaries.push(offset);
+    }
+    offset += lineText.length;
+    paragraphBreakAfter = Boolean(line.paragraphBreakAfter);
+  }
+  if (offset !== text.trimEnd().length) return text;
+  let restored = text;
+  for (const boundary of boundaries.reverse()) {
+    restored = `${restored.slice(0, boundary)}${PARAGRAPH_MARKER}${restored.slice(boundary)}`;
+  }
+  return restored;
 }
 
 function formsAlignedProseContinuation(
@@ -960,6 +1011,7 @@ function extractSelectedRuntimeLines(
   return charLines.map((line, index) => ({
     text: runtimeCharsText(line),
     rect: range.position.rects[index],
+    paragraphBreakAfter: line.some((char) => char.paragraphBreakAfter),
   }));
 }
 

@@ -376,6 +376,7 @@ async function decideCoreKnowledgeWork(
   }
   if (coreKnowledgeIsComplete(preparation)) return;
   if (
+    expectedAttempt !== attempt &&
     stageStatus(preparation, "background") === "complete" &&
     stageStatus(preparation, "terminology") === "pending"
   ) {
@@ -475,13 +476,11 @@ async function runCoreKnowledge(
   let failureKind: PreparationFailureKind = "request";
   try {
     assertKnowledgeRun(session, signal);
-    if (!backgroundComplete) {
-      failureKind = "persistence";
-      await setKnowledgeStage(context, session, attempt, signal, {
-        id: "background",
-        status: "running",
-      });
-    }
+    failureKind = "persistence";
+    await setKnowledgeStage(context, session, attempt, signal, {
+      id: currentStage,
+      status: "running",
+    });
     failureKind = "request";
     assertKnowledgeRun(session, signal);
     const result = await runBoundedKnowledgeOperation({
@@ -956,48 +955,46 @@ export function parseResearchResult(value: string): {
   >;
   if (typeof parsed.summary !== "string" || !Array.isArray(parsed.sources))
     throw new Error("Background research is missing summary or sources");
-  const sources = parsed.sources
-    .slice(0, MAXIMUM_EXTERNAL_SOURCES)
-    .map((source, index) => {
-      if (!source || typeof source !== "object")
-        throw new Error(`Background source ${index} must be an object`);
-      const item = source as Record<string, unknown>;
-      for (const key of [
-        "title",
-        "url",
-        "snippet",
-        "sourceLevel",
-        "purpose",
-      ] as const) {
-        if (typeof item[key] !== "string" || !item[key].trim())
-          throw new Error(`Background source ${index} is missing ${key}`);
-      }
-      if (
-        !["official", "academic", "community"].includes(
-          item.sourceLevel as string,
-        )
+  const sources = parsed.sources.map((source, index) => {
+    if (!source || typeof source !== "object")
+      throw new Error(`Background source ${index} must be an object`);
+    const item = source as Record<string, unknown>;
+    for (const key of [
+      "title",
+      "url",
+      "snippet",
+      "sourceLevel",
+      "purpose",
+    ] as const) {
+      if (typeof item[key] !== "string" || !item[key].trim())
+        throw new Error(`Background source ${index} is missing ${key}`);
+    }
+    if (
+      !["official", "academic", "community"].includes(
+        item.sourceLevel as string,
       )
-        throw new Error(`Background source ${index} has invalid sourceLevel`);
-      let url: URL;
-      try {
-        url = new URL(item.url as string);
-      } catch {
-        throw new Error(`Background source ${index} has an invalid URL`);
-      }
-      if (url.protocol !== "https:") {
-        throw new Error(`Background source ${index} must use HTTPS`);
-      }
-      if (url.href.length > 2_048) {
-        throw new Error(`Background source ${index} URL is too long`);
-      }
-      return {
-        title: boundedText(item.title as string, 200),
-        url: url.href,
-        snippet: boundedText(item.snippet as string, 500),
-        sourceLevel: item.sourceLevel as BackgroundSource["sourceLevel"],
-        purpose: boundedText(item.purpose as string, 200),
-      };
-    });
+    )
+      throw new Error(`Background source ${index} has invalid sourceLevel`);
+    let url: URL;
+    try {
+      url = new URL(item.url as string);
+    } catch {
+      throw new Error(`Background source ${index} has an invalid URL`);
+    }
+    if (url.protocol !== "https:") {
+      throw new Error(`Background source ${index} must use HTTPS`);
+    }
+    if (url.href.length > 2_048) {
+      throw new Error(`Background source ${index} URL is too long`);
+    }
+    return {
+      title: boundedText(item.title as string, 200),
+      url: url.href,
+      snippet: boundedText(item.snippet as string, 500),
+      sourceLevel: item.sourceLevel as BackgroundSource["sourceLevel"],
+      purpose: boundedText(item.purpose as string, 200),
+    };
+  });
   if (sources.length && !parsed.summary.trim())
     throw new Error("Background research with sources requires a summary");
   if (!sources.length && parsed.summary.trim()) {
@@ -1016,7 +1013,7 @@ export function retainFullyCitedResearchResult(
   return parsed.sources.every((source) =>
     citedUrls.has(normalizeUrl(source.url)),
   )
-    ? parsed
+    ? { ...parsed, sources: parsed.sources.slice(0, MAXIMUM_EXTERNAL_SOURCES) }
     : { summary: "", sources: [] };
 }
 

@@ -1,4 +1,8 @@
 import { translateWithPaperContext } from "../../backends/translator";
+import {
+  monitorReaderSidebarLearning,
+  synchronizeReaderSidebarContext,
+} from "../sidebar";
 import { TranslateService } from "./base";
 
 export const PaperContextTranslation: TranslateService = {
@@ -10,16 +14,22 @@ export const PaperContextTranslation: TranslateService = {
       throw new Error("Translation task has no Reader attachment ID");
     const refresh = addon.api.getTemporaryRefreshHandler({ task: data });
     data.result = "";
-    data.result = await translateWithPaperContext({
-      attachmentItemID: data.itemId,
-      sourceLanguage: data.langfrom,
-      targetLanguage: data.langto,
-      input: data.raw,
-      onUpdate(text) {
-        data.result = text;
-        refresh();
+    data.result = await translateWithPaperContext(
+      {
+        attachmentItemID: data.itemId,
+        sourceLanguage: data.langfrom,
+        targetLanguage: data.langto,
+        input: data.raw,
+        onUpdate(text) {
+          data.result = text;
+          refresh();
+        },
       },
-    });
+      {
+        contextPrepared: synchronizeReaderSidebarContext,
+        learningStarted: monitorReaderSidebarLearning,
+      },
+    );
     refresh();
   },
 };

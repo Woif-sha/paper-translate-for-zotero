@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import test from "node:test";
-import { buildPaperIndex } from "../src/context/paperContext";
+import {
+  buildPaperIndex,
+  createTerminologyMarkdown,
+} from "../src/context/paperContext";
 import {
   buildCoreKnowledgePrompt,
   buildExternalResearchPrompt,
@@ -25,8 +28,10 @@ import {
 } from "../src/context/research";
 import {
   beginPreparationAttempt,
+  countTerminologyEntries,
   createPreparationRecord,
   getPreparationRetryScope,
+  readPreparationRecord,
   updatePreparationStages,
 } from "../src/context/runtime";
 
@@ -139,12 +144,58 @@ test("keeps a research result only when every source has a matching citation", (
     }),
   );
 
-  assert.equal(
+  assert.deepEqual(
     retainFullyCitedResearchResult(parsed, {
       usedWebSearch: true,
       citedUrls: ["https://example.org/reference"],
     }),
     parsed,
+  );
+});
+
+test("discards the whole summary when a source beyond the storage cap is uncited", () => {
+  const parsed = parseResearchResult(
+    JSON.stringify({
+      summary: "Includes clarification from the fourth source.",
+      sources: [1, 2, 3, 4].map((number) => ({
+        title: `Source ${number}`,
+        url: `https://example.org/${number}`,
+        snippet: "Terminology evidence",
+        sourceLevel: "official",
+        purpose: "Translation clarification",
+      })),
+    }),
+  );
+
+  assert.deepEqual(
+    retainFullyCitedResearchResult(parsed, {
+      usedWebSearch: true,
+      citedUrls: [
+        "https://example.org/1",
+        "https://example.org/2",
+        "https://example.org/3",
+      ],
+    }),
+    { summary: "", sources: [] },
+  );
+});
+
+test("rejects malformed research sources beyond the storage cap", () => {
+  assert.throws(
+    () =>
+      parseResearchResult(
+        JSON.stringify({
+          summary: "External clarification",
+          sources: [1, 2, 3, 4].map((number) => ({
+            title: `Source ${number}`,
+            url: `https://example.org/${number}`,
+            snippet: "Terminology evidence",
+            sourceLevel: number === 4 ? "invalid" : "official",
+            purpose: "Translation clarification",
+          })),
+        }),
+      ),
+    /Background source 3 has invalid sourceLevel/u,
   );
 });
 
@@ -255,7 +306,16 @@ test("caps one knowledge pass at 12 terms, 3 questions, and 3 sources", () => {
       })),
     }),
   );
-  assert.equal(external.sources.length, 3);
+  assert.equal(
+    retainFullyCitedResearchResult(external, {
+      usedWebSearch: true,
+      citedUrls: Array.from(
+        { length: 5 },
+        (_, index) => `https://example.org/${index}`,
+      ),
+    }).sources.length,
+    3,
+  );
 });
 
 test("plans two searches, allows three observed calls, and requires no source quota", () => {
@@ -879,6 +939,210 @@ test("closes an unowned running stage when the user stops it", async () => {
     );
   } finally {
     (globalThis as any).IOUtils = previousIO;
+  }
+});
+
+test("retries failed terminology while preserving completed background and human translations", async () => {
+  const previousIO = (globalThis as any).IOUtils;
+  const previousZotero = (globalThis as any).Zotero;
+  const previousToolkit = (globalThis as any).ztoolkit;
+  const paperDir = "E:\\ZoteroData\\paper-translate-for-zotero\\ABCD1234";
+  const mineruCacheDir = "E:\\ZoteroData\\llm-for-zotero-mineru\\42";
+  const fullMdPath = `${mineruCacheDir}\\full.md`;
+  const terminologyPath = `${paperDir}\\terminology.md`;
+  const markdown = "# Method\ncell graph model timing method variation";
+  const fullMdSha256 = createHash("sha256").update(markdown).digest("hex");
+  const identity = {
+    libraryID: 1,
+    parentItemKey: "ABCD1234",
+    attachmentID: 42,
+    attachmentKey: "WXYZ5678",
+    title: "Paper",
+    doi: "",
+  };
+  const preparation = updatePreparationStages(
+    createPreparationRecord("ABCD1234", fullMdSha256),
+    [
+      { id: "source", status: "complete" },
+      { id: "index", status: "complete" },
+      { id: "background", status: "complete" },
+      {
+        id: "terminology",
+        status: "error",
+        detail: "insufficient terms",
+        failureKind: "response",
+      },
+      { id: "external", status: "skipped" },
+    ],
+  );
+  const background = [
+    "# Background: Paper",
+    "## 论文依据",
+    "### 所属领域",
+    "EDA",
+    "### 研究问题",
+    "Timing variation",
+    "### 工作流",
+    "Library characterization",
+    "### 方法组件",
+    "Graph model",
+    "### 实验与评价语境",
+    "rRMSE",
+    "### 外部检索问题",
+    "- 无",
+    "",
+  ].join("\n");
+  const terminology = `${createTerminologyMarkdown("Paper")}| cell | cell | 人工译法 | domain | standard cell | Method; chars 9-13 | paper | high | 2026-01-01T00:00:00.000Z |\n`;
+  const files = new Map<string, string>([
+    [
+      `${paperDir}\\_paper_source.json`,
+      JSON.stringify({
+        schemaVersion: 3,
+        ...identity,
+        mineruCacheDir,
+        fullMdPath,
+        fullMdSha256,
+      }),
+    ],
+    [`${paperDir}\\_preparation.json`, JSON.stringify(preparation)],
+    [fullMdPath, markdown],
+    [`${paperDir}\\background.md`, background],
+    [terminologyPath, terminology],
+    [
+      `${paperDir}\\background-sources.json`,
+      JSON.stringify({
+        schemaVersion: 3,
+        parentItemKey: identity.parentItemKey,
+        fullMdSha256,
+        status: "pending",
+        queries: [],
+        sources: [],
+        failures: [],
+      }),
+    ],
+  ]);
+  (globalThis as any).IOUtils = {
+    async exists(path: string) {
+      return files.has(path);
+    },
+    async read(path: string) {
+      return new TextEncoder().encode(files.get(path) || "");
+    },
+    async write(path: string, data: Uint8Array) {
+      files.set(path, new TextDecoder().decode(data));
+    },
+  };
+  (globalThis as any).Zotero = {
+    Prefs: {
+      get(key: string) {
+        if (key.endsWith("paper.activeModelId")) return "model-api";
+        assert.ok(key.endsWith("paper.modelProviders"));
+        return JSON.stringify({
+          schemaVersion: 3,
+          activeModelId: "model-api",
+          providers: [
+            {
+              id: "provider-api",
+              name: "API",
+              authMode: "openai_compatible",
+              apiBase: "https://example.test/v1",
+              apiKey: "test-key",
+              protocol: "chat_completions",
+              models: [{ id: "model-api", model: "test-model", effort: "" }],
+            },
+          ],
+        });
+      },
+    },
+  };
+  let requests = 0;
+  (globalThis as any).ztoolkit = {
+    getGlobal(name: string) {
+      assert.equal(name, "fetch");
+      return async (url: string, options: RequestInit) => {
+        requests += 1;
+        assert.equal(url, "https://example.test/v1/chat/completions");
+        assert.equal(JSON.parse(String(options.body)).model, "test-model");
+        assert.equal(
+          (await readPreparationRecord(context)).stages[3].status,
+          "running",
+        );
+        const content = JSON.stringify({
+          field: "EDA",
+          problem: "timing variation",
+          workflow: "characterization",
+          method: "graph model",
+          evaluation: "rRMSE",
+          translationRisks: [],
+          openQuestions: [],
+          searchQueries: [],
+          terms: [
+            "cell",
+            "graph",
+            "model",
+            "timing",
+            "method",
+            "variation",
+          ].map((term) => ({
+            observed: term,
+            canonical: term,
+            translation: `模型译法 ${term}`,
+            category: "domain",
+            definition: `Definition of ${term}`,
+          })),
+        });
+        return new Response(
+          `data: ${JSON.stringify({ choices: [{ delta: { content }, finish_reason: "stop" }] })}\n\ndata: [DONE]\n\n`,
+          { headers: { "Content-Type": "text/event-stream" } },
+        );
+      };
+    },
+  };
+  const context = {
+    paperDir,
+    mineruCacheDir,
+    fullMdPath,
+    fullMdSha256,
+    identity,
+    markdown,
+    background,
+    terminology,
+    index: buildPaperIndex({
+      parentItemKey: identity.parentItemKey,
+      fullMdSha256,
+      manifestSha256: "manifest",
+      markdown,
+      manifest: { noSections: true, totalChars: markdown.length },
+    }),
+  } as any;
+  beginKnowledgeOperationsSession();
+  try {
+    const retry = await startPaperLearningRetry(context, "core");
+    await retry.learning;
+
+    assert.equal(requests, 1);
+    const completed = await readPreparationRecord(context);
+    assert.equal(completed.attemptId, 2);
+    assert.equal(completed.stages[2].status, "complete");
+    assert.equal(completed.stages[3].status, "complete");
+    assert.equal(completed.stages[4].status, "skipped");
+    assert.equal(completed.attemptHistory[0].stages[1].status, "error");
+    assert.equal(
+      completed.attemptHistory[0].stages[1].detail,
+      "insufficient terms",
+    );
+    assert.equal(
+      completed.stages[2].completedAt,
+      preparation.stages[2].completedAt,
+    );
+    assert.equal(files.get(`${paperDir}\\background.md`), background);
+    assert.equal(countTerminologyEntries(context.terminology, markdown), 6);
+    assert.match(context.terminology, /\| cell \| cell \| 人工译法 \|/u);
+  } finally {
+    endKnowledgeOperationsSession();
+    (globalThis as any).IOUtils = previousIO;
+    (globalThis as any).Zotero = previousZotero;
+    (globalThis as any).ztoolkit = previousToolkit;
   }
 });
 

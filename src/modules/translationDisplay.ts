@@ -155,7 +155,8 @@ function parseMath(state: StateInline, silent: boolean): boolean {
   const contentStart = start + delimiter.length;
   const end = findClosingDelimiter(state.src, contentStart, delimiter);
   if (end < 0) return false;
-  const content = state.src.slice(contentStart, end);
+  const rawContent = state.src.slice(contentStart, end);
+  const content = delimiter === "$$" ? rawContent.trim() : rawContent;
   if (!content || /^\s|\s$/u.test(content)) return false;
   if (!silent) {
     const token = state.push("translation_math", "math", 0);

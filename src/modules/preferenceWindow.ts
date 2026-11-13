@@ -28,12 +28,16 @@ import { ProviderEditorDraft } from "../models/providerEditorDraft";
 export const PREFERENCES_PANE_ID = `${config.addonRef}-preferences`;
 const CONNECTION_TEST_TIMEOUT_MS = 30_000;
 let preferencesRegistered = false;
-const connectionTestControllers = new Set<AbortController>();
-const discoveryControllers = new Map<HTMLElement, AbortController>();
-const modelPickers = new Map<HTMLElement, () => void>();
+type ProviderEditorResources = {
+  connectionTests: Set<AbortController>;
+  discoveries: Map<HTMLElement, AbortController>;
+  modelPickers: Map<HTMLElement, () => void>;
+};
+// Open windows edit one draft; only their request and DOM resources are local.
+let providerEditorDraft: ProviderEditorDraft | undefined;
 const preferenceEditors = new Map<
   Window,
-  { root: HTMLElement; dispose(): void }
+  { root: HTMLElement; render(): void; dispose(): void }
 >();
 
 export async function registerPrefsWindow(): Promise<void> {
@@ -51,8 +55,6 @@ export async function registerPrefsWindow(): Promise<void> {
 
 export function unregisterPrefsWindow(): void {
   for (const editor of preferenceEditors.values()) editor.dispose();
-  cancelConnectionTests();
-  stopModelDiscovery();
   if (!preferencesRegistered) return;
   Zotero.PreferencePanes.unregister(PREFERENCES_PANE_ID);
   preferencesRegistered = false;
@@ -71,12 +73,25 @@ export function registerPrefsScripts(
   const previousEditor = preferenceEditors.get(window);
   if (previousEditor?.root === root) return;
   previousEditor?.dispose();
-  const memory = new ProviderEditorDraft(
+  const memory = (providerEditorDraft ??= new ProviderEditorDraft(
     getModelProviderConfiguration().providers,
-  );
+  ));
+  const resources: ProviderEditorResources = {
+    connectionTests: new Set(),
+    discoveries: new Map(),
+    modelPickers: new Map(),
+  };
   const openProviderIds = memory.openProviderIds;
   const openModelIds = memory.openModelIds;
-  const remember = () => memory.remember();
+  const remember = (event?: Event) => {
+    memory.remember();
+    if (
+      (event?.type === "input" || event?.type === "change") &&
+      (event.target as Element | null)?.closest(".pt-provider-card")
+    ) {
+      renderPreferenceEditors(window);
+    }
+  };
   bindSourceLanguage(doc);
   bindPreferenceTabs(doc, memory.tab, (tab) => {
     memory.tab = tab;
@@ -85,8 +100,8 @@ export function registerPrefsScripts(
   ensureProviderStyles(doc);
 
   const render = () => {
-    cancelConnectionTests();
-    stopModelDiscovery();
+    cancelConnectionTests(resources);
+    stopModelDiscovery(resources);
     const configuration = getModelProviderConfiguration();
     memory.syncSaved(configuration.providers);
     renderProviderCards({
@@ -95,14 +110,16 @@ export function registerPrefsScripts(
       openProviderIds,
       openModelIds,
       memory,
+      resources,
       activeModelId: configuration.activeModelId,
       modelSelection,
       onDraftsChanged(next) {
         memory.providers = next;
-        render();
+        renderPreferenceEditors();
       },
       onSaved(savedProviderId) {
-        render();
+        // save() accepts a cloned provider array after synchronous notifications.
+        renderPreferenceEditors();
         if (!savedProviderId) return;
         const savedCard = Array.from(doc.querySelectorAll("section"))
           .map((entry) => entry as unknown as HTMLElement)
@@ -126,7 +143,7 @@ export function registerPrefsScripts(
     provider.models.push(createProviderModel());
     memory.providers = [...memory.providers, provider];
     openProviderIds.add(provider.id);
-    render();
+    renderPreferenceEditors();
   };
   add.addEventListener("click", addProvider);
   // Target handlers update fields before bubbling reaches the editor root.
@@ -146,16 +163,23 @@ export function registerPrefsScripts(
     add.removeEventListener("click", addProvider);
     window.removeEventListener("unload", dispose);
     preferenceEditors.delete(window);
-    cancelConnectionTests();
-    stopModelDiscovery();
+    if (!preferenceEditors.size) providerEditorDraft = undefined;
+    cancelConnectionTests(resources);
+    stopModelDiscovery(resources);
   };
-  preferenceEditors.set(window, { root, dispose });
+  preferenceEditors.set(window, { root, render, dispose });
   window.addEventListener("unload", dispose, { once: true });
   render();
   if (memory.invalidCache) {
     const card = doc.querySelector(".pt-provider-card") as HTMLElement | null;
     if (card)
       showCardStatus(card, getString("pref-provider-draft-invalid"), true);
+  }
+}
+
+function renderPreferenceEditors(except?: Window): void {
+  for (const [window, editor] of preferenceEditors) {
+    if (window !== except) editor.render();
   }
 }
 
@@ -166,6 +190,7 @@ type ProviderCardRenderParams = {
   openProviderIds: Set<string>;
   openModelIds: Set<string>;
   memory: ProviderEditorDraft;
+  resources: ProviderEditorResources;
   modelSelection: ModelSelectionActions;
   onDraftsChanged(providers: ModelProviderGroup[]): void;
   onSaved(savedProviderId?: string): void;
@@ -297,7 +322,7 @@ function createProviderCard(
       }
     };
     apiBase.input.addEventListener("input", () => {
-      stopModelDiscovery(card);
+      stopModelDiscovery(params.resources, card);
       provider.apiBase = apiBase.input.value;
       updatePreview();
     });
@@ -310,7 +335,7 @@ function createProviderCard(
     apiKey.input.placeholder = "sk-…";
     apiKey.input.autocomplete = "off";
     apiKey.input.addEventListener("input", () => {
-      stopModelDiscovery(card);
+      stopModelDiscovery(params.resources, card);
       provider.apiKey = apiKey.input.value;
     });
     updatePreview();
@@ -429,14 +454,17 @@ function createProviderCard(
   return card;
 }
 
-function stopModelDiscovery(card?: HTMLElement): void {
-  for (const [owner, controller] of discoveryControllers) {
+function stopModelDiscovery(
+  resources: ProviderEditorResources,
+  card?: HTMLElement,
+): void {
+  for (const [owner, controller] of resources.discoveries) {
     if (card && owner !== card) continue;
-    discoveryControllers.delete(owner);
+    resources.discoveries.delete(owner);
     controller.abort(new Error("Model discovery cancelled"));
     if (card && owner.isConnected) showCardStatus(owner, "", false);
   }
-  for (const [owner, close] of modelPickers) {
+  for (const [owner, close] of resources.modelPickers) {
     if (card && owner !== card) continue;
     close();
   }
@@ -448,9 +476,10 @@ async function discoverProviderModels(
   provider: ModelProviderGroup,
   button: HTMLButtonElement,
 ): Promise<void> {
-  stopModelDiscovery(card);
+  const resources = params.resources;
+  stopModelDiscovery(resources, card);
   const controller = new AbortController();
-  discoveryControllers.set(card, controller);
+  resources.discoveries.set(card, controller);
   button.disabled = true;
   showCardStatus(card, getString("pref-provider-models-fetching"), false);
   try {
@@ -468,7 +497,7 @@ async function discoverProviderModels(
       models,
       existing: new Set(provider.models.map((entry) => entry.model.trim())),
       trigger: button,
-      onClose: () => modelPickers.delete(card),
+      onClose: () => resources.modelPickers.delete(card),
       onConfirm(ids) {
         const existing = new Set(
           provider.models.map((entry) => entry.model.trim()),
@@ -501,7 +530,7 @@ async function discoverProviderModels(
         }
       },
     });
-    modelPickers.set(card, close);
+    resources.modelPickers.set(card, close);
   } catch (error) {
     if (!controller.signal.aborted && card.isConnected) {
       showCardStatus(
@@ -511,8 +540,8 @@ async function discoverProviderModels(
       );
     }
   } finally {
-    if (discoveryControllers.get(card) === controller)
-      discoveryControllers.delete(card);
+    if (resources.discoveries.get(card) === controller)
+      resources.discoveries.delete(card);
     button.disabled = false;
   }
 }
@@ -618,7 +647,14 @@ function createModelRow(
     choice.addEventListener("click", () => {
       closeTestChoices();
       testToggle.focus();
-      void testDraftModel(card, provider, model, testToggle, kind);
+      void testDraftModel(
+        params.resources,
+        card,
+        provider,
+        model,
+        testToggle,
+        kind,
+      );
     });
     testChoices.append(choice);
   }
@@ -666,15 +702,16 @@ function createModelRow(
 }
 
 async function testDraftModel(
+  resources: ProviderEditorResources,
   card: HTMLElement,
   provider: ModelProviderGroup,
   model: ProviderModel,
   button: HTMLButtonElement,
   kind: "text" | "image" = "text",
 ): Promise<void> {
-  cancelConnectionTests();
+  cancelConnectionTests(resources);
   const controller = new AbortController();
-  connectionTestControllers.add(controller);
+  resources.connectionTests.add(controller);
   const timer = setTimeout(
     () => controller.abort(new Error("Connection test timed out")),
     kind === "image" ? 60_000 : CONNECTION_TEST_TIMEOUT_MS,
@@ -690,7 +727,7 @@ async function testDraftModel(
     if (controller.signal.aborted || !card.isConnected) return;
     showCardStatus(card, `${getString("pref-codex-success")}: ${reply}`, false);
   } catch (error) {
-    if (!card.isConnected || !connectionTestControllers.has(controller)) return;
+    if (!card.isConnected || !resources.connectionTests.has(controller)) return;
     showCardStatus(
       card,
       `${getString("pref-codex-failed")}: ${modelErrorMessage(error)}`,
@@ -698,7 +735,7 @@ async function testDraftModel(
     );
   } finally {
     clearTimeout(timer);
-    connectionTestControllers.delete(controller);
+    resources.connectionTests.delete(controller);
     button.disabled = false;
   }
 }
@@ -728,9 +765,9 @@ function showCardStatus(
   status.textContent = message;
 }
 
-function cancelConnectionTests(): void {
-  for (const controller of connectionTestControllers) controller.abort();
-  connectionTestControllers.clear();
+function cancelConnectionTests(resources: ProviderEditorResources): void {
+  for (const controller of resources.connectionTests) controller.abort();
+  resources.connectionTests.clear();
 }
 
 function nextProviderName(providers: ModelProviderGroup[]): string {

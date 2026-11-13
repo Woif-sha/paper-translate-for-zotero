@@ -24,6 +24,22 @@ test("renders multiline translation with XHTML-compatible line breaks", () => {
   assert.doesNotMatch(markup, /<br>/u);
 });
 
+test("renders display LaTeX with surrounding whitespace inside its delimiters", () => {
+  const markup = renderTranslationMarkup("$$\n  c_1 + c_2  \n$$");
+
+  assert.match(markup, /<math[^>]+display="block"/u);
+  assert.match(markup, /<msub>/u);
+  assert.doesNotMatch(markup, /\$\$/u);
+});
+
+test("keeps empty display math and whitespace-delimited inline math as text", () => {
+  for (const value of ["$$\n  \n$$", "$ c_1$", "$c_1 $"]) {
+    const markup = renderTranslationMarkup(value);
+    assert.doesNotMatch(markup, /<math/u);
+    assert.match(markup, /\$/u);
+  }
+});
+
 test("renders plain sup and sub tags as academic superscripts and subscripts", () => {
   const markup = renderTranslationMarkup(
     "多层感知机（MLPs）<sup>34</sup> 与模式<sub>14</sub>",

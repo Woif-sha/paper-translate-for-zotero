@@ -30,6 +30,20 @@ test("restores numeric script direction from the validated source", () => {
   );
 });
 
+test("preserves scientific subscripts that share a citation number", () => {
+  const sources = [
+    "The concentration of H₂O is measured.<sup>2</sup>",
+    "The concentration of H<sub>2</sub>O is measured.<sup>2</sup>",
+    "The concentration of H2O is measured.<sup>2</sup>",
+    "The coefficient $c_2$ is measured.<sup>2</sup>",
+  ];
+  for (const source of sources) {
+    for (const translation of ["H₂O。²", "H~2~O。²", "H<sub>2</sub>O。²"]) {
+      assert.equal(formatTranslationLayout(source, translation), translation);
+    }
+  }
+});
+
 test("does not treat an inline bullet operator as a list", () => {
   assert.equal(
     formatTranslationLayout("The similarity is a • b.", "相似度为 a • b。"),
@@ -65,33 +79,45 @@ test("does not treat an inline bullet operator as a list", () => {
   );
 });
 
-test("does not await paper learning or start per-translation knowledge requests", async () => {
+test("schedules one knowledge job without waiting for its completion", async () => {
+  const learning = new Promise<void>(() => undefined);
+  const calls: string[] = [];
+  const context = {} as any;
+  assert.equal(
+    schedulePaperLearningAfterTranslation(context, {
+      async readAttemptId(value) {
+        assert.equal(value, context);
+        calls.push("attempt");
+        return 2;
+      },
+      continueLearning(value) {
+        assert.equal(value, context);
+        calls.push("learning");
+        return learning;
+      },
+      monitor(value, operation, attemptId) {
+        assert.equal(value, context);
+        assert.equal(operation, learning);
+        assert.equal(attemptId, 2);
+        calls.push("monitor");
+      },
+      report: assert.fail,
+    }),
+    undefined,
+  );
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  assert.deepEqual(calls, ["attempt", "learning", "monitor"]);
+});
+
+test("keeps UI module dependencies out of the translation backend", async () => {
   const source = await readFile(
     new URL("../src/backends/translator.ts", import.meta.url),
     "utf8",
   );
-  assert.match(
-    source,
-    /if \(request\.context\) schedulePaperLearningAfterTranslation\(request\.context\)/,
-  );
-  assert.doesNotMatch(source, /await readPreparationRecord\(context\)/);
-  assert.doesNotMatch(source, /updateTerminology|TERMINOLOGY_DEVELOPER/);
-  assert.doesNotMatch(source, /await ensureCorePaperKnowledge/);
+  assert.equal(/from ["']\.\.\/modules\//u.test(source), false);
 });
 
 test("translates selected text without MinerU Markdown and skips paper learning", async () => {
-  const source = await readFile(
-    new URL("../src/backends/translator.ts", import.meta.url),
-    "utf8",
-  );
-
-  assert.match(source, /MineruMarkdownUnavailableError/);
-  assert.match(source, /buildStandaloneTranslationPrompt/);
-  assert.match(
-    source,
-    /catch\s*\([^)]*\)\s*\{[\s\S]*?MineruMarkdownUnavailableError[\s\S]*?buildStandaloneTranslationPrompt/u,
-  );
-  let synchronized = false;
   const request = await resolveTranslationRequest(
     {
       attachmentItemID: 42,
@@ -107,9 +133,6 @@ test("translates selected text without MinerU Markdown and skips paper learning"
           "E:\\MinerU\\42",
         );
       },
-      synchronizeContext() {
-        synchronized = true;
-      },
     },
   );
 
@@ -117,7 +140,6 @@ test("translates selected text without MinerU Markdown and skips paper learning"
   assert.equal(request.input, "Selected text remains translatable.");
   assert.match(request.prompt, /Text to translate:\nSelected text remains/u);
   assert.doesNotMatch(request.prompt, /Persistent terminology|Paper section/u);
-  assert.equal(synchronized, false);
 });
 
 test("does not hide paper context validation failures behind text-only translation", async () => {
@@ -133,9 +155,6 @@ test("does not hide paper context validation failures behind text-only translati
       {
         async prepareContext() {
           throw failure;
-        },
-        synchronizeContext() {
-          assert.fail("invalid context must not be synchronized");
         },
       },
     ),
@@ -166,6 +185,20 @@ test("reports a background setup failure without blocking a completed translatio
     undefined,
   );
   assert.equal(result, "已完成的译文");
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  assert.equal(reported, failure);
+});
+
+test("reports a knowledge job failure when no UI observer is attached", async () => {
+  const failure = new Error("knowledge request failed");
+  let reported: unknown;
+  schedulePaperLearningAfterTranslation({} as any, {
+    readAttemptId: async () => 2,
+    continueLearning: () => Promise.reject(failure),
+    report(error) {
+      reported = error;
+    },
+  });
   await new Promise<void>((resolve) => setImmediate(resolve));
   assert.equal(reported, failure);
 });

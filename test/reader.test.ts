@@ -67,6 +67,125 @@ function normalizeSinglePageReaderSelection(
   return normalizeReaderAnnotationSelection(reader, annotation);
 }
 
+function normalizeGlyphReaderSelection(
+  pages: readonly (readonly {
+    text: string;
+    paragraphBreakAfter?: boolean;
+    rect?: readonly [number, number, number, number];
+  }[])[],
+): string {
+  const ranges: any[] = [];
+  const pdfPages: Record<number, { chars: any[] }> = {};
+  for (const [pageIndex, lines] of pages.entries()) {
+    const rects = lines.map(
+      ({ text, rect }, index) =>
+        rect ?? [
+          50,
+          700 - index * 24,
+          50 + Array.from(text).length * 6,
+          712 - index * 24,
+        ],
+    );
+    const chars = lines.flatMap((line, lineIndex) =>
+      Array.from(line.text, (c, index) => ({
+        c,
+        inlineRect: [
+          rects[lineIndex][0] + index * 6,
+          rects[lineIndex][1],
+          rects[lineIndex][0] + (index + 1) * 6,
+          rects[lineIndex][3],
+        ],
+        lineBreakAfter: index === line.text.length - 1,
+        paragraphBreakAfter:
+          index === line.text.length - 1 && line.paragraphBreakAfter,
+      })),
+    );
+    const text = lines
+      .map((line) => `${line.text} ${line.paragraphBreakAfter ? " " : ""}`)
+      .join("")
+      .trim();
+    pdfPages[pageIndex] = { chars };
+    ranges.push({
+      pageIndex,
+      anchorOffset: 0,
+      headOffset: chars.length,
+      text,
+      position: { pageIndex, rects },
+    });
+  }
+  const annotation = {
+    text: ranges.map(({ text }) => text).join(" "),
+    position: {
+      pageIndex: 0,
+      rects: ranges[0].position.rects,
+      ...(ranges[1] ? { nextPageRects: ranges[1].position.rects } : {}),
+    },
+  };
+  return normalizeReaderAnnotationSelection(
+    {
+      _internalReader: {
+        _lastView: { _selectionRanges: ranges, _pdfPages: pdfPages },
+      },
+    },
+    annotation,
+  );
+}
+
+test("restores flattened Reader list boundaries and joins their visual wraps", () => {
+  assert.equal(
+    normalizeGlyphReaderSelection([
+      [
+        { text: "• First item wraps" },
+        { text: "onto another visual line." },
+        { text: "• Second item." },
+        { text: "1. First numbered step." },
+        { text: "2. Second numbered step." },
+      ],
+    ]),
+    "• First item wraps onto another visual line.\n• Second item.\n1. First numbered step.\n2. Second numbered step.",
+  );
+});
+
+test("restores Reader paragraph metadata without splitting ordinary visual lines", () => {
+  assert.equal(
+    normalizeGlyphReaderSelection([
+      [
+        { text: "The operator a • b wraps" },
+        { text: "inside the first paragraph.", paragraphBreakAfter: true },
+        { text: "The second paragraph also" },
+        { text: "wraps visually." },
+      ],
+    ]),
+    "The operator a • b wraps inside the first paragraph.\nThe second paragraph also wraps visually.",
+  );
+});
+
+test("restores a list boundary across verified Reader pages", () => {
+  assert.equal(
+    normalizeGlyphReaderSelection([
+      [{ text: "• First item." }],
+      [{ text: "• Second item." }],
+    ]),
+    "• First item.\n• Second item.",
+  );
+});
+
+test("restores retained paragraph boundaries after removing verified cross-page furniture", () => {
+  assert.equal(
+    normalizeGlyphReaderSelection([
+      [
+        { text: "The first paragraph ends here.", paragraphBreakAfter: true },
+        { text: "Repeated journal footer", rect: [50, 37, 188, 49] },
+      ],
+      [
+        { text: "The second paragraph starts here." },
+        { text: "Repeated journal footer", rect: [50, 37, 188, 49] },
+      ],
+    ]),
+    "The first paragraph ends here.\nThe second paragraph starts here. Repeated journal footer",
+  );
+});
+
 test("removes IEEE cross-page footer and access notice noise", () => {
   const selected = [
     "The key 979-8-3503-9354-5/24/$31.00 ©2024 IEEE 2D-1 171 2024 29th Asia and South Pacific Design Automation Conference (ASP-DAC) | 979-8-3503-9354-5/24/$31.00 ©2024 IEEE | DOI: 10.1109/ASP-DAC58780.2024.10473881 Authorized licensed use limited to: Southeast University. Downloaded on July 16, 2026 at 07:25:45 UTC from IEEE Xplore. Restrictions apply. is to remove",

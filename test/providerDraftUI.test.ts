@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { setImmediate } from "node:timers/promises";
 import { readFile } from "node:fs/promises";
 import { JSDOM } from "jsdom";
 import { registerPrefsScripts } from "../src/modules/preferenceWindow";
@@ -67,6 +68,157 @@ async function setup() {
   });
   return { template, actions };
 }
+
+test("unedited windows and tab changes cannot overwrite another window's newer draft", async () => {
+  const { template, actions } = await setup();
+  const first = new JSDOM(template);
+  const second = new JSDOM(template);
+  const reopened = new JSDOM(template);
+  const close = (dom: JSDOM) => {
+    dom.window.dispatchEvent(new dom.window.Event("unload"));
+    dom.window.close();
+  };
+  try {
+    registerPrefsScripts(first.window as unknown as Window, actions);
+    registerPrefsScripts(second.window as unknown as Window, actions);
+    for (const [label, value] of [
+      ["pref-provider-name", "Newer draft name"],
+      ["pref-provider-api-key", "fake-newer-draft-key"],
+    ]) {
+      const field = first.window.document.querySelector(
+        `[aria-label="${label}"]`,
+      ) as HTMLInputElement;
+      field.value = value;
+      field.dispatchEvent(new first.window.Event("input", { bubbles: true }));
+    }
+    (
+      second.window.document.getElementById(
+        "papertranslateforzotero-translation-tab",
+      ) as HTMLButtonElement
+    ).click();
+    close(first);
+    close(second);
+    registerPrefsScripts(reopened.window as unknown as Window, actions);
+    const field = (label: string) =>
+      reopened.window.document.querySelector(
+        `[aria-label="${label}"]`,
+      ) as HTMLInputElement;
+    assert.equal(field("pref-provider-name").value, "Newer draft name");
+    assert.equal(field("pref-provider-api-key").value, "fake-newer-draft-key");
+    assert.equal(
+      getModelProviderConfiguration().providers[0].apiKey,
+      "fake-saved-key",
+      "remembering a shared draft does not apply it",
+    );
+  } finally {
+    close(first);
+    close(second);
+    close(reopened);
+  }
+});
+
+for (const operation of ["catalog", "text-test", "picker"] as const) {
+  test(`opening and closing another settings window leaves the first window's ${operation} intact`, async () => {
+    const { template, actions } = await setup();
+    const first = new JSDOM(template);
+    const second = new JSDOM(template);
+    let requestSignal: AbortSignal | undefined;
+    let respond: ((response: Response) => void) | undefined;
+    const catalogResponse = () =>
+      new Response(JSON.stringify({ data: [{ id: "listed-model" }] }));
+    (globalThis as any).ztoolkit = {
+      getGlobal: () => async (_url: string, init: RequestInit) => {
+        requestSignal = init.signal as AbortSignal;
+        if (operation === "picker") return catalogResponse();
+        return new Promise<Response>((resolve) => {
+          respond = resolve;
+        });
+      },
+    };
+    const doc = first.window.document;
+    const assertOperationActive = () => {
+      if (operation === "picker") {
+        assert.ok(doc.querySelector("dialog")?.hasAttribute("open"));
+      } else {
+        assert.equal(requestSignal?.aborted, false);
+      }
+    };
+    try {
+      registerPrefsScripts(first.window as unknown as Window, actions);
+      if (operation === "text-test") {
+        (doc.querySelector(".pt-test-toggle") as HTMLButtonElement).click();
+        (
+          doc.querySelector(".pt-test-choices button") as HTMLButtonElement
+        ).click();
+      } else {
+        (doc.querySelector(".pt-fetch-models") as HTMLButtonElement).click();
+      }
+      await setImmediate();
+      assertOperationActive();
+      registerPrefsScripts(second.window as unknown as Window, actions);
+      await setImmediate();
+      assertOperationActive();
+      second.window.dispatchEvent(new second.window.Event("unload"));
+      await setImmediate();
+      assertOperationActive();
+      if (operation === "catalog") {
+        respond!(catalogResponse());
+        await setImmediate();
+        assert.ok(doc.querySelector("dialog")?.hasAttribute("open"));
+      } else if (operation === "text-test") {
+        respond!(
+          new Response(
+            'data: {"type":"response.output_text.delta","delta":"OK"}\n\ndata: {"type":"response.completed","response":{"status":"completed"}}\n\n',
+          ),
+        );
+        await setImmediate();
+        assert.match(
+          doc.querySelector(".pt-provider-status")!.textContent!,
+          /success: OK/u,
+        );
+      }
+    } finally {
+      for (const dom of [first, second]) {
+        dom.window.dispatchEvent(new dom.window.Event("unload"));
+        dom.window.close();
+      }
+    }
+  });
+}
+
+test("another editor can keep editing the shared draft after a window saves it", async () => {
+  const { template, actions } = await setup();
+  const first = new JSDOM(template);
+  const second = new JSDOM(template);
+  try {
+    registerPrefsScripts(first.window as unknown as Window, actions);
+    registerPrefsScripts(second.window as unknown as Window, actions);
+    (
+      first.window.document.querySelector(
+        ".pt-save-button",
+      ) as HTMLButtonElement
+    ).click();
+    const name = second.window.document.querySelector(
+      '[aria-label="pref-provider-name"]',
+    ) as HTMLInputElement;
+    name.value = "Edited after another window saved";
+    name.dispatchEvent(new second.window.Event("input", { bubbles: true }));
+    (
+      second.window.document.querySelector(
+        ".pt-save-button",
+      ) as HTMLButtonElement
+    ).click();
+    assert.equal(
+      getModelProviderConfiguration().providers[0].name,
+      "Edited after another window saved",
+    );
+  } finally {
+    for (const dom of [first, second]) {
+      dom.window.dispatchEvent(new dom.window.Event("unload"));
+      dom.window.close();
+    }
+  }
+});
 
 test("draft fields survive auth changes, tab changes, pane reconstruction and reopening without applying them", async () => {
   const { template, actions } = await setup();
