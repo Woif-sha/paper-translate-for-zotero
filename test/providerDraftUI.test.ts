@@ -69,6 +69,123 @@ async function setup() {
   return { template, actions };
 }
 
+test("settings windows keep provider and model expansion independent across clicks and shared renders", async () => {
+  const { template, actions } = await setup();
+  const first = new JSDOM(template);
+  const second = new JSDOM(template);
+  const node = (dom: JSDOM, selector: string) =>
+    dom.window.document.querySelector(selector) as HTMLElement;
+  const click = (dom: JSDOM, selector: string) => node(dom, selector).click();
+  const assertView = (
+    dom: JSDOM,
+    providerOpen: boolean,
+    modelOpen: boolean,
+  ) => {
+    assert.equal(node(dom, ".pt-provider-body").hidden, !providerOpen);
+    assert.equal(
+      node(dom, ".pt-provider-toggle").getAttribute("aria-expanded"),
+      String(providerOpen),
+    );
+    assert.equal(node(dom, ".pt-model-controls").hidden, !modelOpen);
+    assert.equal(
+      node(dom, ".pt-model-options").getAttribute("aria-expanded"),
+      String(modelOpen),
+    );
+  };
+  try {
+    registerPrefsScripts(first.window as unknown as Window, actions);
+    registerPrefsScripts(second.window as unknown as Window, actions);
+    assertView(first, false, false);
+    assertView(second, false, false);
+    click(first, ".pt-provider-toggle");
+    assertView(first, true, false);
+    assertView(second, false, false);
+    click(second, ".pt-provider-toggle");
+    assertView(second, true, false);
+    click(first, ".pt-model-options");
+    assertView(first, true, true);
+    assertView(second, true, false);
+    click(second, ".pt-model-options");
+    assertView(second, true, true);
+    click(first, ".pt-model-options");
+    click(first, ".pt-provider-toggle");
+    assertView(first, false, false);
+    assertView(second, true, true);
+    const name = node(
+      second,
+      '[aria-label="pref-provider-name"]',
+    ) as HTMLInputElement;
+    name.value = "Shared edit with separate expansion";
+    name.dispatchEvent(new second.window.Event("input", { bubbles: true }));
+    assertView(first, false, false);
+    assertView(second, true, true);
+    click(second, ".pt-save-button");
+    assertView(first, false, false);
+    assertView(second, true, true);
+    click(first, ".pt-provider-toggle");
+    click(second, ".pt-provider-toggle");
+    assertView(first, true, false);
+    assertView(second, false, true);
+  } finally {
+    for (const dom of [first, second]) {
+      dom.window.dispatchEvent(new dom.window.Event("unload"));
+      dom.window.close();
+    }
+  }
+});
+
+test("pane reconstruction keeps its window view and closing or changing tabs preserves the latest expansion memory", async () => {
+  const { template, actions } = await setup();
+  const first = new JSDOM(template);
+  const second = new JSDOM(template);
+  const reopened = new JSDOM(template);
+  const click = (dom: JSDOM, selector: string) =>
+    (dom.window.document.querySelector(selector) as HTMLElement).click();
+  const assertExpansion = (dom: JSDOM, open: boolean) => {
+    for (const selector of [".pt-provider-body", ".pt-model-controls"]) {
+      assert.equal(
+        (dom.window.document.querySelector(selector) as HTMLElement).hidden,
+        !open,
+      );
+    }
+  };
+  const close = (dom: JSDOM) => {
+    dom.window.dispatchEvent(new dom.window.Event("unload"));
+    dom.window.close();
+  };
+  try {
+    registerPrefsScripts(first.window as unknown as Window, actions);
+    registerPrefsScripts(second.window as unknown as Window, actions);
+    click(first, ".pt-provider-toggle");
+    click(first, ".pt-model-options");
+    click(second, "#papertranslateforzotero-translation-tab");
+    second.window.document.body.innerHTML = template;
+    registerPrefsScripts(second.window as unknown as Window, actions);
+    assertExpansion(first, true);
+    assertExpansion(second, false);
+    assert.equal(
+      second.window.document
+        .getElementById("papertranslateforzotero-translation-tab")!
+        .getAttribute("aria-selected"),
+      "true",
+    );
+    close(first);
+    close(second);
+    registerPrefsScripts(reopened.window as unknown as Window, actions);
+    assertExpansion(reopened, true);
+    assert.equal(
+      reopened.window.document
+        .getElementById("papertranslateforzotero-translation-tab")!
+        .getAttribute("aria-selected"),
+      "true",
+    );
+  } finally {
+    close(first);
+    close(second);
+    close(reopened);
+  }
+});
+
 test("unedited windows and tab changes cannot overwrite another window's newer draft", async () => {
   const { template, actions } = await setup();
   const first = new JSDOM(template);

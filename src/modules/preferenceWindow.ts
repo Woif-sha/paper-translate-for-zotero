@@ -33,11 +33,21 @@ type ProviderEditorResources = {
   discoveries: Map<HTMLElement, AbortController>;
   modelPickers: Map<HTMLElement, () => void>;
 };
-// Open windows edit one draft; only their request and DOM resources are local.
+type ProviderEditorView = {
+  openProviderIds: Set<string>;
+  openModelIds: Set<string>;
+  tab: number;
+};
+// Open windows edit one draft; each owns its view and request resources.
 let providerEditorDraft: ProviderEditorDraft | undefined;
 const preferenceEditors = new Map<
   Window,
-  { root: HTMLElement; render(): void; dispose(): void }
+  {
+    root: HTMLElement;
+    view: ProviderEditorView;
+    render(): void;
+    dispose(): void;
+  }
 >();
 
 export async function registerPrefsWindow(): Promise<void> {
@@ -81,8 +91,18 @@ export function registerPrefsScripts(
     discoveries: new Map(),
     modelPickers: new Map(),
   };
-  const openProviderIds = memory.openProviderIds;
-  const openModelIds = memory.openModelIds;
+  const view = previousEditor?.view ?? {
+    openProviderIds: new Set(memory.openProviderIds),
+    openModelIds: new Set(memory.openModelIds),
+    tab: memory.tab,
+  };
+  const { openProviderIds, openModelIds } = view;
+  const rememberExpansion = () => {
+    // Only an explicit expansion change replaces the next window's snapshot.
+    memory.openProviderIds = new Set(openProviderIds);
+    memory.openModelIds = new Set(openModelIds);
+    memory.remember();
+  };
   const remember = (event?: Event) => {
     memory.remember();
     if (
@@ -93,7 +113,8 @@ export function registerPrefsScripts(
     }
   };
   bindSourceLanguage(doc);
-  bindPreferenceTabs(doc, memory.tab, (tab) => {
+  bindPreferenceTabs(doc, view.tab, (tab) => {
+    view.tab = tab;
     memory.tab = tab;
     remember();
   });
@@ -111,6 +132,7 @@ export function registerPrefsScripts(
       openModelIds,
       memory,
       resources,
+      onViewChanged: rememberExpansion,
       activeModelId: configuration.activeModelId,
       modelSelection,
       onDraftsChanged(next) {
@@ -143,6 +165,7 @@ export function registerPrefsScripts(
     provider.models.push(createProviderModel());
     memory.providers = [...memory.providers, provider];
     openProviderIds.add(provider.id);
+    rememberExpansion();
     renderPreferenceEditors();
   };
   add.addEventListener("click", addProvider);
@@ -167,7 +190,7 @@ export function registerPrefsScripts(
     cancelConnectionTests(resources);
     stopModelDiscovery(resources);
   };
-  preferenceEditors.set(window, { root, render, dispose });
+  preferenceEditors.set(window, { root, view, render, dispose });
   window.addEventListener("unload", dispose, { once: true });
   render();
   if (memory.invalidCache) {
@@ -191,6 +214,7 @@ type ProviderCardRenderParams = {
   openModelIds: Set<string>;
   memory: ProviderEditorDraft;
   resources: ProviderEditorResources;
+  onViewChanged(): void;
   modelSelection: ModelSelectionActions;
   onDraftsChanged(providers: ModelProviderGroup[]): void;
   onSaved(savedProviderId?: string): void;
@@ -436,9 +460,11 @@ function createProviderCard(
             ).providers,
         );
         params.openProviderIds.delete(provider.id);
+        params.onViewChanged();
         params.onSaved();
       } else {
         params.openProviderIds.delete(provider.id);
+        params.onViewChanged();
         params.onDraftsChanged(next);
       }
     } catch (error) {
@@ -695,6 +721,7 @@ function createModelRow(
     if (settings.hidden) params.openModelIds.delete(model.id);
     else params.openModelIds.add(model.id);
     options.setAttribute("aria-expanded", String(!settings.hidden));
+    params.onViewChanged();
   });
   row.append(testToggle, options);
   modelWrap.append(row, testChoices, settings);
@@ -927,6 +954,7 @@ function createProviderHeader(
     card.dataset.open = String(open);
     toggle.setAttribute("aria-expanded", String(open));
     (card.querySelector(".pt-provider-body") as HTMLElement).hidden = !open;
+    params.onViewChanged();
   });
   header.append(icon, toggle, tag, chevron);
   header.addEventListener("click", (event) => {
@@ -994,7 +1022,7 @@ function bindPreferenceTabs(
       ) as HTMLButtonElement | null,
   );
   if (tabs.some((tab) => !tab)) return;
-  const selectTab = (selected: number, focus = false) => {
+  const selectTab = (selected: number, focus = false, notify = true) => {
     tabs.forEach((tab, index) => {
       tab!.setAttribute("aria-selected", String(index === selected));
       tab!.tabIndex = index === selected ? 0 : -1;
@@ -1004,7 +1032,7 @@ function bindPreferenceTabs(
       if (panel) panel.hidden = index !== selected;
     });
     if (focus) tabs[selected]!.focus();
-    onChange(selected);
+    if (notify) onChange(selected);
   };
   tabs.forEach((tab, index) => {
     tab!.addEventListener("click", () => selectTab(index));
@@ -1024,5 +1052,5 @@ function bindPreferenceTabs(
       selectTab(next, true);
     });
   });
-  selectTab(initial);
+  selectTab(initial, false, false);
 }

@@ -146,6 +146,79 @@ test("restores flattened Reader list boundaries and joins their visual wraps", (
   );
 });
 
+test("joins visual wraps that resemble numbered items, initials, and bullet operators", () => {
+  for (const lines of [
+    [
+      "The measured output is shown in Fig.",
+      "1. The baseline remains unchanged.",
+    ],
+    [
+      "The experiment was performed by John and",
+      "A. Smith using the same device.",
+    ],
+    [
+      "The experiment was performed by John and",
+      "A. Smith using the same device.",
+      "Validation was repeated by Jane and",
+      "B. Jones with the same device.",
+    ],
+    ["The product a", "• b gives the scalar output."],
+  ]) {
+    assert.equal(
+      normalizeGlyphReaderSelection([lines.map((text) => ({ text }))]),
+      lines.join(" "),
+    );
+  }
+});
+
+test("restores ordered Reader lists from consecutive item markers", () => {
+  for (const markers of [
+    ["3.", "4."],
+    ["A.", "B."],
+    ["I.", "II."],
+    ["IV.", "V."],
+  ]) {
+    const lines = markers.map((marker) => `${marker} A list item.`);
+    assert.equal(
+      normalizeGlyphReaderSelection([lines.map((text) => ({ text }))]),
+      lines.join("\n"),
+    );
+  }
+});
+
+test("restores a Reader list after a proven paragraph boundary", () => {
+  assert.equal(
+    normalizeGlyphReaderSelection([
+      [
+        { text: "The procedure has two steps.", paragraphBreakAfter: true },
+        { text: "A. The first step wraps" },
+        { text: "onto another visual line." },
+        { text: "B. The second step." },
+      ],
+    ]),
+    "The procedure has two steps.\nA. The first step wraps onto another visual line.\nB. The second step.",
+  );
+});
+
+test("does not extend an earlier Reader list into a later prose paragraph", () => {
+  const prose = [
+    "The experiment was performed by John and",
+    "A. Smith using the same device.",
+    "Validation was repeated by Jane and",
+    "B. Jones with the same device.",
+  ];
+  assert.equal(
+    normalizeGlyphReaderSelection([
+      [
+        { text: "A. First item." },
+        { text: "B. Second item.", paragraphBreakAfter: true },
+        ...prose.map((text) => ({ text })),
+      ],
+    ]),
+    `A. First item.\nB. Second item.\n${prose.join(" ")}`,
+  );
+});
+
 test("restores Reader paragraph metadata without splitting ordinary visual lines", () => {
   assert.equal(
     normalizeGlyphReaderSelection([
@@ -183,6 +256,59 @@ test("restores retained paragraph boundaries after removing verified cross-page 
       ],
     ]),
     "The first paragraph ends here.\nThe second paragraph starts here. Repeated journal footer",
+  );
+});
+
+test("discards IEEE furniture paragraph metadata before restoring cross-page boundaries", () => {
+  for (const furniture of [
+    ["979-8-3503-9354-5/24/$31.00 ©2024 IEEE"],
+    [
+      "Authorized licensed use limited to:",
+      "Southeast University. Downloaded on July 16, 2026",
+      "at 07:25:45 UTC from IEEE Xplore. Restrictions apply.",
+    ],
+  ]) {
+    assert.equal(
+      normalizeGlyphReaderSelection([
+        [
+          { text: "The key" },
+          ...furniture.map((text) => ({ text, paragraphBreakAfter: true })),
+        ],
+        [{ text: "is to remove redundancy." }],
+      ]),
+      "The key is to remove redundancy.",
+    );
+  }
+});
+
+test("keeps a semantic paragraph boundary while discarding the following IEEE footer", () => {
+  assert.equal(
+    normalizeGlyphReaderSelection([
+      [
+        { text: "The first paragraph ends here.", paragraphBreakAfter: true },
+        {
+          text: "979-8-3503-9354-5/24/$31.00 ©2024 IEEE",
+          paragraphBreakAfter: true,
+        },
+      ],
+      [{ text: "The second paragraph starts here." }],
+    ]),
+    "The first paragraph ends here.\nThe second paragraph starts here.",
+  );
+});
+
+test("discards paragraph metadata from an IEEE suffix after retained body text", () => {
+  assert.equal(
+    normalizeGlyphReaderSelection([
+      [
+        {
+          text: "The key 979-8-3503-9354-5/24/$31.00 ©2024 IEEE",
+          paragraphBreakAfter: true,
+        },
+      ],
+      [{ text: "is to remove redundancy." }],
+    ]),
+    "The key is to remove redundancy.",
   );
 });
 

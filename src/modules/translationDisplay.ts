@@ -1,4 +1,5 @@
 import MarkdownIt from "markdown-it";
+import type StateBlock from "markdown-it/lib/rules_block/state_block.mjs";
 import type StateInline from "markdown-it/lib/rules_inline/state_inline.mjs";
 import katex from "katex";
 import { config } from "../../package.json";
@@ -17,6 +18,9 @@ const markdown = new MarkdownIt({
 });
 
 markdown.disable(["image", "link"]);
+markdown.block.ruler.after("fence", "translation_math_block", parseMathBlock, {
+  alt: ["paragraph", "reference", "blockquote", "list"],
+});
 markdown.inline.ruler.before("escape", "translation_script", parseScript);
 markdown.inline.ruler.before("escape", "translation_math", parseMath);
 markdown.renderer.rules.translation_script = (tokens, index) => {
@@ -146,6 +150,52 @@ function findClosingScriptMarker(
     position += 1;
   }
   return -1;
+}
+
+function parseMathBlock(
+  state: StateBlock,
+  startLine: number,
+  endLine: number,
+  silent: boolean,
+): boolean {
+  const indent = state.sCount[startLine];
+  if ((!silent && indent < state.blkIndent) || indent - state.blkIndent >= 4)
+    return false;
+  // Paragraph termination can probe a root block from inside a lazy list item.
+  const minimumIndent = silent
+    ? Math.min(indent, state.blkIndent)
+    : state.blkIndent;
+  const opening = state.getLines(startLine, startLine + 1, indent, false);
+  if (!opening.startsWith("$$")) return false;
+  for (let lineNumber = startLine; lineNumber < endLine; lineNumber += 1) {
+    if (!state.isEmpty(lineNumber) && state.sCount[lineNumber] < minimumIndent)
+      return false;
+    const line =
+      lineNumber === startLine
+        ? opening
+        : state.getLines(lineNumber, lineNumber + 1, indent, false);
+    const closing = findClosingDelimiter(
+      line,
+      lineNumber === startLine ? 2 : 0,
+      "$$",
+    );
+    if (closing < 0) continue;
+    if (line.slice(closing + 2).trim()) return false;
+    const content = state
+      .getLines(startLine, lineNumber + 1, indent, false)
+      .trimEnd()
+      .slice(2, -2)
+      .trim();
+    if (!content) return false;
+    if (silent) return true;
+    const token = state.push("translation_math", "math", 0);
+    token.content = content;
+    token.markup = "$$";
+    token.map = [startLine, lineNumber + 1];
+    state.line = lineNumber + 1;
+    return true;
+  }
+  return false;
 }
 
 function parseMath(state: StateInline, silent: boolean): boolean {

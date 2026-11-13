@@ -640,29 +640,114 @@ function restoreReaderSemanticBoundaries(
 ): string {
   const { text, lines } = selection;
   if (!lines.length) return text;
-  const boundaries: number[] = [];
+  // Keep offsets stable while removing furniture and its paragraph metadata.
+  const retainedText = text.split("");
+  for (const pattern of CROSS_PAGE_NOISE_PATTERNS) {
+    for (const match of text.matchAll(pattern)) {
+      retainedText.fill(" ", match.index, match.index + match[0].length);
+    }
+  }
+  const retainedLines: (ReaderSelectionLine & { offset: number })[] = [];
   let offset = 0;
-  let paragraphBreakAfter = false;
   for (const line of lines) {
     const lineText = line.text.trim();
     if (!lineText) continue;
     offset += /^\s*/u.exec(text.slice(offset))![0].length;
     if (!text.startsWith(lineText, offset)) return text;
-    if (
-      offset > 0 &&
-      (paragraphBreakAfter || isStructuredSemanticLine(lineText))
-    ) {
-      boundaries.push(offset);
-    }
+    const start = offset;
     offset += lineText.length;
-    paragraphBreakAfter = Boolean(line.paragraphBreakAfter);
+    if (isStandalonePageArtifact(lineText)) {
+      retainedText.fill(" ", start, offset);
+    }
+    const retainedLine = retainedText.slice(start, offset).join("");
+    if (!retainedLine.trim()) continue;
+    retainedLines.push({
+      ...line,
+      text: retainedLine.trim(),
+      offset: start + retainedLine.search(/\S/u),
+      paragraphBreakAfter:
+        line.paragraphBreakAfter && retainedText[offset - 1] !== " ",
+    });
   }
   if (offset !== text.trimEnd().length) return text;
-  let restored = text;
+
+  const listStarts = verifiedReaderListStarts(retainedLines);
+  const boundaries: number[] = [];
+  for (let index = 1; index < retainedLines.length; index += 1) {
+    if (retainedLines[index - 1].paragraphBreakAfter || listStarts.has(index)) {
+      boundaries.push(retainedLines[index].offset);
+    }
+  }
+  let restored = retainedText.join("");
   for (const boundary of boundaries.reverse()) {
     restored = `${restored.slice(0, boundary)}${PARAGRAPH_MARKER}${restored.slice(boundary)}`;
   }
   return restored;
+}
+
+function verifiedReaderListStarts(
+  lines: readonly ReaderSelectionLine[],
+): Set<number> {
+  const starts = new Set<number>();
+  let previous:
+    | { marker: string; index: number; anchored: boolean }
+    | undefined;
+  for (const [index, line] of lines.entries()) {
+    const paragraphStart = index === 0 || lines[index - 1].paragraphBreakAfter;
+    if (paragraphStart) previous = undefined;
+    const marker = readerListMarker(line.text);
+    if (!marker) continue;
+    // A lexical sequence needs a known start; only adjacent confirmed items
+    // can anchor another list style.
+    let anchored = Boolean(
+      paragraphStart ||
+      (previous?.index === index - 1 && starts.has(previous.index)),
+    );
+    if (
+      previous?.anchored &&
+      areConsecutiveListMarkers(previous.marker, marker)
+    ) {
+      starts.add(previous.index);
+      starts.add(index);
+      anchored = true;
+    }
+    previous = { marker, index, anchored };
+  }
+  return starts;
+}
+
+function areConsecutiveListMarkers(previous: string, next: string): boolean {
+  if (new RegExp(`^${BULLET_PATTERN}$`, "u").test(previous)) {
+    return previous === next;
+  }
+  if (/^\d+\.$/u.test(previous) && /^\d+\.$/u.test(next)) {
+    return Number(next.slice(0, -1)) === Number(previous.slice(0, -1)) + 1;
+  }
+  if (/^[A-Z]\.$/u.test(previous) && /^[A-Z]\.$/u.test(next)) {
+    if (next.charCodeAt(0) === previous.charCodeAt(0) + 1) return true;
+  }
+  if (/^[IVXLCDM]+\.$/u.test(previous) && /^[IVXLCDM]+\.$/u.test(next)) {
+    return romanListOrdinal(next) === romanListOrdinal(previous) + 1;
+  }
+  return false;
+}
+
+function romanListOrdinal(marker: string): number {
+  const values: Record<string, number> = {
+    I: 1,
+    V: 5,
+    X: 10,
+    L: 50,
+    C: 100,
+    D: 500,
+    M: 1_000,
+  };
+  let ordinal = 0;
+  for (let index = 0; index < marker.length - 1; index += 1) {
+    const value = values[marker[index]];
+    ordinal += value < values[marker[index + 1]] ? -value : value;
+  }
+  return ordinal;
 }
 
 function formsAlignedProseContinuation(
@@ -838,10 +923,14 @@ function areContinuousProseLines(
 }
 
 function isStructuredSemanticLine(value: string): boolean {
+  return Boolean(readerListMarker(value));
+}
+
+function readerListMarker(value: string): string | undefined {
   return new RegExp(
-    `^(?:${BULLET_PATTERN}|(?:[IVXLCDM]+|\\d+|[A-Z])\\.)\\s+\\S`,
+    `^(${BULLET_PATTERN}|(?:[IVXLCDM]+|\\d+|[A-Z])\\.)\\s+\\S`,
     "u",
-  ).test(value.trim());
+  ).exec(value.trim())?.[1];
 }
 
 function isCompleteSingleLineObjectHeading(value: string): boolean {

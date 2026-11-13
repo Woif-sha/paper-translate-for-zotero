@@ -32,6 +32,56 @@ test("renders display LaTeX with surrounding whitespace inside its delimiters", 
   assert.doesNotMatch(markup, /\$\$/u);
 });
 
+test("parses display math before Markdown can split its blank lines or operators", () => {
+  for (const content of ["\n\n c_1 \n\n", "\n- x + y\n", "\n1. x + y\n"]) {
+    const markup = renderTranslationMarkup(`Before\n$$${content}$$\nAfter`);
+    assert.equal(markup.match(/<math/gu)?.length, 1);
+    assert.match(markup, /display="block"/u);
+    assert.match(markup, /<p>Before<\/p>/u);
+    assert.match(markup, /<p>After<\/p>/u);
+    assert.doesNotMatch(markup, /\$\$|<ul>|<ol>/u);
+  }
+});
+
+test("keeps display math inside its Markdown container and out of code blocks", () => {
+  for (const value of [
+    "> $$\n>\n> - x + y\n>\n> $$\n\nAfter",
+    "- $$\n\n  - x + y\n\n  $$\n\nAfter",
+  ]) {
+    const markup = renderTranslationMarkup(value);
+    assert.equal(markup.match(/<math/gu)?.length, 1);
+    assert.match(markup, /display="block"/u);
+    assert.match(markup, /<p>After<\/p>/u);
+    assert.doesNotMatch(markup, /\$\$/u);
+  }
+  for (const value of ["```text\n$$\nx + y\n$$\n```", "    $$x + y$$"]) {
+    const markup = renderTranslationMarkup(value);
+    assert.match(markup, /<pre><code/u);
+    assert.doesNotMatch(markup, /<math/u);
+  }
+});
+
+test("leaves an unfinished display block as text until its delimiter arrives", () => {
+  const unfinished = renderTranslationMarkup("$$\n\n c_1\n\nAfter");
+  assert.doesNotMatch(unfinished, /<math/u);
+  assert.match(unfinished, /\$\$/u);
+  assert.match(unfinished, /After/u);
+  const complete = renderTranslationMarkup("$$\n\n c_1\n\n$$\nAfter");
+  assert.match(complete, /<math[^>]+display="block"/u);
+  assert.match(complete, /<p>After<\/p>/u);
+});
+
+test("lets a root display block follow a list without a blank line", () => {
+  for (const content of ["\n- x + y\n", "\n\n c_1 \n\n"]) {
+    const markup = renderTranslationMarkup(`- item\n$$${content}$$\nAfter`);
+    assert.equal(markup.match(/<math/gu)?.length, 1);
+    assert.equal(markup.match(/<li>/gu)?.length, 1);
+    assert.ok(markup.indexOf("</ul>") < markup.indexOf("<math"));
+    assert.match(markup, /<p>After<\/p>/u);
+    assert.doesNotMatch(markup, /\$\$/u);
+  }
+});
+
 test("keeps empty display math and whitespace-delimited inline math as text", () => {
   for (const value of ["$$\n  \n$$", "$ c_1$", "$c_1 $"]) {
     const markup = renderTranslationMarkup(value);
