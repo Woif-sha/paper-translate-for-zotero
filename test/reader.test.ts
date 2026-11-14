@@ -146,6 +146,111 @@ test("restores flattened Reader list boundaries and joins their visual wraps", (
   );
 });
 
+test("preserves mixed Reader bullet items and their nested visual wraps", () => {
+  for (const nestedBullet of ["◦", "▪", "●", "‣"]) {
+    assert.equal(
+      normalizeGlyphReaderSelection([
+        [
+          { text: "• Main item", rect: [50, 700, 140, 712] },
+          {
+            text: `${nestedBullet} Nested item wraps`,
+            rect: [68, 676, 212, 688],
+          },
+          { text: "onto another line.", rect: [80, 652, 188, 664] },
+          {
+            text: `${nestedBullet} Second nested item`,
+            rect: [68, 628, 212, 640],
+          },
+          { text: "• Next main item", rect: [50, 604, 152, 616] },
+        ],
+      ]),
+      `• Main item\n${nestedBullet} Nested item wraps onto another line.\n${nestedBullet} Second nested item\n• Next main item`,
+    );
+  }
+});
+
+test("preserves restarted numbered sublists and returns to their parent list", () => {
+  for (const [firstParent, secondParent] of [
+    ["1.", "2."],
+    ["•", "•"],
+  ]) {
+    assert.equal(
+      normalizeGlyphReaderSelection([
+        [
+          {
+            text: `${firstParent} First main item`,
+            rect: [50, 700, 164, 712],
+          },
+          { text: "1. First nested item wraps", rect: [68, 676, 218, 688] },
+          { text: "onto another line.", rect: [80, 652, 188, 664] },
+          { text: "2. Second nested item", rect: [68, 628, 194, 640] },
+          {
+            text: `${secondParent} Second main item`,
+            rect: [50, 604, 170, 616],
+          },
+        ],
+      ]),
+      `${firstParent} First main item\n1. First nested item wraps onto another line.\n2. Second nested item\n${secondParent} Second main item`,
+    );
+  }
+});
+
+test("continues a Reader list across columns and a page without reusing old indentation levels", () => {
+  assert.equal(
+    normalizeGlyphReaderSelection([
+      [
+        { text: "1. First item", rect: [50, 100, 128, 112] },
+        { text: "2. Second item", rect: [300, 700, 384, 712] },
+        { text: "3. Third item", rect: [300, 676, 378, 688] },
+      ],
+      [{ text: "4. Fourth item", rect: [50, 700, 134, 712] }],
+    ]),
+    "1. First item\n2. Second item\n3. Third item\n4. Fourth item",
+  );
+});
+
+test("preserves sole nested items when their parent list is confirmed", () => {
+  for (const [parent, child, nextParent] of [
+    ["1.", "•", "2."],
+    ["•", "1.", "•"],
+  ]) {
+    assert.equal(
+      normalizeGlyphReaderSelection([
+        [
+          { text: `${parent} First main item`, rect: [50, 700, 164, 712] },
+          { text: `${child} Sole nested item`, rect: [68, 676, 188, 688] },
+          { text: `${nextParent} Second main item`, rect: [50, 652, 170, 664] },
+        ],
+      ]),
+      `${parent} First main item\n${child} Sole nested item\n${nextParent} Second main item`,
+    );
+    assert.equal(
+      normalizeGlyphReaderSelection([
+        [
+          { text: `${parent} First main item`, rect: [50, 700, 164, 712] },
+          { text: `${nextParent} Second main item`, rect: [50, 676, 170, 688] },
+          { text: `${child} Sole nested item`, rect: [68, 652, 188, 664] },
+        ],
+      ]),
+      `${parent} First main item\n${nextParent} Second main item\n${child} Sole nested item`,
+    );
+  }
+});
+
+test("confirms mixed single subitems through their shared parent list", () => {
+  assert.equal(
+    normalizeGlyphReaderSelection([
+      [
+        { text: "1. First main item", rect: [50, 700, 164, 712] },
+        { text: "• Bullet subitem", rect: [68, 676, 164, 688] },
+        { text: "1. Numbered subitem", rect: [68, 652, 182, 664] },
+        { text: "2. Second main item", rect: [50, 628, 170, 640] },
+      ],
+    ]),
+    "1. First main item\n• Bullet subitem\n1. Numbered subitem\n2. Second main item",
+  );
+});
+
 test("joins visual wraps that resemble numbered items, initials, and bullet operators", () => {
   for (const lines of [
     [
@@ -163,6 +268,7 @@ test("joins visual wraps that resemble numbered items, initials, and bullet oper
       "B. Jones with the same device.",
     ],
     ["The product a", "• b gives the scalar output."],
+    ["The product a", "• b multiplies the vector", "◦ c without a list."],
   ]) {
     assert.equal(
       normalizeGlyphReaderSelection([lines.map((text) => ({ text }))]),

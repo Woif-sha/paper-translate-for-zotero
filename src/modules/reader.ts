@@ -689,36 +689,65 @@ function verifiedReaderListStarts(
   lines: readonly ReaderSelectionLine[],
 ): Set<number> {
   const starts = new Set<number>();
-  let previous:
-    | { marker: string; index: number; anchored: boolean }
-    | undefined;
+  const levels: {
+    marker: string;
+    index: number;
+    anchored: boolean;
+    descendants: number[];
+  }[] = [];
   for (const [index, line] of lines.entries()) {
     const paragraphStart = index === 0 || lines[index - 1].paragraphBreakAfter;
-    if (paragraphStart) previous = undefined;
+    if (paragraphStart) levels.length = 0;
     const marker = readerListMarker(line.text);
     if (!marker) continue;
+    // Sequence evidence survives a column or page changing the coordinates.
+    const sequencePredecessors = levels.filter(
+      (candidate) =>
+        candidate.anchored &&
+        areConsecutiveListMarkers(candidate.marker, marker),
+    );
+    while (
+      levels.length > 1 &&
+      line.rect[0] < lines[levels[levels.length - 1].index].rect[0]
+    ) {
+      levels.pop();
+    }
+    const previous = levels.at(-1);
+    const nested = Boolean(
+      previous && line.rect[0] > lines[previous.index].rect[0],
+    );
+    const parents = nested ? levels : levels.slice(0, -1);
+    const parent = parents.at(-1);
     // A lexical sequence needs a known start; only adjacent confirmed items
-    // can anchor another list style.
+    // or an anchored parent can anchor another list style.
     let anchored = Boolean(
       paragraphStart ||
+      parent?.anchored ||
       (previous?.index === index - 1 && starts.has(previous.index)),
     );
-    if (
-      previous?.anchored &&
-      areConsecutiveListMarkers(previous.marker, marker)
-    ) {
-      starts.add(previous.index);
+    if (parent?.anchored) {
+      for (const ancestor of parents) ancestor.descendants.push(index);
+      if (starts.has(parent.index)) starts.add(index);
+    }
+    if (sequencePredecessors.length) {
       starts.add(index);
+      for (const candidate of sequencePredecessors) {
+        starts.add(candidate.index);
+        // Parent confirmation also covers recorded single subitems.
+        for (const descendant of candidate.descendants) starts.add(descendant);
+      }
       anchored = true;
     }
-    previous = { marker, index, anchored };
+    const current = { marker, index, anchored, descendants: [] };
+    if (nested || !levels.length) levels.push(current);
+    else levels[levels.length - 1] = current;
   }
   return starts;
 }
 
 function areConsecutiveListMarkers(previous: string, next: string): boolean {
   if (new RegExp(`^${BULLET_PATTERN}$`, "u").test(previous)) {
-    return previous === next;
+    return new RegExp(`^${BULLET_PATTERN}$`, "u").test(next);
   }
   if (/^\d+\.$/u.test(previous) && /^\d+\.$/u.test(next)) {
     return Number(next.slice(0, -1)) === Number(previous.slice(0, -1)) + 1;
