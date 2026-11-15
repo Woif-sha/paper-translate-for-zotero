@@ -6,8 +6,7 @@
 
 ## 安装与更新
 
-- 已安装用户可通过 Zotero 的插件更新功能升级。
-- 手动安装请下载本 Release 中的 `paper-translate-for-zotero.xpi`，在 Zotero 的“工具 → 插件”中通过齿轮菜单选择“从文件安装插件”，覆盖安装后完整重启 Zotero。
+- 安装或更新均请下载本 Release 中的 `paper-translate-for-zotero.xpi`，在 Zotero 的“工具 → 插件”中通过齿轮菜单选择“从文件安装插件”，覆盖安装后完整重启 Zotero。
 
 ## 发布校验
 
