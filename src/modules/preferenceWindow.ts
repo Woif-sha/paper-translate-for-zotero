@@ -21,8 +21,12 @@ import {
   type ApiProtocol,
 } from "../models/protocols";
 import { testModelImageConnection } from "../models/connectionTests";
-import { fetchProviderModels } from "../models/modelDiscovery";
+import {
+  fetchProviderModels,
+  type DiscoveredModel,
+} from "../models/modelDiscovery";
 import { openModelPicker } from "./modelPicker";
+import { attachProviderModelSelect } from "./providerModelSelect";
 import { ProviderEditorDraft } from "../models/providerEditorDraft";
 
 export const PREFERENCES_PANE_ID = `${config.addonRef}-preferences`;
@@ -30,8 +34,16 @@ const CONNECTION_TEST_TIMEOUT_MS = 30_000;
 let preferencesRegistered = false;
 type ProviderEditorResources = {
   connectionTests: Set<AbortController>;
-  discoveries: Map<HTMLElement, AbortController>;
+  discoveries: Map<
+    HTMLElement,
+    { controller: AbortController; promise: Promise<DiscoveredModel[]> }
+  >;
   modelPickers: Map<HTMLElement, () => void>;
+  modelSelects: Map<
+    HTMLElement,
+    ReturnType<typeof attachProviderModelSelect>[]
+  >;
+  catalogs: Map<string, { identity: string; models: DiscoveredModel[] }>;
 };
 type ProviderEditorView = {
   openProviderIds: Set<string>;
@@ -90,6 +102,8 @@ export function registerPrefsScripts(
     connectionTests: new Set(),
     discoveries: new Map(),
     modelPickers: new Map(),
+    modelSelects: new Map(),
+    catalogs: new Map(),
   };
   const view = previousEditor?.view ?? {
     openProviderIds: new Set(memory.openProviderIds),
@@ -121,10 +135,17 @@ export function registerPrefsScripts(
   ensureProviderStyles(doc);
 
   const render = () => {
+    disposeModelSelects(resources);
     cancelConnectionTests(resources);
     stopModelDiscovery(resources);
     const configuration = getModelProviderConfiguration();
     memory.syncSaved(configuration.providers);
+    const providerIds = new Set(
+      memory.providers.map((provider) => provider.id),
+    );
+    for (const id of resources.catalogs.keys()) {
+      if (!providerIds.has(id)) resources.catalogs.delete(id);
+    }
     renderProviderCards({
       doc,
       drafts: memory.providers,
@@ -187,8 +208,10 @@ export function registerPrefsScripts(
     window.removeEventListener("unload", dispose);
     preferenceEditors.delete(window);
     if (!preferenceEditors.size) providerEditorDraft = undefined;
+    disposeModelSelects(resources);
     cancelConnectionTests(resources);
     stopModelDiscovery(resources);
+    resources.catalogs.clear();
   };
   preferenceEditors.set(window, { root, view, render, dispose });
   window.addEventListener("unload", dispose, { once: true });
@@ -396,14 +419,12 @@ function createProviderCard(
   });
   const modelActions = htmlElement(doc, "div");
   modelActions.className = "pt-model-heading-actions";
-  if (provider.authMode === "openai_compatible") {
-    const discover = actionButton(doc, getString("pref-provider-models-fetch"));
-    discover.classList.add("pt-fetch-models");
-    discover.addEventListener("click", () => {
-      void discoverProviderModels(params, card, provider, discover);
-    });
-    modelActions.append(discover);
-  }
+  const discover = actionButton(doc, getString("pref-provider-models-fetch"));
+  discover.classList.add("pt-fetch-models");
+  discover.addEventListener("click", () => {
+    void discoverProviderModels(params, card, provider, discover);
+  });
+  modelActions.append(discover);
   modelActions.append(addModel);
   modelHeading.append(modelTitle, modelActions);
   models.append(modelHeading);
@@ -484,7 +505,7 @@ function stopModelDiscovery(
   resources: ProviderEditorResources,
   card?: HTMLElement,
 ): void {
-  for (const [owner, controller] of resources.discoveries) {
+  for (const [owner, { controller }] of resources.discoveries) {
     if (card && owner !== card) continue;
     resources.discoveries.delete(owner);
     controller.abort(new Error("Model discovery cancelled"));
@@ -494,6 +515,66 @@ function stopModelDiscovery(
     if (card && owner !== card) continue;
     close();
   }
+  for (const [owner, selects] of resources.modelSelects) {
+    if (card && owner !== card) continue;
+    for (const select of selects) select.reset();
+  }
+}
+
+function disposeModelSelects(resources: ProviderEditorResources): void {
+  for (const selects of resources.modelSelects.values()) {
+    for (const select of selects) select.dispose();
+  }
+  resources.modelSelects.clear();
+}
+
+function catalogIdentity(provider: ModelProviderGroup): string {
+  return JSON.stringify([
+    provider.authMode,
+    provider.apiBase,
+    provider.apiKey,
+    provider.protocol,
+    provider.presetId,
+    provider.workspaceId,
+    provider.anthropicVersion,
+  ]);
+}
+
+function loadProviderCatalog(
+  resources: ProviderEditorResources,
+  card: HTMLElement,
+  provider: ModelProviderGroup,
+  force = false,
+): { controller: AbortController; promise: Promise<DiscoveredModel[]> } {
+  const identity = catalogIdentity(provider);
+  const active = resources.discoveries.get(card);
+  if (active) return active;
+  const cached = resources.catalogs.get(provider.id);
+  const controller = new AbortController();
+  if (!force && cached?.identity === identity) {
+    return { controller, promise: Promise.resolve(cached.models) };
+  }
+  resources.catalogs.delete(provider.id);
+  const promise = fetchProviderModels(
+    { ...provider },
+    { signal: controller.signal },
+  )
+    .then((models) => {
+      if (controller.signal.aborted) throw controller.signal.reason;
+      resources.catalogs.set(provider.id, { identity, models });
+      for (const select of resources.modelSelects.get(card) ?? []) {
+        select.setModels(models);
+      }
+      return models;
+    })
+    .finally(() => {
+      if (resources.discoveries.get(card)?.controller === controller) {
+        resources.discoveries.delete(card);
+      }
+    });
+  const request = { controller, promise };
+  resources.discoveries.set(card, request);
+  return request;
 }
 
 async function discoverProviderModels(
@@ -504,15 +585,16 @@ async function discoverProviderModels(
 ): Promise<void> {
   const resources = params.resources;
   stopModelDiscovery(resources, card);
-  const controller = new AbortController();
-  resources.discoveries.set(card, controller);
+  const { controller, promise } = loadProviderCatalog(
+    resources,
+    card,
+    provider,
+    true,
+  );
   button.disabled = true;
   showCardStatus(card, getString("pref-provider-models-fetching"), false);
   try {
-    const models = await fetchProviderModels(
-      { ...provider },
-      { signal: controller.signal },
-    );
+    const models = await promise;
     if (controller.signal.aborted || !card.isConnected) return;
     showCardStatus(card, "", false);
     const close = openModelPicker({
@@ -534,7 +616,10 @@ async function discoverProviderModels(
           (entry) => entry.model.trim() || entry.id === params.activeModelId,
         );
         provider.models.push(
-          ...added.map((id) => ({ ...createProviderModel(id), effort: "" })),
+          ...added.map((id) => ({
+            ...createProviderModel(id),
+            effort: provider.authMode === "codex_auth" ? "medium" : "",
+          })),
         );
         params.onDraftsChanged([...params.drafts]);
         const nextCard = Array.from(
@@ -566,8 +651,6 @@ async function discoverProviderModels(
       );
     }
   } finally {
-    if (resources.discoveries.get(card) === controller)
-      resources.discoveries.delete(card);
     button.disabled = false;
   }
 }
@@ -592,7 +675,27 @@ function createModelRow(
     model.model = modelInput.value;
     updateProviderHeader(card, provider, params.activeModelId);
   });
-  row.append(modelInput);
+  const cached = params.resources.catalogs.get(provider.id);
+  const modelSelect = attachProviderModelSelect({
+    input: modelInput,
+    initialModels:
+      cached?.identity === catalogIdentity(provider)
+        ? cached.models
+        : undefined,
+    loadModels: (options) =>
+      loadProviderCatalog(params.resources, card, provider, options?.force)
+        .promise,
+    onModelPicked(id) {
+      model.model = id;
+      updateProviderHeader(card, provider, params.activeModelId);
+      params.memory.remember();
+      renderPreferenceEditors(doc.defaultView ?? undefined);
+    },
+  });
+  const selects = params.resources.modelSelects.get(card) ?? [];
+  selects.push(modelSelect);
+  params.resources.modelSelects.set(card, selects);
+  row.append(modelSelect.container);
   const modelWrap = htmlElement(doc, "div");
   modelWrap.className = "pt-provider-model";
   const settings = htmlElement(doc, "div");
@@ -724,7 +827,7 @@ function createModelRow(
     params.onViewChanged();
   });
   row.append(testToggle, options);
-  modelWrap.append(row, testChoices, settings);
+  modelWrap.append(row, modelSelect.details, testChoices, settings);
   return modelWrap;
 }
 

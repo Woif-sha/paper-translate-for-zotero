@@ -4,13 +4,242 @@ import {
   CodexLoginRequiredError,
   CodexResponsesStreamParser,
   DEFAULT_CODEX_API_URL,
+  DEFAULT_CODEX_MODELS_URL,
   buildLegacyCodexPayload,
   cancelActiveCodexAuthRefreshes,
+  fetchLegacyCodexModels,
   normalizeEffort,
   runLegacyCodexRequest,
   testLegacyCodexConnection,
   type LegacyCodexRequest,
 } from "../src/codex/legacyClient";
+
+test("Codex catalog uses its fixed official GET and available account header", async () => {
+  await withCatalogAuth(
+    async (url, init) => {
+      assert.equal(String(url), DEFAULT_CODEX_MODELS_URL);
+      assert.equal(
+        String(url),
+        "https://chatgpt.com/backend-api/codex/models?client_version=0.162.1",
+      );
+      assert.equal(init?.method, "GET");
+      assert.equal(init?.redirect, "error");
+      assert.equal(init?.body, undefined);
+      assert.deepEqual(init?.headers, {
+        Accept: "application/json",
+        Authorization: "Bearer catalog-access",
+        "ChatGPT-Account-ID": "catalog-account",
+      });
+      return Response.json({ models: [] });
+    },
+    async (fetchFn) => {
+      const response = await fetchLegacyCodexModels({ fetchFn });
+      assert.equal(response.ok, true);
+    },
+  );
+});
+
+test("catalog and translation share one refresh after explicit HTTP 401", async () => {
+  let refreshCalls = 0;
+  const catalogHeaders: string[] = [];
+  const translationHeaders: string[] = [];
+  await withCatalogAuth(
+    async (url, init) => {
+      if (String(url) === "https://auth.openai.com/oauth/token") {
+        refreshCalls += 1;
+        await new Promise((resolve) => setTimeout(resolve, 5));
+        return Response.json({
+          access_token: "catalog-new-access",
+          refresh_token: "catalog-new-refresh",
+        });
+      }
+      const authorization = (init?.headers as Record<string, string>)
+        .Authorization;
+      const isCatalog = String(url) === DEFAULT_CODEX_MODELS_URL;
+      (isCatalog ? catalogHeaders : translationHeaders).push(authorization);
+      if (authorization === "Bearer catalog-access") {
+        return new Response("unauthorized", { status: 401 });
+      }
+      return isCatalog
+        ? Response.json({ models: [] })
+        : new Response(
+            'data: {"type":"response.completed","response":{"output_text":"OK"}}\n\n',
+          );
+    },
+    async (fetchFn) => {
+      const [catalog, translation] = await Promise.all([
+        fetchLegacyCodexModels({ fetchFn }),
+        runLegacyCodexRequest({
+          apiUrl: DEFAULT_CODEX_API_URL,
+          model: "actual-model",
+          instructions: "Reply OK.",
+          prompt: "OK",
+        }),
+      ]);
+      assert.equal(catalog.ok, true);
+      assert.equal(translation.text, "OK");
+    },
+  );
+  assert.equal(refreshCalls, 1);
+  assert.deepEqual(catalogHeaders, [
+    "Bearer catalog-access",
+    "Bearer catalog-new-access",
+  ]);
+  assert.deepEqual(translationHeaders, catalogHeaders);
+});
+
+test("catalog refreshes missing access once and stops after a repeated HTTP 401", async () => {
+  let refreshCalls = 0;
+  let catalogCalls = 0;
+  await withCatalogAuth(
+    async (url) => {
+      if (String(url) === "https://auth.openai.com/oauth/token") {
+        refreshCalls += 1;
+        return Response.json({ access_token: `new-${refreshCalls}` });
+      }
+      catalogCalls += 1;
+      return new Response("unauthorized", { status: 401 });
+    },
+    async (fetchFn) => {
+      await assert.rejects(
+        fetchLegacyCodexModels({ fetchFn }),
+        (error: Error) => error instanceof CodexLoginRequiredError,
+      );
+    },
+    { refresh_token: "catalog-refresh" },
+  );
+  assert.equal(refreshCalls, 2);
+  assert.equal(catalogCalls, 2);
+});
+
+test("catalog does not refresh on HTTP 403 and never exposes auth or transport details", async () => {
+  let requests = 0;
+  await withCatalogAuth(
+    async (url) => {
+      requests += 1;
+      assert.equal(String(url), DEFAULT_CODEX_MODELS_URL);
+      return new Response("catalog-access catalog-refresh", { status: 403 });
+    },
+    async (fetchFn) => {
+      const response = await fetchLegacyCodexModels({ fetchFn });
+      assert.equal(response.status, 403);
+    },
+  );
+  assert.equal(requests, 1);
+  await withCatalogAuth(
+    async () => {
+      throw new Error("catalog-access catalog-refresh catalog-account");
+    },
+    async (fetchFn) => {
+      await assert.rejects(
+        fetchLegacyCodexModels({ fetchFn }),
+        (error: Error) => {
+          assert.doesNotMatch(
+            String(error),
+            /catalog-access|catalog-refresh|catalog-account/,
+          );
+          return true;
+        },
+      );
+    },
+  );
+});
+
+test("pre-cancelled catalog does not read auth or send credentials", async () => {
+  const controller = new AbortController();
+  controller.abort();
+  await assert.rejects(
+    fetchLegacyCodexModels({
+      signal: controller.signal,
+      fetchFn: async () => assert.fail("cancelled catalog must not fetch"),
+    }),
+    /abort|cancel/i,
+  );
+});
+
+test("cancelling a catalog wait leaves the shared translation refresh running", async () => {
+  let startRefresh!: () => void;
+  const refreshStarted = new Promise<void>((resolve) => {
+    startRefresh = resolve;
+  });
+  let finishRefresh!: () => void;
+  const refreshMayFinish = new Promise<void>((resolve) => {
+    finishRefresh = resolve;
+  });
+  const controller = new AbortController();
+  let refreshCalls = 0;
+  await withCatalogAuth(
+    async (url, init) => {
+      if (String(url) === "https://auth.openai.com/oauth/token") {
+        refreshCalls += 1;
+        startRefresh();
+        await refreshMayFinish;
+        return Response.json({ access_token: "catalog-new-access" });
+      }
+      if (
+        (init?.headers as Record<string, string>).Authorization ===
+        "Bearer catalog-access"
+      ) {
+        return new Response("unauthorized", { status: 401 });
+      }
+      assert.equal(String(url), DEFAULT_CODEX_API_URL);
+      return new Response(
+        'data: {"type":"response.completed","response":{"output_text":"OK"}}\n\n',
+      );
+    },
+    async (fetchFn) => {
+      const catalog = fetchLegacyCodexModels({
+        fetchFn,
+        signal: controller.signal,
+      });
+      const translation = runLegacyCodexRequest({
+        apiUrl: DEFAULT_CODEX_API_URL,
+        model: "actual-model",
+        instructions: "Reply OK.",
+        prompt: "OK",
+      });
+      await refreshStarted;
+      controller.abort();
+      await assert.rejects(catalog, /abort/);
+      finishRefresh();
+      assert.equal((await translation).text, "OK");
+    },
+  );
+  assert.equal(refreshCalls, 1);
+});
+
+async function withCatalogAuth(
+  fetchFn: typeof fetch,
+  run: (fetchFn: typeof fetch) => Promise<void>,
+  tokens: Record<string, string> = {
+    access_token: "catalog-access",
+    refresh_token: "catalog-refresh",
+    account_id: "catalog-account",
+  },
+): Promise<void> {
+  const previousServices = (globalThis as any).Services;
+  const previousIO = (globalThis as any).IOUtils;
+  const previousToolkit = (globalThis as any).ztoolkit;
+  let authDocument = { tokens };
+  (globalThis as any).Services = { env: { get: () => "E:\\CatalogTest" } };
+  (globalThis as any).IOUtils = {
+    async read() {
+      return new TextEncoder().encode(JSON.stringify(authDocument));
+    },
+    async write(_path: string, value: Uint8Array) {
+      authDocument = JSON.parse(new TextDecoder().decode(value));
+    },
+  };
+  (globalThis as any).ztoolkit = { getGlobal: () => fetchFn };
+  try {
+    await run(fetchFn);
+  } finally {
+    cancelActiveCodexAuthRefreshes();
+    (globalThis as any).Services = previousServices;
+    (globalThis as any).IOUtils = previousIO;
+    (globalThis as any).ztoolkit = previousToolkit;
+  }
+}
 
 test("matches llm-for-zotero legacy endpoint and automatic reasoning", () => {
   assert.equal(

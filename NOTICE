@@ -60,6 +60,16 @@ This project contains and adapts code from:
    assets from that revision. This adaptation does not share upstream runtime
    objects, provider preferences or credentials.
 
+   The catalog-backed model dropdown and Codex model discovery additionally
+   consult revision e99ab04709ac0db63c9c591577fddc2c182c8e42 (v3.9.17):
+   src/modules/preferenceScript.ts, src/utils/providerModelPicker.ts,
+   src/modules/preferences/providerCards/codexDirectProviderCardController.ts,
+   src/codexAuth/auth.ts and src/codexAuth/modelCatalog.ts. The adaptation
+   retains saved model choices and Gecko popup-safe option rebuilding, and
+   uses the fixed official Codex model catalog with the existing independent
+   authentication client. Catalog state remains local to this plugin's
+   settings editor; no upstream runtime or preferences are accessed.
+
    Only the Reader interaction and coordinate-mapping patterns are reused for
    OCR. This project does not reuse screenshot.ts captureRegion, PDF canvas
    capture, drawWindow fallback, or PDF page rendering. It crops the local

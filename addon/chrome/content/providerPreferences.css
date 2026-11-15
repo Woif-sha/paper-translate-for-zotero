@@ -362,6 +362,46 @@ select.pt-provider-input {
   min-width: 0;
   font-weight: 600;
 }
+.pt-provider-model-select-slot {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  gap: 8px;
+}
+.pt-provider-model-select {
+  flex: 1;
+  min-width: 0;
+  box-sizing: border-box;
+  min-height: 34px;
+  padding: 5px 9px;
+  border: 1px solid var(--pt-border, #d8d8dc);
+  border-radius: 8px;
+  background: var(--pt-card, #fff);
+  color: inherit;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+}
+.pt-provider-model-select-details {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 12px;
+  margin-top: 5px;
+  color: var(--pt-muted, #737378);
+  font-size: 12px;
+}
+.pt-provider-model-select-details label {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+.pt-provider-model-select-status[data-error="true"] {
+  color: var(--color-red-70, #b3261e);
+}
+.pt-provider-model-select-slot [hidden] {
+  display: none;
+}
 .pt-provider-button {
   flex: 0 0 auto;
   box-sizing: border-box;

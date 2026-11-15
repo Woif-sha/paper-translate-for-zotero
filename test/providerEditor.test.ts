@@ -410,7 +410,7 @@ test("settings preset selection, custom editing, save, text test and image test 
     );
     change("pref-auth-mode", "codex_auth");
     assertSimpleSettings();
-    assert.equal(doc.querySelector(".pt-fetch-models"), null);
+    assert.ok(doc.querySelector(".pt-fetch-models"));
     (
       doc.getElementById(
         "papertranslateforzotero-add-provider",

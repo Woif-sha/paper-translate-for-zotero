@@ -69,6 +69,121 @@ async function setup() {
   return { template, actions };
 }
 
+for (const authMode of ["openai_compatible", "codex_auth"] as const) {
+  test(`${authMode} model rows detect a shared catalog and select without typing or applying the draft`, async () => {
+    const { template, actions } = await setup();
+    const configuration = getModelProviderConfiguration();
+    const provider = configuration.providers[0];
+    provider.authMode = authMode;
+    if (authMode === "codex_auth") {
+      provider.apiBase = "https://chatgpt.com/backend-api/codex/responses";
+      provider.models[0].effort = "high";
+    }
+    provider.models.push({ id: "m2", model: "second-saved", effort: "medium" });
+    setModelProviderConfiguration(configuration.providers, "m");
+    const previousServices = (globalThis as any).Services;
+    const previousIO = (globalThis as any).IOUtils;
+    let requests = 0;
+    (globalThis as any).Services = { env: { get: () => "C:/fake-codex" } };
+    (globalThis as any).IOUtils = {
+      read: async () =>
+        new TextEncoder().encode(
+          JSON.stringify({ tokens: { access_token: "fake-codex-access" } }),
+        ),
+      write: async () => assert.fail("valid access tokens do not refresh"),
+    };
+    (globalThis as any).ztoolkit = {
+      getGlobal: () => async (url: string, init: RequestInit) => {
+        requests += 1;
+        assert.equal(init.method, "GET");
+        assert.equal(init.body, undefined);
+        assert.equal(
+          url,
+          authMode === "codex_auth"
+            ? "https://chatgpt.com/backend-api/codex/models?client_version=0.162.1"
+            : "https://api.openai.com/v1/models",
+        );
+        return new Response(
+          JSON.stringify(
+            authMode === "codex_auth"
+              ? {
+                  models: [
+                    {
+                      slug: "detected-model",
+                      display_name: "Detected model",
+                      visibility: "list",
+                    },
+                  ],
+                }
+              : { data: [{ id: "detected-model" }] },
+          ),
+        );
+      },
+    };
+    const dom = new JSDOM(template);
+    const doc = dom.window.document;
+    try {
+      registerPrefsScripts(dom.window as unknown as Window, actions);
+      assert.equal(requests, 0, "rendering a draft does not query the service");
+      const fields = Array.from(
+        doc.querySelectorAll<HTMLInputElement>(".pt-model-input"),
+      );
+      const selectors = Array.from(
+        doc.querySelectorAll<HTMLSelectElement>(".pt-provider-model-select"),
+      );
+      assert.equal(selectors.length, 2);
+      assert.equal(selectors[0].value, "saved-model");
+      assert.equal(fields[0].hidden, true);
+      (doc.querySelector(".pt-provider-model-refresh") as HTMLElement).click();
+      await setImmediate();
+      assert.equal(requests, 1);
+      for (const select of selectors) {
+        assert.ok(
+          Array.from(select.options).some(
+            (option) => option.value === "detected-model",
+          ),
+          "one detected catalog feeds every model row",
+        );
+      }
+      selectors[0].value = "detected-model";
+      selectors[0].dispatchEvent(
+        new dom.window.Event("change", { bubbles: true }),
+      );
+      await setImmediate();
+      assert.equal(fields[0].value, "detected-model");
+      assert.equal(fields[0].hidden, true);
+      assert.equal(selectors[1].value, "second-saved");
+      assert.equal(
+        getModelProviderConfiguration().providers[0].models[0].model,
+        "saved-model",
+      );
+      assert.equal(getModelProviderConfiguration().activeModelId, "m");
+      selectors[1].focus();
+      await setImmediate();
+      assert.equal(requests, 1, "another row reuses the detected catalog");
+      selectors[1].blur();
+      (doc.querySelector(".pt-save-button") as HTMLElement).click();
+      const saved = getModelProviderConfiguration();
+      assert.equal(saved.providers[0].models[0].model, "detected-model");
+      assert.equal(saved.providers[0].models[0].id, "m");
+      assert.equal(saved.activeModelId, "m");
+      if (authMode === "codex_auth") {
+        assert.equal(saved.providers[0].models[0].effort, "high");
+      }
+      assert.equal(
+        (doc.querySelector(".pt-provider-model-select") as HTMLSelectElement)
+          .value,
+        "detected-model",
+      );
+    } finally {
+      dom.window.dispatchEvent(new dom.window.Event("unload"));
+      dom.window.close();
+      (globalThis as any).Services = previousServices;
+      (globalThis as any).IOUtils = previousIO;
+    }
+  });
+}
+
 test("settings windows keep provider and model expansion independent across clicks and shared renders", async () => {
   const { template, actions } = await setup();
   const first = new JSDOM(template);

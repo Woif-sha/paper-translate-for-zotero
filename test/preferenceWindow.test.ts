@@ -76,8 +76,14 @@ test("keeps dynamic provider controls localized and compact", async () => {
     new URL("../src/modules/modelPicker.ts", import.meta.url),
     "utf8",
   );
+  const selectScript = await readFile(
+    new URL("../src/modules/providerModelSelect.ts", import.meta.url),
+    "utf8",
+  );
   const dynamicKeys = [
-    ...(script + pickerScript).matchAll(/getString\("(pref-[^"]+)"\)/gu),
+    ...(script + pickerScript + selectScript).matchAll(
+      /getString\("(pref-[^"]+)"\)/gu,
+    ),
   ].map((match) => match[1]);
 
   assert.ok(dynamicKeys.length > 0);

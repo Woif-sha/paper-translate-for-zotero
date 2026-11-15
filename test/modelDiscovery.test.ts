@@ -6,6 +6,11 @@ import {
 } from "../src/models/modelDiscovery";
 import { PROVIDER_PRESETS } from "../src/models/protocols";
 import type { ModelProviderGroup } from "../src/models/providers";
+import {
+  DEFAULT_CODEX_API_URL,
+  DEFAULT_CODEX_MODELS_URL,
+  cancelActiveCodexAuthRefreshes,
+} from "../src/codex/legacyClient";
 
 function provider(
   overrides: Partial<ModelProviderGroup> = {},
@@ -174,7 +179,7 @@ test("Anthropic paginates using last_id while preserving gateway query parameter
   assert.equal(models.find((model) => model.id === "model-b")!.name, "Model B");
 });
 
-test("invalid endpoints, missing keys and Codex never send a discovery request", async () => {
+test("invalid endpoints and missing API keys never send a discovery request", async () => {
   for (const overrides of [
     { apiKey: "" },
     { authMode: "codex_auth" as const },
@@ -191,6 +196,184 @@ test("invalid endpoints, missing keys and Codex never send a discovery request",
     );
   }
 });
+
+test("Codex discovers listed slugs from its own authenticated catalog in server priority order", async () => {
+  await withCodexCatalog(async () => {
+    const models = await fetchProviderModels(codexProvider(), {
+      fetchFn: async (url, init) => {
+        assert.equal(String(url), DEFAULT_CODEX_MODELS_URL);
+        assert.equal(init?.method, "GET");
+        assert.equal(init?.redirect, "error");
+        assert.equal(
+          (init?.headers as Record<string, string>).Authorization,
+          "Bearer codex-discovery-access",
+        );
+        return json({
+          models: [
+            {
+              slug: " lower ",
+              display_name: " Lower ",
+              visibility: "list",
+              priority: 1,
+            },
+            {
+              slug: "first",
+              display_name: "First",
+              visibility: "list",
+              priority: 8,
+            },
+            { slug: "second", visibility: "list", priority: 8 },
+            {
+              slug: "FIRST",
+              display_name: "Duplicate",
+              visibility: "list",
+              priority: 9,
+            },
+            { slug: "hidden", visibility: "hide", priority: 100 },
+            { id: "public-api-shape", visibility: "list" },
+          ],
+        });
+      },
+    });
+    assert.deepEqual(models, [
+      { id: "first", name: "First" },
+      { id: "second", name: "second" },
+      { id: "lower", name: "Lower" },
+    ]);
+  });
+});
+
+test("Codex accepts the upstream data envelope but never invents unavailable models", async () => {
+  await withCodexCatalog(async () => {
+    assert.deepEqual(
+      await fetchProviderModels(codexProvider(), {
+        fetchFn: async () =>
+          json({ data: [{ slug: "actual", visibility: "list" }] }),
+      }),
+      [{ id: "actual", name: "actual" }],
+    );
+    for (const payload of [
+      null,
+      {},
+      { models: [] },
+      { models: [{ slug: "hidden", visibility: "hide" }] },
+      { data: [{ id: "public-model" }] },
+      { models: [{ slug: "bad\nmodel", visibility: "list" }] },
+    ]) {
+      await assert.rejects(
+        fetchProviderModels(codexProvider(), {
+          fetchFn: async () => json(payload),
+        }),
+      );
+    }
+  });
+});
+
+test("Codex rejects a changed responses address before reading auth or fetching", async () => {
+  await assert.rejects(
+    fetchProviderModels(
+      codexProvider({ apiBase: "https://proxy.test/responses" }),
+      {
+        fetchFn: async () =>
+          assert.fail("must not send Codex credentials to a proxy"),
+      },
+    ),
+    /Codex.*URL|Codex.*address/i,
+  );
+});
+
+test("Codex HTTP and malformed JSON errors cannot disclose server bodies or credentials", async () => {
+  await withCodexCatalog(async () => {
+    for (const response of [
+      new Response("codex-discovery-access", { status: 403 }),
+      new Response("codex-discovery-access"),
+    ]) {
+      await assert.rejects(
+        fetchProviderModels(codexProvider(), { fetchFn: async () => response }),
+        (error: Error) => !error.message.includes("codex-discovery-access"),
+      );
+    }
+  });
+});
+
+test("Codex catalog keeps the response, model count and request lifetime limits", async () => {
+  await withCodexCatalog(async () => {
+    for (const response of [
+      json({
+        models: Array.from({ length: 5001 }, (_, i) => ({
+          slug: `m${i}`,
+          visibility: "list",
+        })),
+      }),
+      new Response("x".repeat(2 * 1024 * 1024 + 1)),
+    ]) {
+      await assert.rejects(
+        fetchProviderModels(codexProvider(), { fetchFn: async () => response }),
+        /too large/,
+      );
+    }
+    const controller = new AbortController();
+    controller.abort(new Error("cancelled"));
+    await assert.rejects(
+      fetchProviderModels(codexProvider(), {
+        signal: controller.signal,
+        fetchFn: async () => assert.fail("cancelled"),
+      }),
+      /cancelled/,
+    );
+    let requestSignal: AbortSignal | undefined;
+    await assert.rejects(
+      fetchProviderModels(codexProvider(), {
+        timeoutMs: 10,
+        fetchFn: async (_url, init) => {
+          requestSignal = init?.signal as AbortSignal;
+          return new Promise<Response>(() => undefined);
+        },
+      }),
+      /timed out/,
+    );
+    assert.equal(requestSignal?.aborted, true);
+  });
+});
+
+function codexProvider(
+  overrides: Partial<ModelProviderGroup> = {},
+): ModelProviderGroup {
+  return provider({
+    authMode: "codex_auth",
+    apiBase: DEFAULT_CODEX_API_URL,
+    apiKey: "",
+    ...overrides,
+  });
+}
+
+async function withCodexCatalog(run: () => Promise<void>): Promise<void> {
+  const previousServices = (globalThis as any).Services;
+  const previousIO = (globalThis as any).IOUtils;
+  (globalThis as any).Services = { env: { get: () => "E:\\DiscoveryTest" } };
+  (globalThis as any).IOUtils = {
+    async read() {
+      return new TextEncoder().encode(
+        JSON.stringify({
+          tokens: {
+            access_token: "codex-discovery-access",
+            refresh_token: "codex-discovery-refresh",
+          },
+        }),
+      );
+    },
+    async write() {
+      assert.fail("successful catalog discovery must not rewrite auth");
+    },
+  };
+  try {
+    await run();
+  } finally {
+    cancelActiveCodexAuthRefreshes();
+    (globalThis as any).Services = previousServices;
+    (globalThis as any).IOUtils = previousIO;
+  }
+}
 
 test("HTTP failures expose status and manual entry guidance without echoing keys or server error bodies", async () => {
   for (const status of [401, 403, 404, 429, 500]) {

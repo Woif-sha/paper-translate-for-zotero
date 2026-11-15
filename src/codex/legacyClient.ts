@@ -1,5 +1,7 @@
 export const DEFAULT_CODEX_API_URL =
   "https://chatgpt.com/backend-api/codex/responses";
+export const DEFAULT_CODEX_MODELS_URL =
+  "https://chatgpt.com/backend-api/codex/models?client_version=0.162.1";
 
 const CODEX_REFRESH_TOKEN_URL = "https://auth.openai.com/oauth/token";
 const CODEX_CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann";
@@ -30,6 +32,7 @@ type CodexAuthJson = {
   tokens?: {
     access_token?: unknown;
     refresh_token?: unknown;
+    account_id?: unknown;
   };
   last_refresh?: string;
   [key: string]: unknown;
@@ -266,19 +269,12 @@ export async function runLegacyCodexRequest(
   params: LegacyCodexRequest,
 ): Promise<LegacyCodexResult> {
   validateRequest(params);
-  let auth = await loadCodexAuth(params.signal);
-  let response = await postCodexRequest(params, auth.accessToken);
-  if (response.status === 401) {
-    await response.body?.cancel();
-    auth = await refreshCodexAccessToken(auth, params.signal);
-    response = await postCodexRequest(params, auth.accessToken);
-  }
-  if (response.status === 401) {
-    await response.body?.cancel();
-    throw new CodexLoginRequiredError(
-      new Error("Codex rejected the refreshed access token with HTTP 401"),
-    );
-  }
+  const fetchFn = getFetch();
+  const response = await fetchAuthenticatedCodexRequest(
+    (auth) => postCodexRequest(params, auth.accessToken, fetchFn),
+    params.signal,
+    fetchFn,
+  );
   if (!response.ok) {
     const detail = await response.text();
     throw new Error(
@@ -330,6 +326,69 @@ export async function runLegacyCodexRequest(
     );
   }
   return result;
+}
+
+/** Codex credentials stay inside this module and can only reach this fixed catalog. */
+export async function fetchLegacyCodexModels(
+  options: { signal?: AbortSignal; fetchFn?: typeof fetch } = {},
+): Promise<Response> {
+  try {
+    const fetchFn = options.fetchFn ?? getFetch();
+    return await fetchAuthenticatedCodexRequest(
+      (auth) => {
+        const accountId = tokenValue(auth.document.tokens?.account_id);
+        return fetchFn(DEFAULT_CODEX_MODELS_URL, {
+          method: "GET",
+          headers: {
+            Accept: "application/json",
+            Authorization: `Bearer ${auth.accessToken}`,
+            ...(accountId ? { "ChatGPT-Account-ID": accountId } : {}),
+          },
+          redirect: "error",
+          signal: options.signal,
+        });
+      },
+      options.signal,
+      fetchFn,
+    );
+  } catch (error) {
+    if (options.signal?.aborted) {
+      throw new Error("Codex model catalog request aborted");
+    }
+    if (error instanceof CodexLoginRequiredError) {
+      throw new CodexLoginRequiredError(
+        new Error("Codex model catalog authentication failed"),
+      );
+    }
+    // Auth, OAuth and transport errors may contain credentials or server bodies.
+    throw new Error(
+      "获取 Codex 模型列表失败，请检查登录状态和网络 / Codex model catalog request failed",
+    );
+  }
+}
+
+async function fetchAuthenticatedCodexRequest(
+  send: (auth: CodexAuthState) => Promise<Response>,
+  signal: AbortSignal | undefined,
+  fetchFn: typeof fetch,
+): Promise<Response> {
+  if (signal) assertSignalActive(signal);
+  let auth = await loadCodexAuth(signal, fetchFn);
+  if (signal) assertSignalActive(signal);
+  let response = await send(auth);
+  if (response.status === 401) {
+    await response.body?.cancel();
+    auth = await refreshCodexAccessToken(auth, signal, fetchFn);
+    if (signal) assertSignalActive(signal);
+    response = await send(auth);
+  }
+  if (response.status === 401) {
+    await response.body?.cancel();
+    throw new CodexLoginRequiredError(
+      new Error("Codex rejected the refreshed access token with HTTP 401"),
+    );
+  }
+  return response;
 }
 
 export async function testLegacyCodexConnection(params: {
@@ -440,8 +499,9 @@ function validateImageInput(image: LegacyCodexImageInput): void {
 async function postCodexRequest(
   params: LegacyCodexRequest,
   accessToken: string,
+  fetchFn: typeof fetch,
 ): Promise<Response> {
-  return getFetch()(params.apiUrl.trim(), {
+  return fetchFn(params.apiUrl.trim(), {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -452,7 +512,10 @@ async function postCodexRequest(
   });
 }
 
-async function loadCodexAuth(signal?: AbortSignal): Promise<CodexAuthState> {
+async function loadCodexAuth(
+  signal: AbortSignal | undefined,
+  fetchFn: typeof fetch,
+): Promise<CodexAuthState> {
   const authPath = resolveCodexAuthPath();
   const document = await readCodexAuthDocument(authPath);
   const accessToken = tokenValue(document.tokens?.access_token);
@@ -466,6 +529,7 @@ async function loadCodexAuth(signal?: AbortSignal): Promise<CodexAuthState> {
     return refreshCodexAccessToken(
       { authPath, accessToken, refreshToken, document },
       signal,
+      fetchFn,
     );
   }
   return { authPath, accessToken, refreshToken, document };
@@ -473,7 +537,8 @@ async function loadCodexAuth(signal?: AbortSignal): Promise<CodexAuthState> {
 
 async function refreshCodexAccessToken(
   auth: CodexAuthState,
-  signal?: AbortSignal,
+  signal: AbortSignal | undefined,
+  fetchFn: typeof fetch,
 ): Promise<CodexAuthState> {
   const active = authRefreshJobs.get(auth.authPath);
   if (active) return waitForSharedRefresh(active.promise, signal);
@@ -487,7 +552,7 @@ async function refreshCodexAccessToken(
       ),
     CODEX_AUTH_REFRESH_TIMEOUT_MS,
   );
-  const promise = refreshCodexAccessTokenNow(auth, controller.signal)
+  const promise = refreshCodexAccessTokenNow(auth, controller.signal, fetchFn)
     .catch((error) => {
       if (controller.signal.aborted) {
         const reason = controller.signal.reason;
@@ -518,6 +583,7 @@ export function cancelActiveCodexAuthRefreshes(): void {
 async function refreshCodexAccessTokenNow(
   auth: CodexAuthState,
   signal: AbortSignal,
+  fetchFn: typeof fetch,
 ): Promise<CodexAuthState> {
   const currentBeforeRequest = await readCodexAuthDocument(auth.authPath);
   assertSignalActive(signal);
@@ -549,7 +615,7 @@ async function refreshCodexAccessTokenNow(
       new Error(`Codex refresh token is missing: ${auth.authPath}`),
     );
   }
-  const response = await getFetch()(CODEX_REFRESH_TOKEN_URL, {
+  const response = await fetchFn(CODEX_REFRESH_TOKEN_URL, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({

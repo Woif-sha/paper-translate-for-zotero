@@ -6,6 +6,7 @@
 
 ### 新增
 
+- 设置页模型行采用检测后下拉选择，API Key 与 Codex Auth 均可读取模型目录；保留已保存型号，自定义输入收进明确的菜单选项。
 - API Key 模式支持显式选择 Chat Completions、公开 Responses API 和 Anthropic Messages，并提供 OpenAI、Anthropic、DeepSeek 接口预设与自定义接口。
 - 设置页采用可折叠服务商卡片，支持模型目录获取、搜索、多选、创建时间排序和独立文本／图片连接测试。
 - 服务商表单自动记忆未保存草稿、认证方式及预设各自的连接参数，并保留展开状态和设置页签。
