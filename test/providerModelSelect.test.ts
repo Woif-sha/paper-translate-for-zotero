@@ -18,6 +18,7 @@ function fixture(
   options: {
     saved?: string;
     initialModels?: DiscoveredModel[];
+    canAutoLoad?: () => boolean;
     loadModels?: (options?: { force?: boolean }) => Promise<DiscoveredModel[]>;
   } = {},
 ) {
@@ -44,6 +45,7 @@ function fixture(
   const component = attachProviderModelSelect({
     input,
     initialModels: options.initialModels,
+    canAutoLoad: options.canAutoLoad ?? (() => false),
     loadModels: (loadOptions) => {
       calls.push(loadOptions);
       return options.loadModels?.(loadOptions) ?? Promise.resolve([]);
@@ -85,9 +87,12 @@ function fixture(
       select.dispatchEvent(new dom.window.Event("blur"));
     },
     mouseDown() {
-      select.dispatchEvent(
-        new dom.window.MouseEvent("mousedown", { bubbles: true }),
-      );
+      const event = new dom.window.MouseEvent("mousedown", {
+        bubbles: true,
+        cancelable: true,
+      });
+      select.dispatchEvent(event);
+      return event;
     },
     dispose() {
       component.dispose();
@@ -99,6 +104,174 @@ function fixture(
 async function flush() {
   await new Promise<void>((resolve) => setImmediate(resolve));
 }
+
+test("complete settings automatically load a catalog after editing settles", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const request = deferred<DiscoveredModel[]>();
+  const f = fixture({
+    saved: "saved-model",
+    canAutoLoad: () => true,
+    loadModels: () => request.promise,
+  });
+  try {
+    assert.equal(f.calls.length, 0);
+    t.mock.timers.tick(299);
+    assert.equal(f.calls.length, 0);
+    t.mock.timers.tick(1);
+    assert.deepEqual(f.calls, [undefined]);
+    assert.equal(f.select.disabled, true);
+    assert.equal(f.status.textContent, "pref-provider-models-fetching");
+    request.resolve([{ id: "newest-model", name: "" }]);
+    await flush();
+    assert.equal(f.select.disabled, false);
+    assert.deepEqual(f.modelValues(), ["newest-model", "saved-model"]);
+    assert.equal(f.select.value, "saved-model");
+    assert.deepEqual(f.picked, []);
+  } finally {
+    f.dispose();
+  }
+});
+
+test("incomplete settings wait until reset observes complete settings", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  let complete = false;
+  const f = fixture({
+    canAutoLoad: () => complete,
+    loadModels: async () => [{ id: "available-model", name: "" }],
+  });
+  try {
+    t.mock.timers.tick(1000);
+    assert.deepEqual(f.calls, []);
+    complete = true;
+    f.component.reset();
+    t.mock.timers.tick(300);
+    await flush();
+    assert.deepEqual(f.calls, [undefined]);
+    assert.deepEqual(f.modelValues(), ["", "available-model"]);
+    assert.equal(f.select.value, "");
+  } finally {
+    f.dispose();
+  }
+});
+
+test("reset restarts the edit debounce and dispose cancels pending automatic work", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const f = fixture({
+    canAutoLoad: () => true,
+    loadModels: async () => [{ id: "available-model", name: "" }],
+  });
+  try {
+    t.mock.timers.tick(200);
+    f.component.reset();
+    t.mock.timers.tick(299);
+    assert.deepEqual(f.calls, []);
+    t.mock.timers.tick(1);
+    await flush();
+    assert.equal(f.calls.length, 1);
+    f.component.reset();
+    f.component.dispose();
+    t.mock.timers.tick(1000);
+    await flush();
+    assert.equal(f.calls.length, 1);
+  } finally {
+    f.dispose();
+  }
+});
+
+test("cached and synchronized catalogs need no automatic or focus requests", (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  for (const cached of [true, false]) {
+    const catalog = [{ id: "available-model", name: "" }];
+    const f = fixture({
+      initialModels: cached ? catalog : undefined,
+      canAutoLoad: () => true,
+    });
+    try {
+      if (!cached) f.component.setModels(catalog);
+      t.mock.timers.tick(1000);
+      f.focusSelect();
+      const event = f.mouseDown();
+      assert.equal(event.defaultPrevented, false);
+      assert.deepEqual(f.calls, []);
+    } finally {
+      f.dispose();
+    }
+  }
+});
+
+test("a first click loads before opening an empty menu and suppresses duplicate loading requests", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const request = deferred<DiscoveredModel[]>();
+  const f = fixture({
+    saved: "saved-model",
+    canAutoLoad: () => true,
+    loadModels: () => request.promise,
+  });
+  try {
+    const firstClick = f.mouseDown();
+    assert.equal(firstClick.defaultPrevented, true);
+    assert.equal(f.select.disabled, true);
+    f.focusSelect();
+    t.mock.timers.tick(1000);
+    assert.deepEqual(f.calls, [undefined]);
+    request.resolve([{ id: "available-model", name: "" }]);
+    await flush();
+    assert.equal(f.select.disabled, false);
+    assert.deepEqual(f.modelValues(), ["available-model", "saved-model"]);
+    const nextClick = f.mouseDown();
+    assert.equal(nextClick.defaultPrevented, false);
+    assert.equal(f.calls.length, 1);
+  } finally {
+    f.dispose();
+  }
+});
+
+test("explicit refresh cancels the queued automatic load and keeps a ready menu usable", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const request = deferred<DiscoveredModel[]>();
+  const f = fixture({
+    saved: "saved-model",
+    canAutoLoad: () => true,
+    loadModels: () => request.promise,
+  });
+  try {
+    f.refresh.click();
+    t.mock.timers.tick(1000);
+    assert.deepEqual(f.calls, [{ force: true }]);
+    request.resolve([{ id: "available-model", name: "" }]);
+    await flush();
+    f.refresh.click();
+    assert.equal(f.select.disabled, false);
+    assert.deepEqual(f.modelValues(), ["available-model", "saved-model"]);
+    assert.deepEqual(f.calls, [{ force: true }, { force: true }]);
+    await flush();
+  } finally {
+    f.dispose();
+  }
+});
+
+test("a failed first load leaves custom entry available without implicit retries", async () => {
+  const f = fixture({
+    saved: "saved-model",
+    loadModels: () => Promise.reject(new Error("API key required")),
+  });
+  try {
+    assert.equal(f.mouseDown().defaultPrevented, true);
+    await flush();
+    assert.equal(f.select.disabled, false);
+    assert.match(f.status.textContent!, /API key required/);
+    assert.equal(f.mouseDown().defaultPrevented, false);
+    f.focusSelect();
+    assert.equal(f.calls.length, 1);
+    f.customize();
+    await flush();
+    assert.equal(f.input.hidden, false);
+    assert.equal(f.input.value, "saved-model");
+    assert.deepEqual(f.picked, []);
+  } finally {
+    f.dispose();
+  }
+});
 
 test("the native select is the initial control and loading is triggered by focus or explicit refresh", async () => {
   const f = fixture({
@@ -118,7 +291,7 @@ test("the native select is the initial control and loading is triggered by focus
     f.focusSelect();
     assert.equal(f.status.textContent, "pref-provider-models-fetching");
     await flush();
-    assert.deepEqual(f.modelValues(), ["saved-custom", "catalog-model"]);
+    assert.deepEqual(f.modelValues(), ["catalog-model", "saved-custom"]);
     assert.equal(f.select.value, "saved-custom");
     assert.deepEqual(f.picked, []);
     f.refresh.click();
@@ -160,10 +333,10 @@ test("catalog order and unknown model IDs survive the display filter and Show al
   });
   try {
     assert.deepEqual(f.modelValues(), [
-      "tts-1",
       "z-chat",
       "unknown-image-chat",
       "a-chat",
+      "tts-1",
     ]);
     assert.equal(f.select.value, "tts-1");
     assert.equal(f.status.textContent, "pref-provider-models-hidden:1");
@@ -327,9 +500,11 @@ test("an arriving catalog waits until the native popup closes before rewriting o
     const request = deferred<DiscoveredModel[]>();
     const f = fixture({
       saved: "saved-model",
+      initialModels: [{ id: "old-model", name: "" }],
       loadModels: () => request.promise,
     });
     try {
+      f.refresh.click();
       if (opening === "mouse") f.mouseDown();
       else {
         f.focusSelect();
@@ -337,13 +512,13 @@ test("an arriving catalog waits until the native popup closes before rewriting o
           new f.dom.window.KeyboardEvent("keydown", { key: "ArrowDown" }),
         );
       }
-      const savedOption = f.select.options[0];
+      const firstOption = f.select.options[0];
       request.resolve([{ id: "new-model", name: "" }]);
       await flush();
-      assert.deepEqual(f.modelValues(), ["saved-model"]);
-      assert.equal(f.select.options[0], savedOption);
+      assert.deepEqual(f.modelValues(), ["old-model", "saved-model"]);
+      assert.equal(f.select.options[0], firstOption);
       f.blurSelect();
-      assert.deepEqual(f.modelValues(), ["saved-model", "new-model"]);
+      assert.deepEqual(f.modelValues(), ["new-model", "saved-model"]);
       assert.equal(f.input.value, "saved-model");
       assert.deepEqual(f.picked, []);
     } finally {
@@ -360,16 +535,17 @@ test("a pending catalog rebuild also waits past a select change dispatch", async
     loadModels: () => request.promise,
   });
   try {
+    f.refresh.click();
     f.mouseDown();
     request.resolve([
       { id: "chosen-model", name: "" },
       { id: "new-model", name: "" },
     ]);
     await flush();
-    const chosenOption = f.select.options[1];
+    const chosenOption = f.select.options[0];
     f.change("chosen-model");
-    assert.equal(f.select.options[1], chosenOption);
-    assert.deepEqual(f.modelValues(), ["saved-model", "chosen-model"]);
+    assert.equal(f.select.options[0], chosenOption);
+    assert.deepEqual(f.modelValues(), ["chosen-model", "saved-model"]);
     assert.equal(f.input.value, "saved-model");
     await flush();
     assert.deepEqual(f.modelValues(), ["chosen-model", "new-model"]);
@@ -384,9 +560,11 @@ test("a late catalog never steals focus from explicit manual entry", async () =>
   const request = deferred<DiscoveredModel[]>();
   const f = fixture({
     saved: "saved-model",
+    initialModels: [{ id: "old-model", name: "" }],
     loadModels: () => request.promise,
   });
   try {
+    f.refresh.click();
     f.mouseDown();
     f.customize();
     await flush();
@@ -399,7 +577,7 @@ test("a late catalog never steals focus from explicit manual entry", async () =>
     assert.equal(f.input.value, "typed-model");
     f.input.blur();
     assert.equal(f.select.value, "typed-model");
-    assert.deepEqual(f.modelValues(), ["typed-model", "new-model"]);
+    assert.deepEqual(f.modelValues(), ["new-model", "typed-model"]);
   } finally {
     f.dispose();
   }
@@ -413,20 +591,20 @@ test("shared catalog synchronization preserves current values without fetching o
       { id: "first-model", name: "" },
     ]);
     assert.deepEqual(f.modelValues(), [
-      "saved-custom",
       "second-model",
       "first-model",
+      "saved-custom",
     ]);
     assert.equal(f.select.value, "saved-custom");
     assert.equal(f.input.value, "saved-custom");
     assert.deepEqual(f.calls, []);
     assert.deepEqual(f.picked, []);
-    const savedOption = f.select.options[0];
+    const savedOption = f.select.options[2];
     f.component.setModels([
       { id: "second-model", name: "Updated display name" },
       { id: "first-model", name: "" },
     ]);
-    assert.equal(f.select.options[0], savedOption);
+    assert.equal(f.select.options[2], savedOption);
   } finally {
     f.dispose();
   }
@@ -436,14 +614,16 @@ test("shared catalogs use the popup gate and leave manual entry focused", async 
   const request = deferred<DiscoveredModel[]>();
   const f = fixture({
     saved: "saved-model",
+    initialModels: [{ id: "old-model", name: "" }],
     loadModels: () => request.promise,
   });
   try {
+    f.refresh.click();
     f.mouseDown();
     f.component.setModels([{ id: "shared-model", name: "" }]);
-    assert.deepEqual(f.modelValues(), ["saved-model"]);
+    assert.deepEqual(f.modelValues(), ["old-model", "saved-model"]);
     f.blurSelect();
-    assert.deepEqual(f.modelValues(), ["saved-model", "shared-model"]);
+    assert.deepEqual(f.modelValues(), ["shared-model", "saved-model"]);
     f.customize();
     await flush();
     f.input.value = "typed-model";
@@ -470,7 +650,7 @@ test("reset clears catalog state and excludes both stale responses and queued ch
       requestIndex++ === 0 ? oldRequest.promise : newRequest.promise,
   });
   try {
-    f.focusSelect();
+    f.refresh.click();
     f.change("old-choice");
     f.component.reset();
     assert.deepEqual(f.modelValues(), ["saved-model"]);
@@ -483,7 +663,7 @@ test("reset clears catalog state and excludes both stale responses and queued ch
     f.refresh.click();
     newRequest.resolve([{ id: "new-response", name: "" }]);
     await flush();
-    assert.deepEqual(f.modelValues(), ["saved-model", "new-response"]);
+    assert.deepEqual(f.modelValues(), ["new-response", "saved-model"]);
   } finally {
     f.dispose();
   }
@@ -497,7 +677,7 @@ test("dispose removes interaction handlers and prevents late request or choice u
     loadModels: () => request.promise,
   });
   try {
-    f.focusSelect();
+    f.refresh.click();
     f.change("new-choice");
     f.component.dispose();
     const before =

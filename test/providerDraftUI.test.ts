@@ -41,8 +41,10 @@ async function setup() {
     },
   };
   (globalThis as any).ztoolkit = {
-    getGlobal: () => async () =>
-      assert.fail("remembering drafts must not send any requests"),
+    getGlobal: () => async (_url: string, init: RequestInit) => {
+      assert.equal(init.method, "GET", "drafts must not generate model output");
+      return new Response(JSON.stringify({ data: [{ id: "saved-model" }] }));
+    },
   };
   setModelProviderConfiguration(
     [
@@ -70,7 +72,7 @@ async function setup() {
 }
 
 for (const authMode of ["openai_compatible", "codex_auth"] as const) {
-  test(`${authMode} model rows detect a shared catalog and select without typing or applying the draft`, async () => {
+  test(`${authMode} model rows automatically load a shared newest-first catalog and explicitly refresh it`, async () => {
     const { template, actions } = await setup();
     const configuration = getModelProviderConfiguration();
     const provider = configuration.providers[0];
@@ -108,14 +110,22 @@ for (const authMode of ["openai_compatible", "codex_auth"] as const) {
             authMode === "codex_auth"
               ? {
                   models: [
+                    { slug: "gpt-5.6", visibility: "list", priority: 100 },
                     {
                       slug: "detected-model",
                       display_name: "Detected model",
                       visibility: "list",
                     },
+                    { slug: "gpt-6.1-sol", visibility: "list", priority: 0 },
                   ],
                 }
-              : { data: [{ id: "detected-model" }] },
+              : {
+                  data: [
+                    { id: "gpt-5.6", created: 1 },
+                    { id: "detected-model" },
+                    { id: "gpt-6.1-sol", created: 2 },
+                  ],
+                },
           ),
         );
       },
@@ -124,7 +134,11 @@ for (const authMode of ["openai_compatible", "codex_auth"] as const) {
     const doc = dom.window.document;
     try {
       registerPrefsScripts(dom.window as unknown as Window, actions);
-      assert.equal(requests, 0, "rendering a draft does not query the service");
+      assert.equal(
+        requests,
+        0,
+        "preloading waits for connection edits to settle",
+      );
       const fields = Array.from(
         doc.querySelectorAll<HTMLInputElement>(".pt-model-input"),
       );
@@ -134,10 +148,15 @@ for (const authMode of ["openai_compatible", "codex_auth"] as const) {
       assert.equal(selectors.length, 2);
       assert.equal(selectors[0].value, "saved-model");
       assert.equal(fields[0].hidden, true);
-      (doc.querySelector(".pt-provider-model-refresh") as HTMLElement).click();
+      await new Promise((resolve) => setTimeout(resolve, 350));
       await setImmediate();
-      assert.equal(requests, 1);
+      assert.equal(
+        requests,
+        1,
+        "no refresh button is needed to populate models",
+      );
       for (const select of selectors) {
+        assert.equal(select.options[0].value, "gpt-6.1-sol");
         assert.ok(
           Array.from(select.options).some(
             (option) => option.value === "detected-model",
@@ -145,6 +164,10 @@ for (const authMode of ["openai_compatible", "codex_auth"] as const) {
           "one detected catalog feeds every model row",
         );
       }
+      assert.equal(selectors[0].value, "saved-model");
+      (doc.querySelector(".pt-provider-model-refresh") as HTMLElement).click();
+      await setImmediate();
+      assert.equal(requests, 2, "refresh bypasses the loaded catalog");
       selectors[0].value = "detected-model";
       selectors[0].dispatchEvent(
         new dom.window.Event("change", { bubbles: true }),
@@ -160,7 +183,7 @@ for (const authMode of ["openai_compatible", "codex_auth"] as const) {
       assert.equal(getModelProviderConfiguration().activeModelId, "m");
       selectors[1].focus();
       await setImmediate();
-      assert.equal(requests, 1, "another row reuses the detected catalog");
+      assert.equal(requests, 2, "another row reuses the detected catalog");
       selectors[1].blur();
       (doc.querySelector(".pt-save-button") as HTMLElement).click();
       const saved = getModelProviderConfiguration();
@@ -183,6 +206,72 @@ for (const authMode of ["openai_compatible", "codex_auth"] as const) {
     }
   });
 }
+
+test("completing or editing connection fields automatically loads the matching catalog without saving", async () => {
+  const { template, actions } = await setup();
+  const requests: string[] = [];
+  (globalThis as any).ztoolkit = {
+    getGlobal: () => async (_url: string, init: RequestInit) => {
+      assert.equal(init.method, "GET");
+      const authorization = (init.headers as Record<string, string>)
+        .Authorization;
+      requests.push(authorization);
+      return new Response(
+        JSON.stringify({
+          data: [
+            {
+              id:
+                authorization === "Bearer fake-auto-key"
+                  ? "first-auto-model"
+                  : "second-auto-model",
+            },
+          ],
+        }),
+      );
+    },
+  };
+  const dom = new JSDOM(template);
+  const doc = dom.window.document;
+  const editKey = (value: string) => {
+    const key = doc.querySelector(
+      '[aria-label="pref-provider-api-key"]',
+    ) as HTMLInputElement;
+    key.value = value;
+    key.dispatchEvent(new dom.window.Event("input", { bubbles: true }));
+  };
+  const options = () =>
+    Array.from(
+      (doc.querySelector(".pt-provider-model-select") as HTMLSelectElement)
+        .options,
+    ).map((option) => option.value);
+  try {
+    registerPrefsScripts(dom.window as unknown as Window, actions);
+    editKey("");
+    await new Promise((resolve) => setTimeout(resolve, 350));
+    assert.deepEqual(requests, [], "incomplete credentials are not sent");
+    editKey("fake-auto-key");
+    await new Promise((resolve) => setTimeout(resolve, 350));
+    assert.deepEqual(requests, ["Bearer fake-auto-key"]);
+    assert.ok(options().includes("first-auto-model"));
+    editKey("fake-next-key");
+    assert.equal(options().includes("first-auto-model"), false);
+    await new Promise((resolve) => setTimeout(resolve, 350));
+    assert.deepEqual(requests, [
+      "Bearer fake-auto-key",
+      "Bearer fake-next-key",
+    ]);
+    assert.ok(options().includes("second-auto-model"));
+    assert.equal(options().includes("first-auto-model"), false);
+    assert.equal(
+      getModelProviderConfiguration().providers[0].apiKey,
+      "fake-saved-key",
+    );
+    assert.equal(getModelProviderConfiguration().activeModelId, "m");
+  } finally {
+    dom.window.dispatchEvent(new dom.window.Event("unload"));
+    dom.window.close();
+  }
+});
 
 test("settings windows keep provider and model expansion independent across clicks and shared renders", async () => {
   const { template, actions } = await setup();
@@ -355,6 +444,7 @@ for (const operation of ["catalog", "text-test", "picker"] as const) {
     const first = new JSDOM(template);
     const second = new JSDOM(template);
     let requestSignal: AbortSignal | undefined;
+    let primarySignal: AbortSignal | undefined;
     let respond: ((response: Response) => void) | undefined;
     const catalogResponse = () =>
       new Response(JSON.stringify({ data: [{ id: "listed-model" }] }));
@@ -372,7 +462,7 @@ for (const operation of ["catalog", "text-test", "picker"] as const) {
       if (operation === "picker") {
         assert.ok(doc.querySelector("dialog")?.hasAttribute("open"));
       } else {
-        assert.equal(requestSignal?.aborted, false);
+        assert.equal(primarySignal?.aborted, false);
       }
     };
     try {
@@ -386,6 +476,8 @@ for (const operation of ["catalog", "text-test", "picker"] as const) {
         (doc.querySelector(".pt-fetch-models") as HTMLButtonElement).click();
       }
       await setImmediate();
+      primarySignal = requestSignal;
+      const respondToPrimary = respond;
       assertOperationActive();
       registerPrefsScripts(second.window as unknown as Window, actions);
       await setImmediate();
@@ -394,11 +486,11 @@ for (const operation of ["catalog", "text-test", "picker"] as const) {
       await setImmediate();
       assertOperationActive();
       if (operation === "catalog") {
-        respond!(catalogResponse());
+        respondToPrimary!(catalogResponse());
         await setImmediate();
         assert.ok(doc.querySelector("dialog")?.hasAttribute("open"));
       } else if (operation === "text-test") {
-        respond!(
+        respondToPrimary!(
           new Response(
             'data: {"type":"response.output_text.delta","delta":"OK"}\n\ndata: {"type":"response.completed","response":{"status":"completed"}}\n\n',
           ),

@@ -19,7 +19,10 @@ export function modelCreationTime(entry: {
     : undefined;
 }
 
-/** API dates take priority. Missing dates use descending natural model versions. */
+/**
+ * Catalog dates take priority. Missing dates use descending natural model versions,
+ * which cannot establish actual release order across unknown model families.
+ */
 export function sortDiscoveredModels(
   models: DiscoveredModel[],
 ): DiscoveredModel[] {

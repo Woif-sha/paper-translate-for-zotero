@@ -43,6 +43,19 @@ test("orders dated models newest first, then undated versions naturally descendi
   assert.equal(input[0].id, "gpt-4");
 });
 
+test("equal catalog dates use descending natural versions and retain unknown model families", () => {
+  assert.deepEqual(
+    sortDiscoveredModels([
+      { id: "gpt-5.6", name: "", createdAt: 1 },
+      { id: "gpt-6.1-sol", name: "", createdAt: 1 },
+      { id: "gpt-6-astra", name: "", createdAt: 1 },
+      { id: "custom-2", name: "" },
+      { id: "custom-10", name: "" },
+    ]).map((model) => model.id),
+    ["gpt-6.1-sol", "gpt-6-astra", "gpt-5.6", "custom-10", "custom-2"],
+  );
+});
+
 test("fetching reads creation metadata and sorts across pages instead of alphabetically", async () => {
   let page = 0;
   const models = await fetchProviderModels(

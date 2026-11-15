@@ -5,6 +5,7 @@ import { getString } from "../utils/locale";
 export function attachProviderModelSelect(args: {
   input: HTMLInputElement;
   initialModels?: DiscoveredModel[];
+  canAutoLoad?(): boolean;
   // The loader must redact credentials from errors before rejecting.
   loadModels(options?: { force?: boolean }): Promise<DiscoveredModel[]>;
   onModelPicked(id: string): void;
@@ -53,6 +54,12 @@ export function attachProviderModelSelect(args: {
   let requestToken = 0;
   let disposed = false;
   let renderedSignature = "";
+  let autoLoadTimer: ReturnType<typeof setTimeout> | undefined;
+  const cancelAutoLoad = () => {
+    if (autoLoadTimer === undefined) return;
+    clearTimeout(autoLoadTimer);
+    autoLoadTimer = undefined;
+  };
   const rebuild = () => {
     if (disposed) return;
     input.hidden = !manual;
@@ -62,7 +69,7 @@ export function attachProviderModelSelect(args: {
       (model) => showAll.checked || !hideModelByDefault(model),
     );
     const ids = visible.map((model) => model.id);
-    if (saved && !ids.includes(saved)) ids.unshift(saved);
+    if (saved && !ids.includes(saved)) ids.push(saved);
     const signature = JSON.stringify([ids, saved, manual]);
     if (signature === renderedSignature) return;
     renderedSignature = signature;
@@ -90,6 +97,7 @@ export function attachProviderModelSelect(args: {
   const rebuildGate = createSelectRebuildGate(rebuild);
   const updateStatus = () => {
     refresh.disabled = loading;
+    select.disabled = loading && !models.length;
     delete status.dataset.error;
     if (loading) {
       status.textContent = getString("pref-provider-models-fetching");
@@ -114,6 +122,7 @@ export function attachProviderModelSelect(args: {
   };
   const setModels = (catalog: DiscoveredModel[]) => {
     if (disposed) return;
+    cancelAutoLoad();
     models = catalog;
     failureDetail = undefined;
     rebuildGate.requestRebuild();
@@ -121,6 +130,7 @@ export function attachProviderModelSelect(args: {
   };
   const refreshCatalog = async (options?: { force?: boolean }) => {
     if (disposed) return;
+    cancelAutoLoad();
     const currentGeneration = generation;
     const token = ++requestToken;
     loading = true;
@@ -148,10 +158,27 @@ export function attachProviderModelSelect(args: {
     rebuildGate.requestRebuild();
     updateStatus();
   };
-  const onFocus = () => void refreshCatalog();
-  const onMouseDown = () => {
+  const ensureCatalog = () => {
+    if (!models.length && !loading && failureDetail === undefined)
+      void refreshCatalog();
+  };
+  const scheduleAutoLoad = () => {
+    cancelAutoLoad();
+    if (models.length || !(args.canAutoLoad?.() ?? true)) return;
+    autoLoadTimer = setTimeout(() => {
+      autoLoadTimer = undefined;
+      if (!disposed && (args.canAutoLoad?.() ?? true)) ensureCatalog();
+    }, 300);
+  };
+  const onFocus = ensureCatalog;
+  const onMouseDown = (event: MouseEvent) => {
+    if (!models.length && failureDetail === undefined) {
+      event.preventDefault();
+      rebuildGate.popupClosed();
+      ensureCatalog();
+      return;
+    }
     rebuildGate.popupMayOpen();
-    void refreshCatalog();
   };
   const onSelectKeyDown = () => rebuildGate.popupMayOpen();
   const onSelectBlur = () => rebuildGate.popupClosed();
@@ -196,12 +223,14 @@ export function attachProviderModelSelect(args: {
   showAll.addEventListener("change", onShowAll);
   rebuild();
   updateStatus();
+  scheduleAutoLoad();
   return {
     container,
     details,
     setModels,
     reset() {
       if (disposed) return;
+      cancelAutoLoad();
       generation += 1;
       models = [];
       loading = false;
@@ -209,9 +238,11 @@ export function attachProviderModelSelect(args: {
       showAll.checked = false;
       rebuildGate.requestRebuild();
       updateStatus();
+      scheduleAutoLoad();
     },
     dispose() {
       if (disposed) return;
+      cancelAutoLoad();
       disposed = true;
       select.removeEventListener("focus", onFocus);
       select.removeEventListener("mousedown", onMouseDown);

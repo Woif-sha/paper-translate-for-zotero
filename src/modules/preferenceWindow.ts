@@ -369,8 +369,8 @@ function createProviderCard(
       }
     };
     apiBase.input.addEventListener("input", () => {
-      stopModelDiscovery(params.resources, card);
       provider.apiBase = apiBase.input.value;
+      stopModelDiscovery(params.resources, card);
       updatePreview();
     });
     const apiKey = labeledInput(
@@ -382,8 +382,8 @@ function createProviderCard(
     apiKey.input.placeholder = "sk-…";
     apiKey.input.autocomplete = "off";
     apiKey.input.addEventListener("input", () => {
-      stopModelDiscovery(params.resources, card);
       provider.apiKey = apiKey.input.value;
+      stopModelDiscovery(params.resources, card);
     });
     updatePreview();
     apiBase.wrap.append(preview);
@@ -678,6 +678,9 @@ function createModelRow(
   const cached = params.resources.catalogs.get(provider.id);
   const modelSelect = attachProviderModelSelect({
     input: modelInput,
+    canAutoLoad: () =>
+      provider.authMode === "codex_auth" ||
+      Boolean(provider.apiBase.trim() && provider.apiKey.trim()),
     initialModels:
       cached?.identity === catalogIdentity(provider)
         ? cached.models

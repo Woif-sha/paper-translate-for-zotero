@@ -218,11 +218,9 @@ function parseCodexCatalog(payload: unknown): DiscoveredModel[] {
   if (!entries) {
     throw new Error("Codex 模型列表格式无效 / Invalid Codex model list");
   }
-  const models: Array<
-    DiscoveredModel & { priority: number; serverOrder: number }
-  > = [];
+  const models: DiscoveredModel[] = [];
   const seen = new Set<string>();
-  for (const [serverOrder, entry] of entries.entries()) {
+  for (const entry of entries) {
     if (
       !entry ||
       typeof entry !== "object" ||
@@ -239,12 +237,11 @@ function parseCodexCatalog(payload: unknown): DiscoveredModel[] {
     seen.add(key);
     const name =
       typeof entry.display_name === "string" ? entry.display_name.trim() : "";
-    const priority = Number(entry.priority);
+    const createdAt = modelCreationTime(entry);
     models.push({
       id,
       name: name ? name.slice(0, 160) : id,
-      priority: Number.isFinite(priority) ? priority : 0,
-      serverOrder,
+      ...(createdAt === undefined ? {} : { createdAt }),
     });
     if (models.length > MAX_MODELS) {
       throw new Error("模型数量超过上限 / Model list is too large");
@@ -253,11 +250,7 @@ function parseCodexCatalog(payload: unknown): DiscoveredModel[] {
   if (!models.length) {
     throw new Error("Codex 返回的可选模型列表为空 / Empty Codex model list");
   }
-  models.sort(
-    (left, right) =>
-      right.priority - left.priority || left.serverOrder - right.serverOrder,
-  );
-  return models.map(({ id, name }) => ({ id, name }));
+  return sortDiscoveredModels(models);
 }
 
 async function readCatalogResponse(

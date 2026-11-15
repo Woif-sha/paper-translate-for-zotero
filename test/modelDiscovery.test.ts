@@ -197,7 +197,7 @@ test("invalid endpoints and missing API keys never send a discovery request", as
   }
 });
 
-test("Codex discovers listed slugs from its own authenticated catalog in server priority order", async () => {
+test("Codex discovers listed slugs in descending natural version order without using server priority", async () => {
   await withCodexCatalog(async () => {
     const models = await fetchProviderModels(codexProvider(), {
       fetchFn: async (url, init) => {
@@ -211,23 +211,23 @@ test("Codex discovers listed slugs from its own authenticated catalog in server 
         return json({
           models: [
             {
-              slug: " lower ",
-              display_name: " Lower ",
+              slug: " gpt-5.6 ",
+              display_name: " GPT-5.6 ",
+              visibility: "list",
+              priority: 100,
+            },
+            {
+              slug: "gpt-6.1-sol",
+              display_name: "GPT-6.1-Sol",
               visibility: "list",
               priority: 1,
             },
+            { slug: "gpt-6-astra", visibility: "list", priority: 2 },
             {
-              slug: "first",
-              display_name: "First",
-              visibility: "list",
-              priority: 8,
-            },
-            { slug: "second", visibility: "list", priority: 8 },
-            {
-              slug: "FIRST",
+              slug: "GPT-6.1-SOL",
               display_name: "Duplicate",
               visibility: "list",
-              priority: 9,
+              priority: 999,
             },
             { slug: "hidden", visibility: "hide", priority: 100 },
             { id: "public-api-shape", visibility: "list" },
@@ -236,9 +236,47 @@ test("Codex discovers listed slugs from its own authenticated catalog in server 
       },
     });
     assert.deepEqual(models, [
-      { id: "first", name: "First" },
-      { id: "second", name: "second" },
-      { id: "lower", name: "Lower" },
+      { id: "gpt-6.1-sol", name: "GPT-6.1-Sol" },
+      { id: "gpt-6-astra", name: "gpt-6-astra" },
+      { id: "gpt-5.6", name: "GPT-5.6" },
+    ]);
+  });
+});
+
+test("Codex creation metadata takes precedence over server priority and model versions", async () => {
+  await withCodexCatalog(async () => {
+    const models = await fetchProviderModels(codexProvider(), {
+      fetchFn: async () =>
+        json({
+          models: [
+            {
+              slug: "version-99",
+              visibility: "list",
+              priority: 100,
+              created: 1727740800,
+            },
+            {
+              slug: "version-1",
+              visibility: "list",
+              priority: 1,
+              created_at: "2026-09-21T00:00:00Z",
+            },
+            { slug: "unknown-100", visibility: "list", priority: 200 },
+          ],
+        }),
+    });
+    assert.deepEqual(models, [
+      {
+        id: "version-1",
+        name: "version-1",
+        createdAt: Date.parse("2026-09-21T00:00:00Z"),
+      },
+      {
+        id: "version-99",
+        name: "version-99",
+        createdAt: Date.parse("2024-10-01T00:00:00Z"),
+      },
+      { id: "unknown-100", name: "unknown-100" },
     ]);
   });
 });
