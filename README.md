@@ -77,7 +77,7 @@ _在服务商卡片中配置 Codex 模型与推理强度，已保存的模型可
 
 ## 开始使用
 
-需要 Zotero **7.9.9–10.9.9**，以及一个可用的模型服务。当前翻译目标语言为中文。
+最低要求为 Zotero **7.9.9**，还需准备一个可用的模型服务。当前翻译目标语言为中文。
 
 1. 从 [GitHub Releases](https://github.com/Woif-sha/paper-translate-for-zotero/releases) 下载 `.xpi`，在 Zotero“工具 → 插件 → 齿轮 → 从文件安装插件”中安装，然后重启 Zotero。
 2. 打开“设置 → Paper Translate for Zotero → AI 服务商”，配置并保存服务商，再在 Reader 侧栏选择当前模型。
