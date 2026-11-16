@@ -347,10 +347,10 @@ const MACRO_LANG_MAP = Object.entries(ISO6393_MACRO_LANGS).reduce(
 const LANG_CODE_INDEX_MAP = LANG_CODE.reduce(
   (acc, cur, index) => {
     const code = cur.code.split("-")[0];
-    if (acc[code]) {
+    if (acc[code] !== undefined) {
       return acc;
     }
-    acc[cur.code] = index;
+    acc[code] = index;
     return acc;
   },
   {} as Record<string, number>,
