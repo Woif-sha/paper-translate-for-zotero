@@ -71,6 +71,10 @@
 
 模型与服务商由你选择，请求失败会显示原因。图片取词需要模型支持图片输入；API Key 模式目前尚未适配外部联网补充，但可以使用论文内背景、术语和普通翻译。
 
+![展开的 Codex 服务商配置卡片，展示模型选择、测试与保存入口](.github/assets/screenshots/provider-configuration.png)
+
+_在服务商卡片中配置 Codex 模型与推理强度，已保存的模型可在 Reader 侧栏中切换使用。_
+
 ## 开始使用
 
 需要 Zotero **7.9.9–10.9.9**，以及一个可用的模型服务。当前翻译目标语言为中文。
@@ -85,8 +89,6 @@
 **Codex 登录**：先安装 Codex CLI，并在终端执行 `codex login`，然后在服务商卡片中选择账户可用的型号。
 
 **API Key**：填写服务商名称，选择接口预设，填写 HTTPS API 地址与 API Key，再选择模型。自定义接口需要明确选择 Chat Completions、Responses 或 Anthropic Messages 协议。
-
-![展开的 Codex 服务商配置卡片，展示模型选择、测试与保存入口](.github/assets/screenshots/provider-configuration.png)
 
 连接信息完整后会自动加载模型目录；找不到所需型号时，可以刷新目录、开启“显示全部”，或选择“自定义型号…”手动填写。图中的型号只是配置示例，请选择自己账户可用的模型。
 
