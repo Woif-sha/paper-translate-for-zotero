@@ -381,7 +381,7 @@ function migrateStoredProviderNames(configuration: {
 }
 
 function normalizeApiBase(value: string): string {
-  const normalized = value.trim().replace(/\/+$/u, "");
+  const normalized = value.trim();
   let parsed: URL;
   try {
     parsed = new URL(normalized);

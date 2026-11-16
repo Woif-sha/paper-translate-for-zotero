@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { resolveApiEndpoint } from "../src/models/protocols";
 import {
   createProviderGroup,
   flattenRuntimeModels,
@@ -107,6 +108,56 @@ test("rejects every blank model row instead of silently dropping it", () => {
   );
 
   assert.throws(() => validateProviderGroup(provider), /模型 ID/u);
+});
+
+test("preserves gateway query values through saved configuration and endpoint resolution", () => {
+  const previousZotero = (globalThis as any).Zotero;
+  const preferences = new Map<string, unknown>();
+  (globalThis as any).Zotero = {
+    Prefs: {
+      get: (key: string) => preferences.get(key),
+      set: (key: string, value: unknown) => preferences.set(key, value),
+    },
+  };
+  const query = "?upstream=https://upstream.example/v1/";
+  const cases = [
+    ["https://gateway.example/", "https://gateway.example/v1/responses"],
+    [
+      "https://gateway.example/proxy/v1/",
+      "https://gateway.example/proxy/v1/responses",
+    ],
+    [
+      "https://gateway.example/proxy/v1/responses/",
+      "https://gateway.example/proxy/v1/responses",
+    ],
+  ];
+  try {
+    for (const [base, endpoint] of cases) {
+      const provider: ModelProviderGroup = {
+        id: "provider-gateway",
+        name: "Gateway",
+        authMode: "openai_compatible",
+        protocol: "responses",
+        apiBase: `${base}${query}`,
+        apiKey: "fake-gateway-key",
+        models: [{ id: "model-gateway", model: "gateway-model", effort: "" }],
+      };
+      setModelProviderConfiguration([provider], "model-gateway");
+      const saved = getModelProviderConfiguration();
+      const [runtime] = flattenRuntimeModels(
+        saved.providers,
+        saved.activeModelId,
+      );
+
+      assert.equal(saved.providers[0].apiBase, provider.apiBase);
+      assert.equal(
+        resolveApiEndpoint(runtime.apiBase, runtime.protocol!),
+        `${endpoint}${query}`,
+      );
+    }
+  } finally {
+    (globalThis as any).Zotero = previousZotero;
+  }
 });
 
 test("tests one complete model without validating unfinished sibling rows", () => {
