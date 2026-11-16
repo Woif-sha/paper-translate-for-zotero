@@ -33,7 +33,10 @@ export const PREFERENCES_PANE_ID = `${config.addonRef}-preferences`;
 const CONNECTION_TEST_TIMEOUT_MS = 30_000;
 let preferencesRegistered = false;
 type ProviderEditorResources = {
-  connectionTests: Set<AbortController>;
+  connectionTests: Map<
+    HTMLElement,
+    { controller: AbortController; button: HTMLButtonElement }
+  >;
   discoveries: Map<
     HTMLElement,
     { controller: AbortController; promise: Promise<DiscoveredModel[]> }
@@ -99,7 +102,7 @@ export function registerPrefsScripts(
     getModelProviderConfiguration().providers,
   ));
   const resources: ProviderEditorResources = {
-    connectionTests: new Set(),
+    connectionTests: new Map(),
     discoveries: new Map(),
     modelPickers: new Map(),
     modelSelects: new Map(),
@@ -370,6 +373,7 @@ function createProviderCard(
     };
     apiBase.input.addEventListener("input", () => {
       provider.apiBase = apiBase.input.value;
+      invalidateConnectionTest(params.resources, card);
       stopModelDiscovery(params.resources, card);
       updatePreview();
     });
@@ -383,6 +387,7 @@ function createProviderCard(
     apiKey.input.autocomplete = "off";
     apiKey.input.addEventListener("input", () => {
       provider.apiKey = apiKey.input.value;
+      invalidateConnectionTest(params.resources, card);
       stopModelDiscovery(params.resources, card);
     });
     updatePreview();
@@ -399,6 +404,7 @@ function createProviderCard(
   timeout.input.max = "3600";
   timeout.input.addEventListener("input", () => {
     provider.timeoutSeconds = Number(timeout.input.value);
+    invalidateConnectionTest(params.resources, card);
   });
   body.append(timeout.wrap);
 
@@ -673,6 +679,7 @@ function createModelRow(
   modelInput.classList.add("pt-model-input");
   modelInput.addEventListener("input", () => {
     model.model = modelInput.value;
+    invalidateConnectionTest(params.resources, card);
     updateProviderHeader(card, provider, params.activeModelId);
   });
   const cached = params.resources.catalogs.get(provider.id);
@@ -690,6 +697,7 @@ function createModelRow(
         .promise,
     onModelPicked(id) {
       model.model = id;
+      invalidateConnectionTest(params.resources, card);
       updateProviderHeader(card, provider, params.activeModelId);
       params.memory.remember();
       renderPreferenceEditors(doc.defaultView ?? undefined);
@@ -719,6 +727,7 @@ function createModelRow(
     effort.style.width = "100px";
     effort.addEventListener("change", () => {
       model.effort = effort.value;
+      invalidateConnectionTest(params.resources, card);
     });
     effort.setAttribute("aria-label", getString("pref-provider-effort"));
     settings.append(effort);
@@ -844,13 +853,18 @@ async function testDraftModel(
 ): Promise<void> {
   cancelConnectionTests(resources);
   const controller = new AbortController();
-  resources.connectionTests.add(controller);
+  resources.connectionTests.set(card, { controller, button });
   const timer = setTimeout(
     () => controller.abort(new Error("Connection test timed out")),
     kind === "image" ? 60_000 : CONNECTION_TEST_TIMEOUT_MS,
   );
   button.disabled = true;
-  showCardStatus(card, getString("pref-codex-testing"), false);
+  showCardStatus(
+    card,
+    getString("pref-codex-testing"),
+    false,
+    "connection-test",
+  );
   try {
     const runtime = resolveDraftRuntimeModel(provider, model);
     const reply =
@@ -858,18 +872,30 @@ async function testDraftModel(
         ? await testModelImageConnection(runtime, controller.signal)
         : await testModelConnection(runtime, controller.signal);
     if (controller.signal.aborted || !card.isConnected) return;
-    showCardStatus(card, `${getString("pref-codex-success")}: ${reply}`, false);
+    showCardStatus(
+      card,
+      `${getString("pref-codex-success")}: ${reply}`,
+      false,
+      "connection-test",
+    );
   } catch (error) {
-    if (!card.isConnected || !resources.connectionTests.has(controller)) return;
+    if (
+      !card.isConnected ||
+      resources.connectionTests.get(card)?.controller !== controller
+    )
+      return;
     showCardStatus(
       card,
       `${getString("pref-codex-failed")}: ${modelErrorMessage(error)}`,
       true,
+      "connection-test",
     );
   } finally {
     clearTimeout(timer);
-    resources.connectionTests.delete(controller);
-    button.disabled = false;
+    if (resources.connectionTests.get(card)?.controller === controller) {
+      resources.connectionTests.delete(card);
+      button.disabled = false;
+    }
   }
 }
 
@@ -888,6 +914,7 @@ function showCardStatus(
   card: HTMLElement,
   message: string,
   error: boolean,
+  kind?: "connection-test",
 ): void {
   const status = card.querySelector(
     `.${config.addonRef}-provider-status`,
@@ -896,11 +923,30 @@ function showCardStatus(
   status.hidden = !message;
   status.style.color = error ? "#b42318" : "#168c68";
   status.textContent = message;
+  if (kind) status.dataset.kind = kind;
+  else delete status.dataset.kind;
 }
 
-function cancelConnectionTests(resources: ProviderEditorResources): void {
-  for (const controller of resources.connectionTests) controller.abort();
-  resources.connectionTests.clear();
+function invalidateConnectionTest(
+  resources: ProviderEditorResources,
+  card: HTMLElement,
+): void {
+  cancelConnectionTests(resources, card);
+  if (card.querySelector('.pt-provider-status[data-kind="connection-test"]'))
+    showCardStatus(card, "", false);
+}
+
+function cancelConnectionTests(
+  resources: ProviderEditorResources,
+  card?: HTMLElement,
+): void {
+  for (const [owner, { controller, button }] of resources.connectionTests) {
+    if (card && owner !== card) continue;
+    resources.connectionTests.delete(owner);
+    controller.abort();
+    button.disabled = false;
+    showCardStatus(owner, "", false);
+  }
 }
 
 function nextProviderName(providers: ModelProviderGroup[]): string {

@@ -71,6 +71,301 @@ async function setup() {
   return { template, actions };
 }
 
+for (const field of ["api-key", "api-base", "model"] as const) {
+  for (const outcome of ["success", "failure"] as const) {
+    test(`editing ${field} cancels its pending connection test and discards the old ${outcome}`, async () => {
+      const { template, actions } = await setup();
+      const configuration = getModelProviderConfiguration();
+      configuration.providers[0].presetId = "custom";
+      setModelProviderConfiguration(
+        configuration.providers,
+        configuration.activeModelId,
+      );
+      const dom = new JSDOM(template);
+      let signal: AbortSignal | undefined;
+      let respond: ((response: Response) => void) | undefined;
+      (globalThis as any).ztoolkit = {
+        getGlobal: () => async (_url: string, init: RequestInit) => {
+          if (init.method === "GET")
+            return new Response(
+              JSON.stringify({ data: [{ id: "saved-model" }] }),
+            );
+          signal = init.signal as AbortSignal;
+          return new Promise<Response>((resolve) => {
+            respond = resolve;
+          });
+        },
+      };
+      const doc = dom.window.document;
+      try {
+        registerPrefsScripts(dom.window as unknown as Window, actions);
+        if (field === "model") {
+          const select = doc.querySelector(
+            ".pt-provider-model-select",
+          ) as HTMLSelectElement;
+          select.selectedIndex = select.options.length - 1;
+          select.dispatchEvent(
+            new dom.window.Event("change", { bubbles: true }),
+          );
+          await setImmediate();
+        }
+        (doc.querySelector(".pt-test-toggle") as HTMLButtonElement).click();
+        (
+          doc.querySelector(".pt-test-choices button") as HTMLButtonElement
+        ).click();
+        await setImmediate();
+        assert.ok(respond);
+        const input = doc.querySelector(
+          field === "model"
+            ? ".pt-model-input"
+            : `[aria-label="pref-provider-${field}"]`,
+        ) as HTMLInputElement;
+        input.value =
+          field === "api-base"
+            ? "https://new.example.com/v1/responses"
+            : "new-untested-value";
+        input.dispatchEvent(new dom.window.Event("input", { bubbles: true }));
+        respond(
+          outcome === "success"
+            ? new Response(
+                'data: {"type":"response.output_text.delta","delta":"OK"}\n\ndata: {"type":"response.completed","response":{"status":"completed"}}\n\n',
+              )
+            : new Response("Old configuration failed", { status: 401 }),
+        );
+        await setImmediate();
+        assert.equal(signal?.aborted, true);
+        assert.equal(
+          (doc.querySelector(".pt-provider-status") as HTMLElement).hidden,
+          true,
+        );
+        assert.equal(
+          (doc.querySelector(".pt-test-toggle") as HTMLButtonElement).disabled,
+          false,
+        );
+      } finally {
+        dom.window.dispatchEvent(new dom.window.Event("unload"));
+        dom.window.close();
+      }
+    });
+  }
+}
+
+test("editing connection fields clears a completed connection test result", async () => {
+  const { template, actions } = await setup();
+  const configuration = getModelProviderConfiguration();
+  configuration.providers[0].presetId = "custom";
+  setModelProviderConfiguration(
+    configuration.providers,
+    configuration.activeModelId,
+  );
+  const dom = new JSDOM(template);
+  (globalThis as any).ztoolkit = {
+    getGlobal: () => async (_url: string, init: RequestInit) =>
+      init.method === "GET"
+        ? new Response(JSON.stringify({ data: [{ id: "saved-model" }] }))
+        : new Response(
+            'data: {"type":"response.output_text.delta","delta":"OK"}\n\ndata: {"type":"response.completed","response":{"status":"completed"}}\n\n',
+          ),
+  };
+  const doc = dom.window.document;
+  try {
+    registerPrefsScripts(dom.window as unknown as Window, actions);
+    const select = doc.querySelector(
+      ".pt-provider-model-select",
+    ) as HTMLSelectElement;
+    select.selectedIndex = select.options.length - 1;
+    select.dispatchEvent(new dom.window.Event("change", { bubbles: true }));
+    await setImmediate();
+    for (const field of [
+      "api-key",
+      "api-base",
+      "model",
+      "catalog-model",
+    ] as const) {
+      (doc.querySelector(".pt-test-toggle") as HTMLButtonElement).click();
+      (
+        doc.querySelector(".pt-test-choices button") as HTMLButtonElement
+      ).click();
+      await setImmediate();
+      const status = doc.querySelector(".pt-provider-status") as HTMLElement;
+      assert.match(status.textContent!, /success: OK/u);
+      assert.equal(status.hidden, false);
+      if (field === "catalog-model") {
+        (doc.querySelector(".pt-model-input") as HTMLInputElement).blur();
+        (
+          doc.querySelector(".pt-provider-model-refresh") as HTMLButtonElement
+        ).click();
+        await setImmediate();
+        select.value = "saved-model";
+        select.dispatchEvent(new dom.window.Event("change", { bubbles: true }));
+        await setImmediate();
+        assert.equal(
+          status.hidden,
+          true,
+          "picking a catalog model must invalidate the completed result",
+        );
+        continue;
+      }
+      const input = doc.querySelector(
+        field === "model"
+          ? ".pt-model-input"
+          : `[aria-label="pref-provider-${field}"]`,
+      ) as HTMLInputElement;
+      input.value =
+        field === "api-base"
+          ? "https://new.example.com/v1/responses"
+          : "new-untested-value";
+      input.dispatchEvent(new dom.window.Event("input", { bubbles: true }));
+      assert.equal(
+        status.hidden,
+        true,
+        `${field} must invalidate the completed result`,
+      );
+    }
+  } finally {
+    dom.window.dispatchEvent(new dom.window.Event("unload"));
+    dom.window.close();
+  }
+});
+
+test("an older connection test cannot re-enable the button for its replacement", async () => {
+  const { template, actions } = await setup();
+  const dom = new JSDOM(template);
+  const requests: { signal: AbortSignal; respond(response: Response): void }[] =
+    [];
+  (globalThis as any).ztoolkit = {
+    getGlobal: () => async (_url: string, init: RequestInit) => {
+      if (init.method === "GET")
+        return new Response(JSON.stringify({ data: [{ id: "saved-model" }] }));
+      return new Promise<Response>((respond) => {
+        requests.push({ signal: init.signal as AbortSignal, respond });
+      });
+    },
+  };
+  const doc = dom.window.document;
+  const startTest = () => {
+    (doc.querySelector(".pt-test-toggle") as HTMLButtonElement).click();
+    (doc.querySelector(".pt-test-choices button") as HTMLButtonElement).click();
+  };
+  try {
+    registerPrefsScripts(dom.window as unknown as Window, actions);
+    startTest();
+    await setImmediate();
+    const key = doc.querySelector(
+      '[aria-label="pref-provider-api-key"]',
+    ) as HTMLInputElement;
+    key.value = "replacement-key";
+    key.dispatchEvent(new dom.window.Event("input", { bubbles: true }));
+    startTest();
+    await setImmediate();
+    assert.equal(requests.length, 2);
+    assert.equal(requests[0].signal.aborted, true);
+    requests[0].respond(
+      new Response("Old configuration failed", { status: 401 }),
+    );
+    await setImmediate();
+    const toggle = doc.querySelector(".pt-test-toggle") as HTMLButtonElement;
+    assert.equal(toggle.disabled, true);
+    assert.equal(
+      doc.querySelector(".pt-provider-status")!.textContent,
+      "pref-codex-testing",
+    );
+    requests[1].respond(
+      new Response(
+        'data: {"type":"response.output_text.delta","delta":"OK"}\n\ndata: {"type":"response.completed","response":{"status":"completed"}}\n\n',
+      ),
+    );
+    await setImmediate();
+    assert.equal(toggle.disabled, false);
+    assert.match(
+      doc.querySelector(".pt-provider-status")!.textContent!,
+      /success: OK/u,
+    );
+  } finally {
+    dom.window.dispatchEvent(new dom.window.Event("unload"));
+    dom.window.close();
+  }
+});
+
+test("connection tests keep card ownership when another provider is edited or tested", async () => {
+  const { template, actions } = await setup();
+  const configuration = getModelProviderConfiguration();
+  configuration.providers.push({
+    ...configuration.providers[0],
+    id: "second-provider",
+    name: "Second provider",
+    models: [{ id: "second-model", model: "saved-model", effort: "" }],
+  });
+  setModelProviderConfiguration(
+    configuration.providers,
+    configuration.activeModelId,
+  );
+  const dom = new JSDOM(template);
+  const requests: { signal: AbortSignal; respond(response: Response): void }[] =
+    [];
+  (globalThis as any).ztoolkit = {
+    getGlobal: () => async (_url: string, init: RequestInit) => {
+      if (init.method === "GET")
+        return new Response(JSON.stringify({ data: [{ id: "saved-model" }] }));
+      return new Promise<Response>((respond) => {
+        requests.push({ signal: init.signal as AbortSignal, respond });
+      });
+    },
+  };
+  const doc = dom.window.document;
+  try {
+    registerPrefsScripts(dom.window as unknown as Window, actions);
+    const [first, second] = Array.from(
+      doc.querySelectorAll<HTMLElement>(".pt-provider-card"),
+    );
+    (first.querySelector(".pt-test-toggle") as HTMLButtonElement).click();
+    (
+      first.querySelector(".pt-test-choices button") as HTMLButtonElement
+    ).click();
+    await setImmediate();
+    const secondKey = second.querySelector(
+      '[aria-label="pref-provider-api-key"]',
+    ) as HTMLInputElement;
+    secondKey.value = "second-key";
+    secondKey.dispatchEvent(new dom.window.Event("input", { bubbles: true }));
+    assert.equal(requests[0].signal.aborted, false);
+    assert.equal(
+      first.querySelector(".pt-provider-status")!.textContent,
+      "pref-codex-testing",
+    );
+    (second.querySelector(".pt-test-toggle") as HTMLButtonElement).click();
+    (
+      second.querySelectorAll(".pt-test-choices button")[1] as HTMLButtonElement
+    ).click();
+    await setImmediate();
+    assert.equal(requests[0].signal.aborted, true);
+    assert.equal(
+      (first.querySelector(".pt-provider-status") as HTMLElement).hidden,
+      true,
+    );
+    assert.equal(
+      (first.querySelector(".pt-test-toggle") as HTMLButtonElement).disabled,
+      false,
+    );
+    requests[0].respond(
+      new Response("Old configuration failed", { status: 401 }),
+    );
+    requests[1].respond(
+      new Response(
+        'data: {"type":"response.output_text.delta","delta":"{\\"text\\":\\"TEST 42\\"}"}\n\ndata: {"type":"response.completed","response":{"status":"completed"}}\n\n',
+      ),
+    );
+    await setImmediate();
+    assert.match(
+      second.querySelector(".pt-provider-status")!.textContent!,
+      /success: TEST 42/u,
+    );
+  } finally {
+    dom.window.dispatchEvent(new dom.window.Event("unload"));
+    dom.window.close();
+  }
+});
+
 for (const authMode of ["openai_compatible", "codex_auth"] as const) {
   test(`${authMode} model rows automatically load a shared newest-first catalog and explicitly refresh it`, async () => {
     const { template, actions } = await setup();
