@@ -24,6 +24,7 @@ import {
   createBackgroundMarkdown,
   createTerminologyMarkdown,
 } from "../src/context/paperContext";
+import { buildTranslationPrompt } from "../src/context/prompts";
 
 test("unlocks core translation before optional external research finishes", () => {
   const initial = createPreparationRecord(
@@ -777,6 +778,164 @@ test("reopening preserves active work and isolates invalid optional knowledge", 
   }
 });
 
+test("isolates optional knowledge read and decoding failures from translation", async (t) => {
+  for (const [file, stage, excludedText] of [
+    ["background.md", "background", "有效论文背景"],
+    ["terminology.md", "terminology", "人工术语译法"],
+    ["background-sources.json", "external", "有效外部背景"],
+  ] as const) {
+    for (const failure of ["utf-16", "read-error"] as const) {
+      await t.test(`${file}: ${failure}`, async () => {
+        const fixture = createKnowledgeRecoveryFixture();
+        const path = `${fixture.paperDir}\\${file}`;
+        try {
+          if (failure === "utf-16") {
+            fixture.files.set(path, Uint8Array.of(0xff, 0xfe, 0x23, 0));
+          } else {
+            fixture.readErrors.set(
+              path,
+              new Error("Optional file cannot be read"),
+            );
+          }
+          const context = await preparePaperContext(42, "timing arc");
+          assert.ok(context.passages.length > 0);
+          const preparation = await readPreparationRecord(context);
+          assert.deepEqual(
+            preparation.stages.map((item) => item.status),
+            ["complete", "complete", "complete", "complete", "complete"],
+          );
+          assert.ok(
+            preparation.integrityIssues?.some((issue) => issue.stage === stage),
+          );
+          const prompt = buildTranslationPrompt({
+            context,
+            sourceLanguage: "en",
+            targetLanguage: "zh-CN",
+            input: "timing arc",
+          });
+          assert.ok(!prompt.includes(excludedText));
+          assert.equal(
+            fixture.files.get(path) instanceof Uint8Array,
+            failure === "utf-16",
+          );
+        } finally {
+          fixture.restore();
+        }
+      });
+    }
+  }
+});
+
+test("excludes incomplete terminology from prompts in every preparation state", async (t) => {
+  for (const status of [
+    "complete",
+    "running",
+    "error",
+    "warning",
+    "pending",
+  ] as const) {
+    await t.test(status, async () => {
+      const fixture = createKnowledgeRecoveryFixture();
+      const terminologyPath = `${fixture.paperDir}\\terminology.md`;
+      const terminology = `${createTerminologyMarkdown("Paper")}| timing arc | timing arc | 人工术语译法 | EDA | relation | Method | paper | high | 2026-11-16 |\n`;
+      fixture.files.set(terminologyPath, terminology);
+      const preparationPath = `${fixture.paperDir}\\_preparation.json`;
+      const initial = JSON.parse(String(fixture.files.get(preparationPath)));
+      initial.stages.find(
+        (stage: { id: string }) => stage.id === "terminology",
+      ).status = status;
+      initial.stages.find(
+        (stage: { id: string }) => stage.id === "external",
+      ).status = status === "complete" ? "complete" : "pending";
+      initial.overall = status === "complete" ? "ready" : "core-ready";
+      fixture.files.set(preparationPath, JSON.stringify(initial));
+      try {
+        const context = await preparePaperContext(42, "timing arc");
+        const preparation = await readPreparationRecord(context);
+        assert.equal(
+          preparation.stages.find((stage) => stage.id === "terminology")
+            ?.status,
+          status,
+        );
+        if (status === "complete")
+          assert.match(
+            preparation.integrityIssues?.find(
+              (issue) => issue.stage === "terminology",
+            )?.detail ?? "",
+            /不足 6 项/,
+          );
+        assert.equal(context.terminology, "");
+        assert.doesNotMatch(
+          buildTranslationPrompt({
+            context,
+            sourceLanguage: "en",
+            targetLanguage: "zh-CN",
+            input: "timing arc",
+          }),
+          /人工术语译法/,
+        );
+        assert.equal(fixture.files.get(terminologyPath), terminology);
+      } finally {
+        fixture.restore();
+      }
+    });
+  }
+});
+
+test("keeps translation available when old terminology cannot be decoded during a paper update", async () => {
+  const fixture = createKnowledgeRecoveryFixture();
+  const terminologyPath = `${fixture.paperDir}\\terminology.md`;
+  const invalidText = Uint8Array.of(0xff, 0xfe, 0x23, 0);
+  fixture.files.set(terminologyPath, invalidText);
+  const markdown = "# Method\nA revised timing arc analysis.";
+  fixture.files.set(`${fixture.mineruCacheDir}\\full.md`, markdown);
+  fixture.files.set(
+    `${fixture.mineruCacheDir}\\manifest.json`,
+    JSON.stringify({ noSections: true, totalChars: markdown.length }),
+  );
+  try {
+    const context = await preparePaperContext(42, "timing arc");
+    const preparation = await readPreparationRecord(context);
+    assert.ok(context.passages.length > 0);
+    assert.equal(context.terminology, "");
+    const terminologyStage = preparation.stages.find(
+      (stage) => stage.id === "terminology",
+    );
+    assert.equal(terminologyStage?.status, "error");
+    assert.equal(terminologyStage?.failureKind, "integrity");
+    assert.equal(fixture.files.get(terminologyPath), invalidText);
+  } finally {
+    fixture.restore();
+  }
+});
+
+test("still rejects required paper reads and preparation persistence failures", async (t) => {
+  await t.test("required Markdown read", async () => {
+    const fixture = createKnowledgeRecoveryFixture();
+    const failure = new Error("Required Markdown cannot be read");
+    fixture.readErrors.set(`${fixture.mineruCacheDir}\\full.md`, failure);
+    try {
+      await assert.rejects(preparePaperContext(42, "timing arc"), failure);
+    } finally {
+      fixture.restore();
+    }
+  });
+  await t.test("integrity record write", async () => {
+    const fixture = createKnowledgeRecoveryFixture();
+    const failure = new Error("Preparation record cannot be written");
+    fixture.files.set(
+      `${fixture.paperDir}\\background.md`,
+      Uint8Array.of(0xff),
+    );
+    fixture.writeErrors.set(`${fixture.paperDir}\\_preparation.json`, failure);
+    try {
+      await assert.rejects(preparePaperContext(42, "timing arc"), failure);
+    } finally {
+      fixture.restore();
+    }
+  });
+});
+
 test("rejects duplicate or extra preparation stages", async () => {
   const previousIO = (globalThis as any).IOUtils;
   const paperDir = "E:\\ZoteroData\\paper-translate-for-zotero\\ABCD1234";
@@ -1500,3 +1659,175 @@ test("migrates legacy empty external results without reviving research", async (
     (globalThis as any).Zotero = previousZotero;
   }
 });
+
+function createKnowledgeRecoveryFixture() {
+  const previousIO = (globalThis as any).IOUtils;
+  const previousZotero = (globalThis as any).Zotero;
+  const dataDir = "E:\\ZoteroData";
+  const mineruCacheDir = `${dataDir}\\llm-for-zotero-mineru\\42`;
+  const paperDir = `${dataDir}\\paper-translate-for-zotero\\ABCD1234`;
+  const fullMdPath = `${mineruCacheDir}\\full.md`;
+  const terms = [
+    "timing arc",
+    "standard cell",
+    "PVT corner",
+    "SSTA",
+    "HGAT",
+    "rRMSE",
+  ];
+  const markdown = `# Method\n${terms.join("; ")}.`;
+  const fullMdSha256 = createHash("sha256").update(markdown).digest("hex");
+  const now = "2026-11-16T00:00:00.000Z";
+  const preparation = updatePreparationStages(
+    createPreparationRecord("ABCD1234", fullMdSha256, now),
+    [
+      { id: "source", status: "complete" },
+      { id: "index", status: "complete" },
+      { id: "background", status: "complete" },
+      { id: "terminology", status: "complete" },
+      { id: "external", status: "complete" },
+    ],
+    now,
+  );
+  const externalSummary = "有效外部背景";
+  const files = new Map<string, string | Uint8Array>([
+    [
+      `${mineruCacheDir}\\_llm_source.json`,
+      JSON.stringify({
+        kind: "llm-for-zotero/mineru-cache-source",
+        version: 2,
+        attachmentId: 42,
+        attachmentKey: "WXYZ5678",
+        parentItemKey: "ABCD1234",
+        origin: "parsed",
+        recordedAt: now,
+      }),
+    ],
+    [fullMdPath, markdown],
+    [
+      `${mineruCacheDir}\\manifest.json`,
+      JSON.stringify({ noSections: true, totalChars: markdown.length }),
+    ],
+    [
+      `${paperDir}\\_paper_source.json`,
+      JSON.stringify({
+        schemaVersion: 3,
+        libraryID: 1,
+        parentItemKey: "ABCD1234",
+        attachmentID: 42,
+        attachmentKey: "WXYZ5678",
+        title: "Paper",
+        doi: "",
+        mineruCacheDir,
+        fullMdPath,
+        fullMdSha256,
+        updatedAt: now,
+      }),
+    ],
+    [`${paperDir}\\_preparation.json`, JSON.stringify(preparation)],
+    [
+      `${paperDir}\\background.md`,
+      [
+        "# Background: Paper",
+        "",
+        "## 论文依据",
+        "",
+        ...[
+          "所属领域",
+          "研究问题",
+          "工作流",
+          "方法组件",
+          "实验与评价语境",
+        ].flatMap((heading) => [`### ${heading}`, "", "有效论文背景", ""]),
+        "## 外部背景补充",
+        "",
+        externalSummary,
+        "",
+      ].join("\n"),
+    ],
+    [
+      `${paperDir}\\terminology.md`,
+      createTerminologyMarkdown("Paper") +
+        terms
+          .map(
+            (term) =>
+              `| ${term} | ${term} | 人工术语译法 | EDA | definition | Method | paper | high | ${now} |\n`,
+          )
+          .join(""),
+    ],
+    [
+      `${paperDir}\\background-sources.json`,
+      JSON.stringify({
+        schemaVersion: 3,
+        parentItemKey: "ABCD1234",
+        fullMdSha256,
+        status: "complete",
+        researchedAt: now,
+        summarySha256: createHash("sha256")
+          .update(externalSummary)
+          .digest("hex"),
+        queries: ["timing arc terminology"],
+        sources: [
+          {
+            title: "Official source",
+            url: "https://example.org/terms",
+            snippet: "definition",
+            sourceLevel: "official",
+            purpose: "disambiguation",
+          },
+        ],
+        failures: [],
+      }),
+    ],
+  ]);
+  const readErrors = new Map<string, Error>();
+  const writeErrors = new Map<string, Error>();
+  (globalThis as any).IOUtils = {
+    async exists(path: string) {
+      return files.has(path);
+    },
+    async read(path: string) {
+      if (readErrors.has(path)) throw readErrors.get(path);
+      const value = files.get(path);
+      return typeof value === "string"
+        ? new TextEncoder().encode(value)
+        : value;
+    },
+    async write(path: string, data: Uint8Array) {
+      if (writeErrors.has(path)) throw writeErrors.get(path);
+      files.set(path, new TextDecoder().decode(data));
+    },
+    async makeDirectory() {},
+    async getChildren() {
+      return [];
+    },
+  };
+  const attachment = {
+    id: 42,
+    key: "WXYZ5678",
+    parentItemID: 7,
+    isAttachment: () => true,
+  };
+  const parent = {
+    id: 7,
+    key: "ABCD1234",
+    libraryID: 1,
+    isAttachment: () => false,
+    getField: (field: string) => (field === "title" ? "Paper" : ""),
+  };
+  (globalThis as any).Zotero = {
+    DataDirectory: { dir: dataDir },
+    Items: { get: (id: number) => (id === 42 ? attachment : parent) },
+  };
+  return {
+    files,
+    readErrors,
+    writeErrors,
+    paperDir,
+    mineruCacheDir,
+    restore() {
+      (globalThis as any).IOUtils = previousIO;
+      (globalThis as any).Zotero = previousZotero;
+    },
+  };
+}

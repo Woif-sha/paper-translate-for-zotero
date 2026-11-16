@@ -307,6 +307,7 @@ export async function preparePaperContext(
         "background-sources.json",
       );
       const preparationPath = joinPath(paperDir, "_preparation.json");
+      let terminologyReadFailure: { error: unknown } | undefined;
 
       if (!previousSource) await writeJson(io, sourcePath, sourceRecord);
       let paperIndex = await readJsonIfExists<PaperIndex>(io, indexPath);
@@ -323,20 +324,27 @@ export async function preparePaperContext(
       }
 
       if (contentChanged || schemaChanged) {
-        const previousTerminology = (await io.exists(terminologyPath))
-          ? await readRequiredText(io, terminologyPath)
-          : "";
-        await writeText(
-          io,
-          terminologyPath,
-          previousTerminology
-            ? migrateTerminologyMarkdown(
-                previousTerminology,
-                identity.title,
-                markdown,
-              )
-            : createTerminologyMarkdown(identity.title),
-        );
+        let previousTerminology = "";
+        try {
+          if (await io.exists(terminologyPath)) {
+            previousTerminology = await readRequiredText(io, terminologyPath);
+          }
+        } catch (error) {
+          terminologyReadFailure = { error };
+        }
+        if (!terminologyReadFailure) {
+          await writeText(
+            io,
+            terminologyPath,
+            previousTerminology
+              ? migrateTerminologyMarkdown(
+                  previousTerminology,
+                  identity.title,
+                  markdown,
+                )
+              : createTerminologyMarkdown(identity.title),
+          );
+        }
         await writeText(
           io,
           backgroundPath,
@@ -387,13 +395,15 @@ export async function preparePaperContext(
         { id: "index", status: "complete" },
       ]);
       const recovered = await recoverOptionalKnowledge({
+        io,
         preparation,
         parentItemKey: identity.parentItemKey,
         fullMdSha256,
         paperMarkdown: markdown,
-        background: await readRequiredText(io, backgroundPath),
-        terminology: await readRequiredText(io, terminologyPath),
-        backgroundSources: await readRequiredText(io, backgroundSourcesPath),
+        backgroundPath,
+        terminologyPath,
+        terminologyReadFailure,
+        backgroundSourcesPath,
       });
       preparation = recovered.preparation;
       await writePreparationRecord(io, preparationPath, preparation);
@@ -426,13 +436,15 @@ export async function preparePaperContext(
 const EXTERNAL_BACKGROUND_MARKER = "## 外部背景补充";
 
 async function recoverOptionalKnowledge(params: {
+  io: IOUtilsLike;
   preparation: PreparationRecord;
   parentItemKey: string;
   fullMdSha256: string;
   paperMarkdown: string;
-  background: string;
-  terminology: string;
-  backgroundSources: string;
+  backgroundPath: string;
+  terminologyPath: string;
+  terminologyReadFailure?: { error: unknown };
+  backgroundSourcesPath: string;
 }): Promise<{
   preparation: PreparationRecord;
   background: string;
@@ -440,47 +452,52 @@ async function recoverOptionalKnowledge(params: {
 }> {
   let preparation = params.preparation;
   const issues: NonNullable<PreparationRecord["integrityIssues"]> = [];
-  const markerIndex = params.background.indexOf(EXTERNAL_BACKGROUND_MARKER);
-  const coreBackground = (
-    markerIndex >= 0
-      ? params.background.slice(0, markerIndex)
-      : params.background
-  ).trimEnd();
-  const externalSummary =
-    markerIndex >= 0
-      ? params.background
-          .slice(markerIndex + EXTERNAL_BACKGROUND_MARKER.length)
-          .trim()
-      : "";
-  const emptyBackground = /^# Background:[^\r\n]*$/u.test(
-    coreBackground.trim(),
-  );
+  let externalSummary: string | undefined;
   let background = "";
-  if (!emptyBackground) {
-    try {
+  try {
+    const currentBackground = await readRequiredText(
+      params.io,
+      params.backgroundPath,
+    );
+    const markerIndex = currentBackground.indexOf(EXTERNAL_BACKGROUND_MARKER);
+    const coreBackground = (
+      markerIndex >= 0
+        ? currentBackground.slice(0, markerIndex)
+        : currentBackground
+    ).trimEnd();
+    externalSummary =
+      markerIndex >= 0
+        ? currentBackground
+            .slice(markerIndex + EXTERNAL_BACKGROUND_MARKER.length)
+            .trim()
+        : "";
+    const emptyBackground = /^# Background:[^\r\n]*$/u.test(
+      coreBackground.trim(),
+    );
+    if (!emptyBackground) {
       validateCoreBackgroundMarkdown(coreBackground);
       background = `${coreBackground}\n`;
       preparation = completeRecoveredStage(preparation, "background");
-    } catch (error) {
+    } else if (stageStatusOf(preparation, "background") === "running") {
       preparation = recordOptionalKnowledgeFailure(
         preparation,
         "background",
-        conciseFailure(error),
+        "上一轮论文背景写入未完整结束",
+        issues,
+      );
+    } else if (stageStatusOf(preparation, "background") === "complete") {
+      preparation = recordOptionalKnowledgeFailure(
+        preparation,
+        "background",
+        "论文背景完成记录与文件内容不一致",
         issues,
       );
     }
-  } else if (stageStatusOf(preparation, "background") === "running") {
+  } catch (error) {
     preparation = recordOptionalKnowledgeFailure(
       preparation,
       "background",
-      "上一轮论文背景写入未完整结束",
-      issues,
-    );
-  } else if (stageStatusOf(preparation, "background") === "complete") {
-    preparation = recordOptionalKnowledgeFailure(
-      preparation,
-      "background",
-      "论文背景完成记录与文件内容不一致",
+      conciseFailure(error),
       issues,
     );
   }
@@ -492,12 +509,18 @@ async function recoverOptionalKnowledge(params: {
 
   let terminology = "";
   try {
+    if (params.terminologyReadFailure)
+      throw params.terminologyReadFailure.error;
+    const currentTerminology = await readRequiredText(
+      params.io,
+      params.terminologyPath,
+    );
     const terminologyCount = countTerminologyEntries(
-      params.terminology,
+      currentTerminology,
       params.paperMarkdown,
     );
-    if (terminologyCount > 0) terminology = params.terminology;
     if (terminologyCount >= MINIMUM_TERMINOLOGY_ENTRIES) {
+      terminology = currentTerminology;
       preparation = completeRecoveredStage(preparation, "terminology");
     } else if (stageStatusOf(preparation, "terminology") === "running") {
       preparation = recordOptionalKnowledgeFailure(
@@ -531,17 +554,19 @@ async function recoverOptionalKnowledge(params: {
 
   try {
     const backgroundResearch = JSON.parse(
-      params.backgroundSources,
+      await readRequiredText(params.io, params.backgroundSourcesPath),
     ) as BackgroundResearchRecord;
     validateBackgroundResearchRecord(
       backgroundResearch,
       params.parentItemKey,
       params.fullMdSha256,
     );
-    const hasSources = await validateExternalBackgroundPair(
-      externalSummary,
-      backgroundResearch,
-    );
+    const hasSources =
+      externalSummary !== undefined &&
+      (await validateExternalBackgroundPair(
+        externalSummary,
+        backgroundResearch,
+      ));
     if (hasSources && background) {
       background = `${background.trimEnd()}\n\n${EXTERNAL_BACKGROUND_MARKER}\n\n${externalSummary}\n`;
     }
