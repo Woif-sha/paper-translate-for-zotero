@@ -9,9 +9,21 @@
 
 [下载插件](https://github.com/Woif-sha/paper-translate-for-zotero/releases) · [开始使用](#开始使用) · [更新记录](CHANGELOG.md) · [反馈问题](https://github.com/Woif-sha/paper-translate-for-zotero/issues)
 
-**全文翻译（功能分支）**支持直接使用已验证的 llm-for-zotero MinerU Markdown 生成双语 HTML 附件。见[使用说明](docs/fulltext-implementation-plan.md)。
+**全文翻译**可以复用已有的 MinerU 解析结果，快速生成带图表和公式的双语 HTML，直接在 Zotero 中阅读。详见[全文翻译](#全文翻译)小节。
 
 ## 功能介绍
+
+### 全文翻译
+
+全文翻译复用 llm-for-zotero 已生成的 MinerU Markdown。已有有效缓存时可以直接开始翻译，省去重新解析 PDF 和重建 PDF 页面的时间。任务支持暂停和断点续跑，重新生成 HTML 时可以复用已完成的译文。首次翻译的耗时取决于论文长度和所选模型。
+
+生成的双语 HTML 会保存为原文献条目下的附件，保留论文的章节结构、表格和数学公式，并将缓存中可用的图片放在对应图注旁。图像或排版信息的保留程度取决于 MinerU 的解析结果。HTML 会按屏幕宽度重新排版，PDF 的固定分页、分栏和精确位置由原附件提供。需要尽量保留原页面版式时，可以参考 [pdf2zh](https://github.com/PDFMathTranslate/PDFMathTranslate)。
+
+1. 用 llm-for-zotero 的 MinerU 功能解析目标 PDF，或恢复该 PDF 已有的 MinerU 缓存。
+2. 在 Paper Translate 中选好模型，右键 PDF 附件并选择「Paper Translate → 全文翻译」，也可以点击 PDF 阅读器工具栏上的蓝色翻译图标。
+3. 完成后打开同一文献条目下以 `-Translate` 结尾的 HTML 附件。工具栏可切换「双语」「中文」「原文」，左侧目录也会随模式更新。
+
+功能目前在 `feature/fulltext-translation` 分支。详见[全文翻译使用说明](docs/fulltext-implementation-plan.md)。
 
 ### 在原文旁查看译文
 
