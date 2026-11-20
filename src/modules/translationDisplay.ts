@@ -18,20 +18,24 @@ const markdown = new MarkdownIt({
 });
 
 markdown.disable(["image", "link"]);
-markdown.block.ruler.after("fence", "translation_math_block", parseMathBlock, {
-  alt: ["paragraph", "reference", "blockquote", "list"],
-});
-markdown.inline.ruler.before("escape", "translation_script", parseScript);
-markdown.inline.ruler.before("escape", "translation_math", parseMath);
-markdown.renderer.rules.translation_script = (tokens, index) => {
-  const token = tokens[index];
-  const tag = token.tag === "sub" ? "sub" : "sup";
-  return `<${tag}>${escapeHtml(token.content)}</${tag}>`;
-};
-markdown.renderer.rules.translation_math = (tokens, index) => {
-  const token = tokens[index];
-  return renderMath(token.content, token.markup === "$$");
-};
+configureSafeMath(markdown);
+
+export function configureSafeMath(parser: MarkdownIt): void {
+  parser.block.ruler.after("fence", "translation_math_block", parseMathBlock, {
+    alt: ["paragraph", "reference", "blockquote", "list"],
+  });
+  parser.inline.ruler.before("escape", "translation_script", parseScript);
+  parser.inline.ruler.before("escape", "translation_math", parseMath);
+  parser.renderer.rules.translation_script = (tokens, index) => {
+    const token = tokens[index];
+    const tag = token.tag === "sub" ? "sub" : "sup";
+    return `<${tag}>${escapeHtml(token.content)}</${tag}>`;
+  };
+  parser.renderer.rules.translation_math = (tokens, index) => {
+    const token = tokens[index];
+    return renderMath(token.content, token.markup === "$$");
+  };
+}
 
 export function renderTranslationMarkup(value: string): string {
   return markdown.render(value);

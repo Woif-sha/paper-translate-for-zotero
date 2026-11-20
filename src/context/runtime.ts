@@ -193,10 +193,7 @@ export const MINIMUM_TERMINOLOGY_ENTRIES = 6;
 export const MAXIMUM_TERMINOLOGY_ENTRIES = 12;
 const paperFileWrites = new Map<string, Promise<void>>();
 
-export async function preparePaperContext(
-  attachmentItemID: number,
-  query: string,
-): Promise<ValidatedPaperContext> {
+export async function readValidatedMineruSource(attachmentItemID: number) {
   const io = getIOUtils();
   const identity = resolvePaperIdentity(attachmentItemID);
   const dataDir = resolveZoteroDataDir();
@@ -243,6 +240,41 @@ export async function preparePaperContext(
     sha256(manifestRaw),
   ]);
 
+  return {
+    identity,
+    dataDir,
+    mineruCacheDir,
+    fullMdPath,
+    markdown,
+    manifest,
+    fullMdSha256,
+    manifestSha256,
+    provenanceRaw,
+    manifestRaw,
+    provenancePath,
+    manifestPath,
+  };
+}
+
+export async function preparePaperContext(
+  attachmentItemID: number,
+  query: string,
+): Promise<ValidatedPaperContext> {
+  const io = getIOUtils();
+  const {
+    identity,
+    dataDir,
+    mineruCacheDir,
+    fullMdPath,
+    markdown,
+    manifest,
+    fullMdSha256,
+    manifestSha256,
+    provenanceRaw,
+    manifestRaw,
+    provenancePath,
+    manifestPath,
+  } = await readValidatedMineruSource(attachmentItemID);
   const contextRoot = joinPath(dataDir, CONTEXT_ROOT_NAME);
   const paperDir = resolvePaperDirectory(contextRoot, identity.parentItemKey);
   const sourceRecord: PaperSourceRecord = {

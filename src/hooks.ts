@@ -40,6 +40,7 @@ import {
   setModelProviderConfiguration,
 } from "./models/providers";
 import { createModelSelectionActions } from "./models/selection";
+import { registerFulltextUI, unregisterFulltextUI } from "./fulltext/ui";
 
 const modelSelection = createModelSelectionActions({
   getConfiguration: getModelProviderConfiguration,
@@ -74,6 +75,7 @@ async function onStartup() {
   try {
     beginKnowledgeOperationsSession();
     registerReaderInitializer();
+    registerFulltextUI();
     registerReaderSidebar(modelSelection);
     registerNotify(["item"]);
     await registerPrefsWindow();
@@ -81,6 +83,7 @@ async function onStartup() {
       Zotero.getMainWindows().map((win) => onMainWindowLoad(win)),
     );
   } catch (error) {
+    await unregisterFulltextUI();
     endKnowledgeOperationsSession();
     cancelActiveCodexAuthRefreshes();
     unregisterNotify();
@@ -100,6 +103,7 @@ async function onMainWindowUnload(win: Window): Promise<void> {
 }
 
 async function onShutdown(): Promise<void> {
+  await unregisterFulltextUI();
   cancelActiveTranslation();
   cancelImageTextRecognition();
   endKnowledgeOperationsSession();

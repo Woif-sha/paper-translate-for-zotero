@@ -115,3 +115,13 @@ pref-provider-model-unset=No model configured
 pref-provider-codex-auth=Codex login
 pref-provider-key-auth=API key
 pref-provider-not-current=Not the active model
+
+fulltext-start = Translate or resume full paper
+    .label = Translate or resume full paper
+fulltext-toolbar = Translate full paper. Click again to pause a running job.
+fulltext-source = Checking the existing MinerU Markdown
+fulltext-progress = Translated { $done } of { $total } blocks
+fulltext-output = Creating the bilingual HTML attachment
+fulltext-complete = Bilingual HTML saved
+fulltext-source-pdf = Run full-paper translation on a PDF attachment that has a parent item.
+fulltext-multiple-pdfs = This item has multiple PDFs. Right-click the PDF attachment you want to translate.

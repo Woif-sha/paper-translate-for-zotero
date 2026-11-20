@@ -9,6 +9,8 @@
 
 [下载插件](https://github.com/Woif-sha/paper-translate-for-zotero/releases) · [开始使用](#开始使用) · [更新记录](CHANGELOG.md) · [反馈问题](https://github.com/Woif-sha/paper-translate-for-zotero/issues)
 
+**全文翻译（功能分支）**支持直接使用已验证的 llm-for-zotero MinerU Markdown 生成双语 HTML 附件。见[使用说明](docs/fulltext-implementation-plan.md)。
+
 ## 功能介绍
 
 ### 在原文旁查看译文

@@ -3,6 +3,14 @@
 /* eslint-disable */
 // @ts-nocheck
 export type FluentMessageId =
+  | 'fulltext-complete'
+  | 'fulltext-multiple-pdfs'
+  | 'fulltext-output'
+  | 'fulltext-progress'
+  | 'fulltext-source'
+  | 'fulltext-source-pdf'
+  | 'fulltext-start'
+  | 'fulltext-toolbar'
   | 'pref-auth-mode'
   | 'pref-backend'
   | 'pref-codex-failed'

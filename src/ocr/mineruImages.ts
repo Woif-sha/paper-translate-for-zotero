@@ -65,13 +65,13 @@ export type OcrCacheKeyInput = {
 
 export type MineruImageFileAccess = {
   read(path: string): Promise<Uint8Array | ArrayBuffer>;
-  stat(path: string): Promise<{ type?: string }>;
+  stat(path: string): Promise<{ type?: string; size?: number }>;
   canonicalize(path: string): Promise<string>;
 };
 
 type RuntimeIOUtils = {
   read(path: string): Promise<Uint8Array | ArrayBuffer>;
-  stat(path: string): Promise<{ type?: string }>;
+  stat(path: string): Promise<{ type?: string; size?: number }>;
 };
 
 type RuntimeFile = {
@@ -638,6 +638,33 @@ function encodeBase64(
     );
   }
   return encodeBinary(binary);
+}
+
+/** Read a bounded, validated local raster for offline paper export. */
+export async function readContainedMineruRaster(
+  cacheDir: string,
+  relativePath: string,
+  maxBytes: number,
+  fileAccess: MineruImageFileAccess = getDefaultFileAccess(),
+): Promise<{ size: number; dataUrl: string } | null> {
+  try {
+    const path = parseRelativeImagePath(relativePath, 0);
+    const target = joinPath(cacheDir, ...path.split("/"));
+    const root = await fileAccess.canonicalize(cacheDir);
+    const file = await requireContainedFile(root, target, fileAccess);
+    const { size } = await fileAccess.stat(file);
+    if (size === undefined || size < 1 || size > maxBytes) return null;
+    const bytes = asBytes(await fileAccess.read(file));
+    const mime = detectSupportedImageMimeType(bytes);
+    if (!mime || bytes.length > maxBytes) return null;
+    return {
+      size: bytes.length,
+      dataUrl: "data:" + mime + ";base64," + encodeBase64(bytes, btoa),
+    };
+  } catch {
+    // Unsafe or unavailable images are displayed as missing in the export.
+    return null;
+  }
 }
 
 async function requireContainedFile(

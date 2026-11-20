@@ -115,3 +115,13 @@ pref-provider-model-unset=未填写模型
 pref-provider-codex-auth=Codex 登录
 pref-provider-key-auth=API 密钥
 pref-provider-not-current=未选择为当前模型
+
+fulltext-start = 全文翻译 / 继续
+    .label = 全文翻译 / 继续
+fulltext-toolbar = 全文翻译。运行时再点一次可暂停
+fulltext-source = 正在校验已有 MinerU Markdown
+fulltext-progress = 已翻译 { $done } / { $total } 段
+fulltext-output = 正在生成双语 HTML 附件
+fulltext-complete = 双语 HTML 已保存
+fulltext-source-pdf = 请在有父文献的 PDF 附件上运行全文翻译。
+fulltext-multiple-pdfs = 该文献有多个 PDF。请右键选择要翻译的 PDF 附件。
