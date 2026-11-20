@@ -203,6 +203,25 @@ async function saveAttachment(
   sourceKey: string,
   html: string,
 ): Promise<Zotero.Item> {
+  const itemTitle = String(parent.getField("title") || "").trim();
+  const words =
+    typeof Intl.Segmenter === "function"
+      ? Array.from(
+          new Intl.Segmenter(undefined, { granularity: "word" }).segment(
+            itemTitle,
+          ),
+        )
+          .filter((word) => word.isWordLike)
+          .map(({ index, segment }) => ({ index, length: segment.length }))
+      : Array.from(
+          itemTitle.matchAll(/\p{Script=Han}|[\p{L}\p{M}\p{N}]+/gu),
+          (match) => ({ index: match.index, length: match[0].length }),
+        );
+  const lastWord = words[Math.min(words.length, 5) - 1];
+  const title = lastWord
+    ? itemTitle.slice(words[0].index, lastWord.index + lastWord.length) +
+      "-translate"
+    : "Paper-translate";
   const filename = "paper-translate-" + sourceKey + ".bilingual.html";
   const marker =
     "<!-- Paper Translate fulltext " + parent.key + "/" + sourceKey + " -->";
@@ -225,12 +244,16 @@ async function saveAttachment(
     );
     if (!prefix.startsWith("<!doctype html>" + marker)) continue;
     await writeAtomic(storage, safePath, output);
+    if (item.getField("title") !== title) {
+      item.setField("title", title);
+      await item.saveTx();
+    }
     return item;
   }
   return Zotero.Attachments.importFromFile({
     file,
     parentItemID: parent.id,
-    title: "全文翻译 · 中英对照",
+    title,
     contentType: "text/html",
     charset: "utf-8",
   });

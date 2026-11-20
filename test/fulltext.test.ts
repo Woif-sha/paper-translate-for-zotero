@@ -279,7 +279,8 @@ test("validated source to Zotero attachment, pause/resume and cache reuse", asyn
     id: 5,
     key: parentKey,
     libraryID: 1,
-    getField: (field: string) => (field === "title" ? "Beam mechanics" : ""),
+    getField: (field: string) =>
+      field === "title" ? "Beam mechanics in layered elastic media" : "",
     isAttachment: () => false,
     isRegularItem: () => true,
     isEditable: () => true,
@@ -305,6 +306,8 @@ test("validated source to Zotero attachment, pause/resume and cache reuse", asyn
   let imports = 0;
   let requests = 0;
   let outputPath = "";
+  let outputTitle = "";
+  let titleSaves = 0;
   const png = Buffer.from(
     "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Y9Zl1sAAAAASUVORK5CYII=",
     "base64",
@@ -357,10 +360,12 @@ test("validated source to Zotero attachment, pause/resume and cache reuse", asyn
           file: string;
           parentItemID: number;
           contentType: string;
+          title: string;
         }) {
           assert.equal(input.parentItemID, 5);
           assert.equal(input.contentType, "text/html");
           imports++;
+          outputTitle = input.title;
           outputPath = join(root, "storage", "OUTPUT12", basename(input.file));
           await mkdir(dirname(outputPath), { recursive: true });
           await copyFile(input.file, outputPath);
@@ -370,6 +375,13 @@ test("validated source to Zotero attachment, pause/resume and cache reuse", asyn
             attachmentContentType: "text/html",
             attachmentFilename: basename(outputPath),
             getFilePathAsync: async () => outputPath,
+            getField: () => outputTitle,
+            setField: (_field: string, title: string) => {
+              outputTitle = title;
+            },
+            saveTx: async () => {
+              titleSaves++;
+            },
           };
           items.set(20, item);
           return item;
@@ -458,6 +470,7 @@ test("validated source to Zotero attachment, pause/resume and cache reuse", asyn
     assert.equal(imports, 0);
     const output = await startFulltext(10, () => {});
     assert.equal(output.id, 20);
+    assert.equal(outputTitle, "Beam mechanics in layered elastic-translate");
     assert.equal(requests, Math.ceil(parseFulltext(body).units.length / 6));
     const html = await readFile(outputPath, "utf8");
     assert.match(html, /data:image\/png;base64,/u);
@@ -480,8 +493,11 @@ test("validated source to Zotero attachment, pause/resume and cache reuse", asyn
       /private-fixture-key/u,
     );
     const count = requests;
+    outputTitle = "全文翻译 · 中英对照";
     assert.equal((await startFulltext(10, () => {})).id, 20);
     assert.equal(imports, 1);
+    assert.equal(outputTitle, "Beam mechanics in layered elastic-translate");
+    assert.equal(titleSaves, 1);
     assert.equal(requests, count);
     assert.deepEqual(
       await readFile(join(sourceDir, "images", "plot.png")),
