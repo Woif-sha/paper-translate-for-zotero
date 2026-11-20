@@ -119,13 +119,18 @@ test("full-paper HTML preserves structure, uses safe MathML and isolates untrust
   }
 });
 
-test("switches the reading mode from the Zotero toolbar and hides the old page controls", () => {
+test("switches the reading mode from the Zotero toolbar", () => {
   const view = new JSDOM("<div id=toolbar></div><iframe></iframe>");
   try {
     const doc = view.window.document;
     const toolbar = doc.querySelector("#toolbar")!;
     const frame = doc.querySelector("iframe")!;
-    appendFulltextReadingModes(doc, (group) => toolbar.append(group));
+    let refreshes = 0;
+    appendFulltextReadingModes(
+      doc,
+      (group) => toolbar.append(group),
+      () => refreshes++,
+    );
     const buttons = Array.from(toolbar.querySelectorAll("button"));
     assert.deepEqual(
       buttons.map((button) => button.textContent),
@@ -134,20 +139,24 @@ test("switches the reading mode from the Zotero toolbar and hides the old page c
     buttons[1].click();
     const body = frame.contentDocument!.body;
     body.innerHTML =
-      "<header><h1>Duplicate title</h1></header><fieldset>" +
+      '<nav id="fulltext-reading-modes" hidden>' +
       '<input id="mode-bi" type="radio" name="mode" checked><input id="mode-zh" type="radio" name="mode">' +
-      '<input id="mode-en" type="radio" name="mode"></fieldset><main><section data-block-id="1"><h1>Paper title</h1></section></main>';
+      '<input id="mode-en" type="radio" name="mode"></nav><main><section data-block-id="1"><div class="en"><h1>Paper title</h1></div><div class="zh"><h1>论文标题</h1></div></section></main>';
     frame.dispatchEvent(new view.window.Event("load"));
     assert.equal(body.querySelector("input:checked")?.id, "mode-zh");
-    assert.equal(body.querySelector("header h1"), null);
     assert.equal(body.querySelector("main h1")?.textContent, "Paper title");
-    assert.ok(body.querySelector("fieldset")?.hidden);
+    assert.ok(body.querySelector<HTMLElement>("nav")?.hidden);
     for (const [index, id] of ["mode-zh", "mode-en", "mode-bi"].entries()) {
       const button = buttons[(index + 1) % buttons.length];
       button.click();
       assert.equal(body.querySelector("input:checked")?.id, id);
       assert.equal(button.getAttribute("aria-pressed"), "true");
+      const en = body.querySelector(".en h1")!;
+      const zh = body.querySelector(".zh h1")!;
+      assert.equal(en.hasAttribute("hidden"), id === "mode-zh");
+      assert.equal(zh.hasAttribute("hidden"), id === "mode-en");
     }
+    assert.equal(refreshes, 4);
   } finally {
     view.window.close();
   }

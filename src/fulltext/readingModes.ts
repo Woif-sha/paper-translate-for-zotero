@@ -26,6 +26,7 @@ export function renderFulltextReadingControls(): string {
 export function appendFulltextReadingModes(
   doc: Document,
   append: (node: Node) => void,
+  refreshOutline: () => void = () => {},
 ): void {
   listeners.get(doc)?.abort();
   const controller = new (
@@ -55,6 +56,7 @@ export function appendFulltextReadingModes(
     button.addEventListener("click", () => {
       selected = index;
       update();
+      refreshOutline();
     });
     group.append(button);
     return button;
@@ -65,21 +67,6 @@ export function appendFulltextReadingModes(
       doc.querySelectorAll("iframe"),
     ) as unknown as HTMLIFrameElement[];
     for (const frame of frames) {
-      try {
-        const source = frame.getAttribute("srcdoc") ?? "";
-        if (source.includes('id="fulltext-reading-modes"')) {
-          const html = source.replace(
-            /<nav\b([^>]*\bid=["\x27]fulltext-reading-modes["\x27][^>]*)>/iu,
-            (tag) =>
-              /\shidden(?:\s|=|>)/iu.test(tag)
-                ? tag
-                : tag.replace(/>$/u, " hidden>"),
-          );
-          if (html !== source) frame.setAttribute("srcdoc", html);
-        }
-      } catch {
-        // The view can be replaced while the toolbar is rendering.
-      }
       if (!watched.has(frame)) {
         frame.addEventListener("load", update, { signal: controller.signal });
         watched.add(frame);
@@ -96,9 +83,7 @@ export function appendFulltextReadingModes(
           'input[type="radio"][name="mode"]#' + id,
         ),
       );
-      const controls = radios[0]?.closest(
-        "nav#fulltext-reading-modes, fieldset",
-      );
+      const controls = radios[0]?.closest("nav#fulltext-reading-modes");
       const radio = radios[selected];
       if (
         !controls ||
@@ -107,9 +92,17 @@ export function appendFulltextReadingModes(
       )
         continue;
       radio.checked = true;
-      (controls as HTMLElement).hidden = true;
-      // Older exports contain a second heading above the Markdown title.
-      content.querySelector("body > header > h1")?.remove();
+      for (const heading of Array.from(
+        content.querySelectorAll(
+          "main h1, main h2, main h3, main h4, main h5, main h6",
+        ),
+      ) as Element[]) {
+        const hidden =
+          (selected === 1 && !!heading.closest(".en")) ||
+          (selected === 2 && !!heading.closest(".zh"));
+        if (hidden) heading.setAttribute("hidden", "");
+        else heading.removeAttribute("hidden");
+      }
     }
     for (const [index, button] of buttons.entries()) {
       button.classList.toggle("active", index === selected);

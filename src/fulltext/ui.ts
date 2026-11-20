@@ -119,7 +119,14 @@ const onRenderToolbar: _ZoteroTypes.Reader.EventHandler<"renderToolbar"> = ({
       item.attachmentFilename,
     )
   ) {
-    appendFulltextReadingModes(doc, append);
+    appendFulltextReadingModes(doc, append, () => {
+      const views = (
+        reader._internalReader as unknown as {
+          _views?: Array<{ _initOutline?: () => void }>;
+        }
+      )._views;
+      for (const view of views ?? []) view._initOutline?.();
+    });
     return;
   }
   if (!item.isPDFAttachment()) return;
