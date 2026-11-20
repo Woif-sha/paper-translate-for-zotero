@@ -118,9 +118,11 @@ pref-provider-not-current=Not the active model
 
 fulltext-menu =
     .label = Paper Translate
-fulltext-start = Translate or resume full paper
-    .label = Translate or resume full paper
-fulltext-toolbar = Translate full paper. Click again to pause a running job.
+fulltext-start = Translate full paper
+    .label = Translate full paper
+fulltext-pause =
+    .label = Pause translation
+fulltext-toolbar = Full-text translation. Click to pause or resume.
 fulltext-source = Checking the existing MinerU Markdown
 fulltext-progress = Translated { $done } of { $total } blocks
 fulltext-output = Creating the bilingual HTML attachment

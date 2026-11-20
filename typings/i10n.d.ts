@@ -7,6 +7,7 @@ export type FluentMessageId =
   | 'fulltext-menu'
   | 'fulltext-multiple-pdfs'
   | 'fulltext-output'
+  | 'fulltext-pause'
   | 'fulltext-progress'
   | 'fulltext-source'
   | 'fulltext-source-pdf'

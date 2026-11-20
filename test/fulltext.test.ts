@@ -460,15 +460,19 @@ test("validated source to Zotero attachment, pause/resume and cache reuse", asyn
     );
     await assert.rejects(readValidatedMineruSource(10), /attachmentKey/u);
     await writeFile(provenancePath, JSON.stringify(provenance));
+    let resumed: ReturnType<typeof startFulltext> | undefined;
     await assert.rejects(
       startFulltext(10, (status) => {
-        if (status.done) pauseFulltext(10);
+        if (!status.done) return;
+        pauseFulltext(10);
+        resumed = startFulltext(10, () => {});
       }),
       /暂停/u,
     );
     assert.equal(requests, 1);
     assert.equal(imports, 0);
-    const output = await startFulltext(10, () => {});
+    assert.ok(resumed);
+    const output = await resumed;
     assert.equal(output.id, 20);
     assert.equal(outputTitle, "Beam mechanics in layered elastic-translate");
     assert.equal(requests, Math.ceil(parseFulltext(body).units.length / 6));

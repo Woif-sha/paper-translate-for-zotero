@@ -118,9 +118,11 @@ pref-provider-not-current=未选择为当前模型
 
 fulltext-menu =
     .label = Paper Translate
-fulltext-start = 全文翻译 / 继续
-    .label = 全文翻译 / 继续
-fulltext-toolbar = 全文翻译。运行时再点一次可暂停
+fulltext-start = 全文翻译
+    .label = 全文翻译
+fulltext-pause =
+    .label = 暂停翻译
+fulltext-toolbar = 全文翻译，点击可暂停/继续
 fulltext-source = 正在校验已有 MinerU Markdown
 fulltext-progress = 已翻译 { $done } / { $total } 段
 fulltext-output = 正在生成双语 HTML 附件

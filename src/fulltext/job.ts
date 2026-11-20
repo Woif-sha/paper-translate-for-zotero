@@ -27,7 +27,10 @@ type ActiveJob = {
 let activeJob: ActiveJob | undefined;
 
 export function isFulltextRunning(attachmentId: number): boolean {
-  return activeJob?.attachmentId === attachmentId;
+  return (
+    activeJob?.attachmentId === attachmentId &&
+    !activeJob.controller.signal.aborted
+  );
 }
 
 export function pauseFulltext(attachmentId: number): void {
@@ -47,6 +50,12 @@ export async function startFulltext(
   attachmentId: number,
   progress: (status: Status) => void,
 ): Promise<Zotero.Item> {
+  if (
+    activeJob?.attachmentId === attachmentId &&
+    activeJob.controller.signal.aborted
+  ) {
+    await activeJob.promise.catch(() => undefined);
+  }
   if (activeJob) throw new Error("已有一篇论文正在全文翻译");
   const controller = new AbortController();
   const promise = runFulltext(attachmentId, progress, controller.signal);

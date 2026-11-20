@@ -35,7 +35,29 @@ export function registerFulltextUI(): void {
             onCommand(_event, context) {
               showErrors(async () => {
                 const item = context.items?.[0];
-                if (item) await toggleFulltext(resolvePdf(item).id);
+                if (item) await openFulltext(resolvePdf(item).id);
+              });
+            },
+          },
+          {
+            menuType: "menuitem",
+            l10nID: getLocaleID("fulltext-pause"),
+            onShowing(_event, context) {
+              const item = context.items?.[0];
+              let running = false;
+              if (item) {
+                try {
+                  running = isFulltextRunning(resolvePdf(item).id);
+                } catch {
+                  /* No single target PDF. */
+                }
+              }
+              context.setEnabled(running);
+            },
+            onCommand(_event, context) {
+              showErrors(async () => {
+                const item = context.items?.[0];
+                if (item) pauseFulltext(resolvePdf(item).id);
               });
             },
           },
@@ -107,6 +129,11 @@ async function toggleFulltext(attachmentId: number): Promise<void> {
     pauseFulltext(attachmentId);
     return;
   }
+  await openFulltext(attachmentId);
+}
+
+async function openFulltext(attachmentId: number): Promise<void> {
+  if (isFulltextRunning(attachmentId)) return;
   const popup = new ztoolkit.ProgressWindow(getString("fulltext-start"), {
     closeOnClick: false,
     closeOtherProgressWindows: false,
