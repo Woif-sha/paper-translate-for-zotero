@@ -84,7 +84,16 @@ const onRenderToolbar: _ZoteroTypes.Reader.EventHandler<"renderToolbar"> = ({
   const button = doc.createElementNS("http://www.w3.org/1999/xhtml", "button");
   button.setAttribute("type", "button");
   button.setAttribute("class", "toolbar-button");
-  button.textContent = "文";
+  const icon = doc.createElementNS("http://www.w3.org/1999/xhtml", "img");
+  icon.setAttribute(
+    "src",
+    `chrome://${config.addonRef}/content/icons/action-fulltext.svg`,
+  );
+  icon.setAttribute("alt", "");
+  icon.setAttribute("width", "20");
+  icon.setAttribute("height", "20");
+  icon.style.display = "block";
+  button.append(icon);
   button.title = getString("fulltext-toolbar");
   button.setAttribute("aria-label", button.title);
   button.addEventListener("click", () =>

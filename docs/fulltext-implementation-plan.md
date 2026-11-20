@@ -4,7 +4,7 @@
 
 1. 为目标 PDF 准备已由 llm-for-zotero 生成或恢复的 MinerU 缓存。全文翻译会验证 PDF 与父条目的身份，以及 `_llm_source.json`、`manifest.json` 和 `full.md`。
 2. 在 Paper Translate 中选中准备使用的模型。全文任务支持现有的 Codex Auth 和 API Key 服务商，包括已配置的本机回环接口。
-3. 右键 PDF 附件，选择「Paper Translate → 全文翻译 / 继续」。只有一份 PDF 的文献条目也可以直接右键操作，也可以点击 PDF Reader 工具栏的「文」按钮。
+3. 右键 PDF 附件，选择「Paper Translate → 全文翻译 / 继续」。只有一份 PDF 的文献条目也可以直接右键操作，也可以点击 PDF Reader 工具栏的蓝色文档翻译图标。
 4. 任务完成后，同一条目下会出现「全文翻译 · 中英对照」HTML 附件。打开后可选择双语、只看中文和只看原文。表格、公式、图片与参考文献在各视图中按需保留。
 5. 运行时对同一 PDF 再点一次可暂停。再次启动会继续当前源文件和模型对应的断点。更换模型或更新原 Markdown 后会使用该版本独立的进度。
 
