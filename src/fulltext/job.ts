@@ -111,7 +111,7 @@ async function runFulltext(
   signal.throwIfAborted();
   const filename = "fulltext-" + identity.attachmentKey + ".json";
   const checkpoints = await withFulltextPaperDirectory(source, (paperDir) =>
-    loadCheckpoints(source, paperDir, filename),
+    loadCheckpoints(paperDir, filename),
   );
   signal.throwIfAborted();
   const translations = await translateFulltextUnits({
@@ -203,60 +203,25 @@ type Checkpoints = Record<string, Blocks>;
 const CHECKPOINT_HASH = /^[a-f0-9]{64}$/u;
 
 async function loadCheckpoints(
-  source: Source,
   paperDir: string,
   filename: string,
 ): Promise<Checkpoints> {
   const path = joinPath(paperDir, filename);
   const checkpoints: Checkpoints = Object.create(null);
-  if (await IOUtils.exists(path)) {
-    const saved = await readCheckpointObject(paperDir, path);
-    if (saved.schemaVersion !== 1 || !isRecord(saved.versions))
+  if (!(await IOUtils.exists(path))) return checkpoints;
+  const safePath = await safeGeneratedPath(paperDir, path);
+  const saved: unknown = JSON.parse(await IOUtils.readUTF8(safePath));
+  if (
+    !isRecord(saved) ||
+    saved.schemaVersion !== 1 ||
+    !isRecord(saved.versions)
+  )
+    throw new Error("全文翻译断点文件格式无效");
+  for (const [hash, blocks] of Object.entries(saved.versions)) {
+    if (!CHECKPOINT_HASH.test(hash) || !isBlocks(blocks))
       throw new Error("全文翻译断点文件格式无效");
-    for (const [hash, blocks] of Object.entries(saved.versions)) {
-      if (!CHECKPOINT_HASH.test(hash) || !isBlocks(blocks))
-        throw new Error("全文翻译断点文件格式无效");
-      checkpoints[hash] = blocks;
-    }
+    checkpoints[hash] = blocks;
   }
-
-  const legacyRoot = joinPath(
-    source.dataDir,
-    "paper-translate-for-zotero-fulltext",
-  );
-  const { libraryID, attachmentKey } = source.identity;
-  const legacyDir = joinPath(legacyRoot, libraryID + "-" + attachmentKey);
-  if (!(await IOUtils.exists(legacyDir))) return checkpoints;
-  await safeGeneratedPath(source.dataDir, legacyRoot);
-  const directory = await safeGeneratedPath(legacyRoot, legacyDir);
-  const migrated: string[] = [];
-  for (const child of await IOUtils.getChildren(directory)) {
-    const hash = /^blocks-([a-f0-9]{64})\.json$/u.exec(
-      child.split(/[\\/]/u).at(-1) ?? "",
-    )?.[1];
-    if (!hash) continue;
-    const file = await safeGeneratedPath(directory, child);
-    const blocks = await readCheckpointObject(directory, file);
-    if (!isBlocks(blocks)) throw new Error("旧版全文翻译断点文件格式无效");
-    const current = checkpoints[hash] ?? {};
-    if (
-      Object.entries(blocks).some(
-        ([id, text]) => id in current && current[id] !== text,
-      )
-    )
-      continue;
-    checkpoints[hash] = { ...blocks, ...current };
-    migrated.push(file);
-  }
-  if (migrated.length) {
-    await saveCheckpoints(paperDir, filename, checkpoints);
-    for (const file of migrated)
-      await IOUtils.remove(file, { ignoreAbsent: true });
-  }
-  if (!(await IOUtils.getChildren(directory)).length)
-    await IOUtils.remove(directory, { ignoreAbsent: true });
-  if (!(await IOUtils.getChildren(legacyRoot)).length)
-    await IOUtils.remove(legacyRoot, { ignoreAbsent: true });
   return checkpoints;
 }
 
@@ -270,16 +235,6 @@ function saveCheckpoints(
     joinPath(paperDir, filename),
     JSON.stringify({ schemaVersion: 1, versions }),
   );
-}
-
-async function readCheckpointObject(
-  directory: string,
-  path: string,
-): Promise<Record<string, unknown>> {
-  const safePath = await safeGeneratedPath(directory, path);
-  const data: unknown = JSON.parse(await IOUtils.readUTF8(safePath));
-  if (!isRecord(data)) throw new Error("全文翻译断点文件格式无效");
-  return data;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
