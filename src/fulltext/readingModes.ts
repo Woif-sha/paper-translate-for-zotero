@@ -53,8 +53,11 @@ export function appendFulltextReadingModes(
     button.style.width = "auto";
     button.style.minWidth = "32px";
     button.style.paddingInline = "4px";
+    setSelected(button, index === selected);
     button.addEventListener("click", () => {
       selected = index;
+      for (const [i, option] of buttons.entries())
+        setSelected(option, i === selected);
       update();
       refreshOutline();
     });
@@ -104,10 +107,6 @@ export function appendFulltextReadingModes(
         else heading.removeAttribute("hidden");
       }
     }
-    for (const [index, button] of buttons.entries()) {
-      button.classList.toggle("active", index === selected);
-      button.setAttribute("aria-pressed", String(index === selected));
-    }
   }
 
   append(group);
@@ -137,4 +136,12 @@ export function appendFulltextReadingModes(
     });
   }
   update();
+}
+
+function setSelected(button: HTMLElement, selected: boolean): void {
+  button.classList.toggle("active", selected);
+  button.setAttribute("aria-pressed", String(selected));
+  button.style.backgroundColor = selected
+    ? "var(--fill-quarternary, rgba(127, 127, 127, .22))"
+    : "";
 }

@@ -128,7 +128,16 @@ test("switches the reading mode from the Zotero toolbar", () => {
     let refreshes = 0;
     appendFulltextReadingModes(
       doc,
-      (group) => toolbar.append(group),
+      (group) => {
+        toolbar.append(group);
+        assert.deepEqual(
+          Array.from(toolbar.querySelectorAll("button"), (button) =>
+            button.getAttribute("aria-pressed"),
+          ),
+          ["true", "false", "false"],
+        );
+        assert.equal(toolbar.querySelector(".active")?.textContent, "双语");
+      },
       () => refreshes++,
     );
     const buttons = Array.from(toolbar.querySelectorAll("button"));
