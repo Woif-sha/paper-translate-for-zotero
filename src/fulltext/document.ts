@@ -47,6 +47,8 @@ export function parseFulltext(source: string): FulltextDocument {
   const imagePaths = new Set<string>();
   const units: TranslationUnit[] = [];
   let referenceLevel: number | undefined;
+  let inFrontMatter = tokens[0]?.type === "heading_open";
+  let hasAuthorLine = false;
   for (let start = 0; start < tokens.length; ) {
     let end = start + 1;
     for (
@@ -62,6 +64,7 @@ export function parseFulltext(source: string): FulltextDocument {
       line: group[0].map?.[0] ?? 0,
       translations: [],
     };
+    if (start > 0 && group[0].type !== "paragraph_open") inFrontMatter = false;
     if (group[0].type === "heading_open") {
       const level = Number(group[0].tag.slice(1));
       if (referenceLevel !== undefined && level <= referenceLevel)
@@ -82,6 +85,19 @@ export function parseFulltext(source: string): FulltextDocument {
       }
       if (referenceLevel !== undefined || group[0].type === "table_open")
         continue;
+      if (inFrontMatter && group[0].type === "paragraph_open") {
+        if (isAuthorList(token.content)) {
+          hasAuthorLine = true;
+          continue;
+        }
+        if (
+          isContactLine(token.content) ||
+          (hasAuthorLine &&
+            /^<sup>[^<>]+<\/sup>\s*\p{L}/iu.test(token.content.trim()))
+        )
+          continue;
+        inFrontMatter = false;
+      }
       const parts = createUnits(
         token.content,
         "b" + (start + 1) + "i" + (index + 1),
@@ -95,6 +111,31 @@ export function parseFulltext(source: string): FulltextDocument {
     start = end;
   }
   return { blocks, units, imagePaths, references: env.references };
+}
+
+function isAuthorList(value: string): boolean {
+  // MinerU writes affiliation numbers as inline superscripts on author names.
+  if (!/<sup>[\d,*†‡\s]+<\/sup>/iu.test(value)) return false;
+  const names = value
+    .replace(/<sup>[\d,*†‡\s]+<\/sup>/giu, "")
+    .split(/[,;]|\s+(?:and|&)\s+/u);
+  return names.every((name) =>
+    /^(?:\p{Lu}[\p{L}\p{M}.’\x27-]*\s+){1,5}\p{Lu}[\p{L}\p{M}.’\x27-]*$/u.test(
+      name.trim(),
+    ),
+  );
+}
+
+function isContactLine(value: string): boolean {
+  const address = "[\\w.+-]+@[\\w.-]+\\.[a-z]{2,}";
+  const repeated = new RegExp(
+    "^(?:" + address + ")(?:[ ,;\\n]+(?:" + address + "))*$",
+    "iu",
+  );
+  return (
+    repeated.test(value.trim()) ||
+    /^\{[\w.+,\s-]+\}@[\w.-]+\.[a-z]{2,}$/iu.test(value.trim())
+  );
 }
 
 function parseInline(value: string, env: object): Token[] {
@@ -152,6 +193,8 @@ function createUnits(value: string, id: string): TranslationUnit[] {
   });
 }
 
+export class TranslationMarkerError extends Error {}
+
 export function restoreTranslation(
   unit: TranslationUnit,
   result: string,
@@ -170,12 +213,14 @@ export function restoreTranslation(
       index >= unit.protectedParts.length ||
       seen.has(index)
     )
-      throw new Error("译文中的公式、数字或链接标记无效");
+      throw new TranslationMarkerError("译文中的公式、数字或链接标记无效");
     seen.add(index);
     return "";
   });
   if (remaining.includes("⟦PT:") || seen.size !== unit.protectedParts.length)
-    throw new Error("模型遗漏或改写了公式、数字或链接的保护标记");
+    throw new TranslationMarkerError(
+      "模型遗漏或改写了公式、数字或链接的保护标记",
+    );
   if (expectedText && !/\p{Script=Han}/u.test(remaining))
     throw new Error("模型未返回中文正文");
   return text.replace(

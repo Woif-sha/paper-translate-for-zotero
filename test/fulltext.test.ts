@@ -117,6 +117,39 @@ test("full-paper HTML preserves structure, uses safe MathML and isolates untrust
   }
 });
 
+test("keeps front-page authors, affiliation and email out of translation but retains them in all views", () => {
+  const source = [
+    "# A Numerical Study",
+    "Alice Smith <sup>1</sup>, Bob Lee <sup>2</sup>",
+    "<sup>1</sup>Example Research Institute",
+    "{alice.smith,bob.lee}@example.org",
+    "We study the beam response.",
+    "## Abstract",
+    "Alice Smith and Bob Lee contributed to this study.",
+  ].join("\n\n");
+  const parsed = parseFulltext(source);
+  assert.deepEqual(
+    parsed.units.map((unit) => unit.text),
+    [
+      "A Numerical Study",
+      "We study the beam response.",
+      "Abstract",
+      "Alice Smith and Bob Lee contributed to this study.",
+    ],
+  );
+  const html = renderFulltext(
+    parsed,
+    new Map(parsed.units.map((unit) => [unit.id, "中文"])),
+    {
+      assets: new Map(),
+      title: "Fixture",
+      model: "Test",
+    },
+  );
+  assert.match(html, /Alice Smith <sup>1<\/sup>, Bob Lee <sup>2<\/sup>/u);
+  assert.match(html, /alice\.smith,bob\.lee\}@example\.org/u);
+});
+
 test("damaged structured response falls back and persists successful individual units", async () => {
   const units = parseFulltext(
     "The result is 2.5 MPa.\n\nA second test at 10 mm.",
@@ -189,6 +222,38 @@ test("uses simpler markers when a model drops the original notation", async () =
     }),
     new RegExp("段落 " + unit.id + "：模型遗漏或改写"),
   );
+});
+
+test("rebuilds a translation around intact source literals when a model drops markers", async () => {
+  const [unit] = parseFulltext(
+    "Load equals 5 MPa for 2D-Burger’s, 3 test runs followed.",
+  ).units;
+  const responses = [
+    "invalid batch",
+    "载荷已知",
+    "载荷已知",
+    "载荷等于",
+    "用于",
+    "D-Burger’s，",
+    "次试验随后完成。",
+  ];
+  const result = await translateFulltextUnits({
+    units: [unit],
+    checkpoint: {},
+    model: {} as RuntimeModel,
+    signal: new AbortController().signal,
+    progress() {},
+    async save() {},
+    async request({ prompt }) {
+      if (responses.length <= 4) assert.doesNotMatch(prompt, /MPa|⟦|\[\[PT_/u);
+      return { text: responses.shift()!, webSearchCalls: 0, urlCitations: [] };
+    },
+  });
+  assert.equal(
+    restoreTranslation(unit, result.get(unit.id)!),
+    "载荷等于 5 MPa 用于 2D-Burger’s, 3 次试验随后完成。",
+  );
+  assert.equal(responses.length, 0);
 });
 
 test("cache figure placement uses only explicit unambiguous offsets", () => {

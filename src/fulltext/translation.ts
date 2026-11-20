@@ -1,5 +1,9 @@
 import { runModelRequest, type RuntimeModel } from "../models/runtime";
-import { restoreTranslation, type TranslationUnit } from "./document";
+import {
+  restoreTranslation,
+  TranslationMarkerError,
+  type TranslationUnit,
+} from "./document";
 
 const INSTRUCTIONS = [
   "Translate academic prose into Simplified Chinese faithfully.",
@@ -89,7 +93,7 @@ async function translateSingle(
     ? [false, true]
     : [false]) {
     const input = alternate
-      ? unit.text.replace(canonical, "[[PT_$1]]")
+      ? unit.text.replace(canonical, " [[PT_$1]] ")
       : unit.text;
     const prompt = alternate
       ? "Translate the following text to Simplified Chinese. Copy every [[PT_n]] marker verbatim. Return only the translation.\n\n" +
@@ -107,11 +111,57 @@ async function translateSingle(
       failure = error;
     }
   }
+  if (failure instanceof TranslationMarkerError && unit.protectedParts.length) {
+    try {
+      return await translateAroundMarkers(unit, model, signal, request);
+    } catch (error) {
+      if (!(error instanceof Error) || error.message !== "模型未返回中文正文")
+        throw error;
+    }
+  }
   const reason = failure instanceof Error ? failure.message : String(failure);
   throw new Error(
     "段落 " + unit.id + "：" + reason + "。重新运行可从已完成段落继续",
     { cause: failure },
   );
+}
+
+async function translateAroundMarkers(
+  unit: TranslationUnit,
+  model: RuntimeModel,
+  signal: AbortSignal,
+  request: typeof runModelRequest,
+): Promise<string> {
+  // Keep literals out of the model input when it cannot reliably copy markers.
+  const pieces = unit.text.split(/(⟦PT:\d+⟧)/gu);
+  for (let index = 0; index < pieces.length; index += 2) {
+    const piece = pieces[index];
+    if (!/[a-z]{2}|\p{Script=Han}/u.test(piece)) continue;
+    const text = piece.trim();
+    if (!text) continue;
+    const translated = (
+      await send(
+        "Translate this fragment to Simplified Chinese. Return only the translation.\n\n" +
+          text,
+        model,
+        signal,
+        request,
+      )
+    ).trim();
+    // A fragment composed solely of a technical name can legitimately stay unchanged.
+    const bare = (value: string) =>
+      value.replace(/[\p{P}\s]/gu, "").normalize("NFC");
+    if (
+      /^[\p{P}\s]*\p{Lu}[\p{L}\p{M}\p{P}]*$/u.test(text) &&
+      bare(text) === bare(translated)
+    )
+      continue;
+    restoreTranslation({ id: unit.id, text, protectedParts: [] }, translated);
+    pieces[index] = piece.replace(text, () => translated);
+  }
+  const result = pieces.join("");
+  restoreTranslation(unit, result);
+  return result;
 }
 
 function planBatches(units: TranslationUnit[]): TranslationUnit[][] {
