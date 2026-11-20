@@ -246,6 +246,33 @@ type ProviderCardRenderParams = {
   onSaved(savedProviderId?: string): void;
 };
 
+function updateSavedProvider(
+  params: ProviderCardRenderParams,
+  providerId: string,
+  draft?: ModelProviderGroup,
+  selectedModelId?: string,
+): void {
+  const stored = getModelProviderConfiguration();
+  const providers = stored.providers.filter(
+    (provider) => provider.id !== providerId,
+  );
+  if (draft) {
+    const index = stored.providers.findIndex(
+      (provider) => provider.id === providerId,
+    );
+    providers.splice(index === -1 ? providers.length : index, 0, draft);
+  }
+  params.memory.save(
+    providerId,
+    () =>
+      params.modelSelection.saveModelProviderConfiguration(
+        providers,
+        selectedModelId ?? stored.activeModelId,
+        providerId,
+      ).providers,
+  );
+}
+
 function renderProviderCards(params: ProviderCardRenderParams): void {
   const root = requiredElement<HTMLElement>(
     params.doc,
@@ -446,14 +473,7 @@ function createProviderCard(
   save.classList.add("pt-save-button");
   save.addEventListener("click", () => {
     try {
-      const stored = getModelProviderConfiguration();
-      params.memory.save(
-        () =>
-          params.modelSelection.saveModelProviderConfiguration(
-            params.drafts,
-            stored.activeModelId,
-          ).providers,
-      );
+      updateSavedProvider(params, provider.id, provider);
       params.onSaved(provider.id);
     } catch (error) {
       showCardStatus(card, String(error), true);
@@ -479,13 +499,7 @@ function createProviderCard(
       const next = params.drafts.filter((entry) => entry.id !== provider.id);
       const stored = getModelProviderConfiguration();
       if (stored.providers.some((entry) => entry.id === provider.id)) {
-        params.memory.save(
-          () =>
-            params.modelSelection.saveModelProviderConfiguration(
-              next,
-              stored.activeModelId,
-            ).providers,
-        );
+        updateSavedProvider(params, provider.id);
         params.openProviderIds.delete(provider.id);
         params.onViewChanged();
         params.onSaved();
@@ -742,15 +756,7 @@ function createModelRow(
   select.disabled = model.id === params.activeModelId;
   select.addEventListener("click", () => {
     try {
-      const stored = getModelProviderConfiguration();
-      params.memory.save(
-        () =>
-          params.modelSelection.saveModelProviderConfiguration(
-            params.drafts,
-            stored.activeModelId,
-          ).providers,
-      );
-      params.modelSelection.switchActiveModel(model.id);
+      updateSavedProvider(params, provider.id, provider, model.id);
       params.onSaved();
     } catch (error) {
       showCardStatus(card, String(error), true);

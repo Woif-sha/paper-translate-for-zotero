@@ -97,6 +97,32 @@ test("rejects an incomplete OpenAI Compatible provider instead of saving default
   assert.throws(() => validateProviderGroup(provider), /API Base.*API Key/u);
 });
 
+test("loopback HTTP addresses survive provider validation and endpoint resolution", () => {
+  const provider = createProviderGroup("openai_compatible");
+  provider.name = "Local model";
+  provider.apiKey = "test-key";
+  provider.models.push({ id: "local-model", model: "local", effort: "" });
+
+  for (const host of ["127.0.0.1", "127.2.3.4", "localhost", "[::1]"]) {
+    provider.apiBase = `http://${host}:8518/v1`;
+    const validated = validateProviderGroup(provider);
+    assert.equal(validated.apiBase, provider.apiBase);
+    assert.equal(
+      resolveApiEndpoint(validated.apiBase, "chat_completions"),
+      `http://${host}:8518/v1/chat/completions`,
+    );
+  }
+
+  for (const host of ["127.example.test", "192.168.1.8", "example.test"]) {
+    provider.apiBase = `http://${host}:8518/v1`;
+    assert.throws(() => validateProviderGroup(provider), /must use HTTPS/u);
+    assert.throws(
+      () => resolveApiEndpoint(provider.apiBase, "chat_completions"),
+      /must use HTTPS/u,
+    );
+  }
+});
+
 test("rejects every blank model row instead of silently dropping it", () => {
   const provider = createProviderGroup("openai_compatible");
   provider.name = "DeepSeek";

@@ -1068,3 +1068,85 @@ test("the editor's own synchronous save notifications preserve auth and preset c
     dom.window.close();
   }
 });
+
+test("card actions commit only their provider and keep other drafts across reopening", async () => {
+  const { template, actions } = await setup();
+  const saved = getModelProviderConfiguration();
+  saved.providers.push({
+    ...saved.providers[0],
+    id: "second-provider",
+    name: "Second provider",
+    models: [{ id: "second-model", model: "second-model", effort: "" }],
+  });
+  setModelProviderConfiguration(saved.providers, saved.activeModelId);
+  let dom = new JSDOM(template);
+  const register = () =>
+    registerPrefsScripts(dom.window as unknown as Window, actions);
+  const close = () => {
+    dom.window.dispatchEvent(new dom.window.Event("unload"));
+    dom.window.close();
+  };
+  const card = (index: number) =>
+    dom.window.document.querySelectorAll(".pt-provider-card")[index];
+  const click = (index: number, selector: string) =>
+    (card(index).querySelector(selector) as HTMLButtonElement).click();
+  const field = (index: number, key: string) =>
+    card(index).querySelector(
+      '[aria-label="pref-provider-' + key + '"]',
+    ) as HTMLInputElement;
+  const edit = (index: number, key: string, value: string) => {
+    const input = field(index, key);
+    input.value = value;
+    input.dispatchEvent(new dom.window.Event("input", { bubbles: true }));
+  };
+  try {
+    register();
+    (
+      dom.window.document.getElementById(
+        "papertranslateforzotero-add-provider",
+      ) as HTMLButtonElement
+    ).click();
+    edit(0, "api-key", "");
+    click(0, ".pt-save-button");
+    assert.match(
+      card(0).querySelector(".pt-provider-status")!.textContent!,
+      /API Key/u,
+    );
+
+    edit(1, "name", "Updated second provider");
+    click(1, ".pt-save-button");
+    const afterSave = getModelProviderConfiguration();
+    assert.equal(afterSave.providers.length, 2);
+    assert.equal(afterSave.providers[0].apiKey, "fake-saved-key");
+    assert.equal(afterSave.providers[1].name, "Updated second provider");
+    assert.equal(afterSave.activeModelId, "m");
+    assert.equal(
+      card(1).querySelector(".pt-provider-status")!.textContent,
+      "pref-provider-saved",
+    );
+
+    close();
+    dom = new JSDOM(template);
+    register();
+    assert.equal(field(0, "api-key").value, "");
+    assert.ok(card(2), "unfinished new provider should remain a draft");
+
+    const use = [...card(1).querySelectorAll("button")].find(
+      (button) => button.textContent === "pref-provider-use",
+    );
+    assert.ok(use);
+    use.click();
+    assert.equal(getModelProviderConfiguration().activeModelId, "second-model");
+    click(0, ".pt-danger-button");
+    assert.deepEqual(
+      getModelProviderConfiguration().providers.map((provider) => provider.id),
+      ["second-provider"],
+    );
+    assert.ok(
+      card(1),
+      "deleting a saved provider should preserve other drafts",
+    );
+  } finally {
+    close();
+  }
+});
