@@ -141,32 +141,20 @@ async function openFulltext(attachmentId: number): Promise<void> {
     .createLine({ text: getString("fulltext-source"), progress: 0 })
     .show(-1);
   try {
-    const attachment = await startFulltext(
-      attachmentId,
-      ({ phase, model, done, total }) => {
-        const text =
-          phase === "source"
-            ? getString("fulltext-source")
-            : phase === "output"
-              ? getString("fulltext-output")
-              : getString("fulltext-progress", {
-                  args: { done: done ?? 0, total: total ?? 0 },
-                });
-        popup.changeLine({
-          text: text + " · " + model,
-          progress: total ? (100 * (done ?? 0)) / total : undefined,
-        });
-      },
-    );
-    const pane = Zotero.getActiveZoteroPane() as {
-      viewAttachment?(id: number): Promise<void>;
-    } | null;
-    if (pane?.viewAttachment) {
-      await pane.viewAttachment(attachment.id);
-    } else {
-      const file = await attachment.getFilePathAsync();
-      if (file) Zotero.launchFile(file);
-    }
+    await startFulltext(attachmentId, ({ phase, model, done, total }) => {
+      const text =
+        phase === "source"
+          ? getString("fulltext-source")
+          : phase === "output"
+            ? getString("fulltext-output")
+            : getString("fulltext-progress", {
+                args: { done: done ?? 0, total: total ?? 0 },
+              });
+      popup.changeLine({
+        text: text + " · " + model,
+        progress: total ? (100 * (done ?? 0)) / total : undefined,
+      });
+    });
     popup.changeLine({ text: getString("fulltext-complete"), progress: 100 });
   } catch (error) {
     // Shared transports may wrap the AbortSignal reason.
