@@ -7,19 +7,19 @@
 
 你可以在原文旁直接查看译文，也可以翻译图表中的文字。每篇论文整理出的背景和术语会保留在本地，供后续阅读使用。
 
-[下载插件](https://github.com/Woif-sha/paper-translate-for-zotero/releases) · [开始使用](#开始使用) · [更新记录](CHANGELOG.md) · [反馈问题](https://github.com/Woif-sha/paper-translate-for-zotero/issues)
+可以复用已有的 MinerU 解析结果，快速生成带图表和公式的双语 HTML 全文翻译，直接在 Zotero 中阅读。
 
-**全文翻译**可以复用已有的 MinerU 解析结果，快速生成带图表和公式的双语 HTML，直接在 Zotero 中阅读。详见[全文翻译](#全文翻译)小节。
+[下载插件](https://github.com/Woif-sha/paper-translate-for-zotero/releases) · [开始使用](#开始使用) · [更新记录](CHANGELOG.md) · [反馈问题](https://github.com/Woif-sha/paper-translate-for-zotero/issues)
 
 ## 功能介绍
 
 ### 全文翻译
 
-想快速读完整篇论文，可以在 PDF 附件的右键菜单里选择「Paper Translate → 全文翻译」。插件会复用已有的 MinerU 解析结果，直接生成双语 HTML 附件。
+在 PDF 附件的右键菜单中选择「Paper Translate → 全文翻译」，或打开 PDF 后点击工具栏里的全文翻译按钮，即可生成双语 HTML 附件。
 
 ![Zotero 中的双语全文，左侧显示目录，正文保留数学公式，右上角可切换阅读模式](.github/assets/screenshots/fulltext-translation.png)
 
-译文保留章节、图表和公式。打开 HTML 后，可以在工具栏切换「双语」「中文」「原文」，左侧目录也会随之更新。
+译文保留章节、图表和公式。打开 HTML 后，可以在工具栏切换「双语」「中文」「原文」。
 
 ### 在原文旁查看译文
 
