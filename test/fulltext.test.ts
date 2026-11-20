@@ -435,6 +435,7 @@ test("validated source to Zotero attachment, pause/resume and cache reuse", asyn
   let outputPath = "";
   let outputTitle = "";
   let titleSaves = 0;
+  let blockedWrites = 0;
   const png = Buffer.from(
     "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Y9Zl1sAAAAASUVORK5CYII=",
     "base64",
@@ -505,6 +506,7 @@ test("validated source to Zotero attachment, pause/resume and cache reuse", asyn
           await copyFile(input.file, outputPath);
           const item = {
             id: 20,
+            parentItemID: input.parentItemID,
             attachmentLinkMode: 0,
             attachmentContentType: "text/html",
             attachmentFilename: basename(outputPath),
@@ -550,6 +552,10 @@ test("validated source to Zotero attachment, pause/resume and cache reuse", asyn
         options: { tmpPath: string },
       ) {
         await writeFile(options.tmpPath, value);
+        if (basename(path).startsWith("fulltext-") && !blockedWrites) {
+          blockedWrites++;
+          throw new DOMException("Access is denied", "NotAllowedError");
+        }
         await rename(options.tmpPath, path);
       },
       makeDirectory: (path: string) => mkdir(path, { recursive: true }),
@@ -613,6 +619,7 @@ test("validated source to Zotero attachment, pause/resume and cache reuse", asyn
     const output = await resumed;
     assertCommands([true, false]);
     assert.equal(output.id, 20);
+    assert.equal(blockedWrites, 1);
     assert.equal(outputTitle, "Beam mechanics in layered elastic-Translate");
     assert.equal(requests, Math.ceil(parseFulltext(body).units.length / 6));
     const html = await readFile(outputPath, "utf8");

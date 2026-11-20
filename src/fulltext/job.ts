@@ -123,9 +123,15 @@ async function runFulltext(
       progress({ phase: "translating", model: model.label, done, total }),
     async save(results) {
       checkpoints[fingerprintHash] = Object.fromEntries(results);
-      await withFulltextPaperDirectory(source, (paperDir) =>
-        saveCheckpoints(paperDir, filename, checkpoints),
-      );
+      await withFulltextPaperDirectory(source, async (paperDir) => {
+        try {
+          await saveCheckpoints(paperDir, filename, checkpoints);
+        } catch (error) {
+          throw new Error("保存全文翻译断点失败：" + String(error), {
+            cause: error,
+          });
+        }
+      });
     },
   });
   progress({ phase: "output", model: model.label });
@@ -302,13 +308,20 @@ async function saveAttachment(
     }
     return item;
   }
-  return Zotero.Attachments.importFromFile({
+  const attachment = await Zotero.Attachments.importFromFile({
     file,
     parentItemID: parent.id,
     title,
     contentType: "text/html",
     charset: "utf-8",
   });
+  if (
+    !attachment?.id ||
+    attachment.parentItemID !== parent.id ||
+    attachment.deleted
+  )
+    throw new Error("双语 HTML 已生成，但未能添加到当前 Zotero 条目");
+  return attachment;
 }
 
 async function writeAtomic(
@@ -318,7 +331,17 @@ async function writeAtomic(
 ): Promise<void> {
   const file = await safeGeneratedPath(root, path);
   const temporary = await safeGeneratedPath(root, path + ".tmp");
-  await IOUtils.writeUTF8(file, value, { tmpPath: temporary });
+  // Windows can briefly deny atomic replacement while another process scans the file.
+  const delays = [200, 500, 1000];
+  for (let attempt = 0; ; attempt++) {
+    try {
+      await IOUtils.writeUTF8(file, value, { tmpPath: temporary });
+      return;
+    } catch (error) {
+      if (attempt >= delays.length) throw error;
+      await new Promise((resolve) => setTimeout(resolve, delays[attempt]));
+    }
+  }
 }
 
 async function safeGeneratedPath(root: string, path: string): Promise<string> {

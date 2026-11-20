@@ -126,6 +126,6 @@ fulltext-toolbar = Full-text translation. Click to pause or resume.
 fulltext-source = Checking the existing MinerU Markdown
 fulltext-progress = Translated { $done } of { $total } blocks
 fulltext-output = Creating the bilingual HTML attachment
-fulltext-complete = Bilingual HTML saved
+fulltext-complete = Bilingual HTML added to the Zotero item
 fulltext-source-pdf = Run full-paper translation on a PDF attachment that has a parent item.
 fulltext-multiple-pdfs = This item has multiple PDFs. Right-click the PDF attachment you want to translate.

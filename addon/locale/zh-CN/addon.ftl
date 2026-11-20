@@ -126,6 +126,6 @@ fulltext-toolbar = 全文翻译，点击可暂停/继续
 fulltext-source = 正在校验已有 MinerU Markdown
 fulltext-progress = 已翻译 { $done } / { $total } 段
 fulltext-output = 正在生成双语 HTML 附件
-fulltext-complete = 双语 HTML 已保存
+fulltext-complete = 双语 HTML 已添加到 Zotero 条目
 fulltext-source-pdf = 请在有父文献的 PDF 附件上运行全文翻译。
 fulltext-multiple-pdfs = 该文献有多个 PDF。请右键选择要翻译的 PDF 附件。
