@@ -33,6 +33,11 @@ export function registerFulltextUI(): void {
           {
             menuType: "menuitem",
             l10nID: getLocaleID("fulltext-start"),
+            onShowing(_event, context) {
+              context.setEnabled(
+                !isSelectedTranslationRunning(context.items?.[0]),
+              );
+            },
             onCommand(_event, context) {
               showErrors(async () => {
                 const item = context.items?.[0];
@@ -44,16 +49,9 @@ export function registerFulltextUI(): void {
             menuType: "menuitem",
             l10nID: getLocaleID("fulltext-pause"),
             onShowing(_event, context) {
-              const item = context.items?.[0];
-              let running = false;
-              if (item) {
-                try {
-                  running = isFulltextRunning(resolvePdf(item).id);
-                } catch {
-                  /* No single target PDF. */
-                }
-              }
-              context.setEnabled(running);
+              context.setEnabled(
+                isSelectedTranslationRunning(context.items?.[0]),
+              );
             },
             onCommand(_event, context) {
               showErrors(async () => {
@@ -81,6 +79,16 @@ export async function unregisterFulltextUI(): Promise<void> {
     registered = false;
   }
   await stopFulltext();
+}
+
+function isSelectedTranslationRunning(item: Zotero.Item | undefined): boolean {
+  if (!item) return false;
+  try {
+    return isFulltextRunning(resolvePdf(item).id);
+  } catch {
+    // Item selections without a single target PDF have no active command.
+    return false;
+  }
 }
 
 function resolvePdf(item: Zotero.Item): Zotero.Item {

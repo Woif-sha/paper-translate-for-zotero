@@ -22,6 +22,7 @@ import {
   restoreTranslation,
 } from "../src/fulltext/document";
 import { pauseFulltext, startFulltext } from "../src/fulltext/job";
+import { registerFulltextUI, unregisterFulltextUI } from "../src/fulltext/ui";
 import { resolveFulltextFigures } from "../src/fulltext/assets";
 import { translateFulltextUnits } from "../src/fulltext/translation";
 import { setModelProviderConfiguration } from "../src/models/providers";
@@ -303,6 +304,25 @@ test("validated source to Zotero attachment, pause/resume and cache reuse", asyn
   const before = new Map(
     ["Zotero", "IOUtils", "ztoolkit"].map((key) => [key, globals[key]]),
   );
+  let registeredMenu:
+    | _ZoteroTypes.MenuManager.MenuOptions<"main/library/item">
+    | undefined;
+  const assertCommands = (expected: boolean[]) => {
+    const menu = registeredMenu?.menus[0].menus;
+    assert.ok(menu);
+    const states: boolean[] = [];
+    const context = {
+      items: [pdf],
+      setEnabled: (enabled: boolean) => states.push(enabled),
+    };
+    for (const command of menu) {
+      command.onShowing?.(
+        new Event("popupshowing"),
+        context as unknown as _ZoteroTypes.MenuManager.LibraryMenuContext,
+      );
+    }
+    assert.deepEqual(states, expected);
+  };
   let imports = 0;
   let requests = 0;
   let outputPath = "";
@@ -342,6 +362,13 @@ test("validated source to Zotero attachment, pause/resume and cache reuse", asyn
     );
     globals.Zotero = {
       DataDirectory: { dir: root },
+      MenuManager: {
+        registerMenu: (menu: typeof registeredMenu) => {
+          registeredMenu = menu;
+        },
+        unregisterMenu() {},
+      },
+      Reader: { registerEventListener() {}, unregisterEventListener() {} },
       Items: {
         get: (id: number | number[]) =>
           Array.isArray(id)
@@ -460,11 +487,15 @@ test("validated source to Zotero attachment, pause/resume and cache reuse", asyn
     );
     await assert.rejects(readValidatedMineruSource(10), /attachmentKey/u);
     await writeFile(provenancePath, JSON.stringify(provenance));
+    registerFulltextUI();
+    assertCommands([true, false]);
     let resumed: ReturnType<typeof startFulltext> | undefined;
     await assert.rejects(
       startFulltext(10, (status) => {
         if (!status.done) return;
+        assertCommands([false, true]);
         pauseFulltext(10);
+        assertCommands([true, false]);
         resumed = startFulltext(10, () => {});
       }),
       /暂停/u,
@@ -473,6 +504,7 @@ test("validated source to Zotero attachment, pause/resume and cache reuse", asyn
     assert.equal(imports, 0);
     assert.ok(resumed);
     const output = await resumed;
+    assertCommands([true, false]);
     assert.equal(output.id, 20);
     assert.equal(outputTitle, "Beam mechanics in layered elastic-Translate");
     assert.equal(requests, Math.ceil(parseFulltext(body).units.length / 6));
@@ -519,6 +551,7 @@ test("validated source to Zotero attachment, pause/resume and cache reuse", asyn
       html,
     );
   } finally {
+    await unregisterFulltextUI();
     for (const [key, value] of before) globals[key] = value;
     await rm(root, { recursive: true, force: true });
   }
