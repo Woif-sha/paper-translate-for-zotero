@@ -152,6 +152,45 @@ test("damaged structured response falls back and persists successful individual 
   assert.deepEqual(checkpointSizes, [1, 2]);
 });
 
+test("uses simpler markers when a model drops the original notation", async () => {
+  const [unit] = parseFulltext("The beam carries 2 MPa.").units;
+  const replies = ["not JSON", "梁承受压力。", "梁承受 [[PT_0]] 的压力。"];
+  const results = await translateFulltextUnits({
+    units: [unit],
+    checkpoint: {},
+    model: {} as RuntimeModel,
+    signal: new AbortController().signal,
+    async save() {},
+    progress() {},
+    async request({ prompt, instructions }) {
+      if (replies.length === 1) {
+        assert.match(prompt, /\[\[PT_0\]\]/u);
+        assert.match(instructions ?? "", /\[\[PT_n\]\]/u);
+      }
+      return { text: replies.shift()!, webSearchCalls: 0, urlCitations: [] };
+    },
+  });
+  assert.equal(
+    restoreTranslation(unit, results.get(unit.id)!),
+    "梁承受 2 MPa 的压力。",
+  );
+  assert.equal(replies.length, 0);
+  await assert.rejects(
+    translateFulltextUnits({
+      units: [unit],
+      checkpoint: {},
+      model: {} as RuntimeModel,
+      signal: new AbortController().signal,
+      async save() {},
+      progress() {},
+      async request() {
+        return { text: "No translation.", webSearchCalls: 0, urlCitations: [] };
+      },
+    }),
+    new RegExp("段落 " + unit.id + "：模型遗漏或改写"),
+  );
+});
+
 test("cache figure placement uses only explicit unambiguous offsets", () => {
   const path = "images/f1.png";
   const manifest = {
@@ -283,6 +322,16 @@ test("validated source to Zotero attachment, pause/resume and cache reuse", asyn
       },
       read: async (file: string, options?: { maxBytes: number }) =>
         (await readFile(file)).subarray(0, options?.maxBytes),
+      getChildren: async (directory: string) =>
+        (await readdir(directory)).map((name) => join(directory, name)),
+      async write(
+        path: string,
+        value: Uint8Array,
+        options: { tmpPath: string },
+      ) {
+        await writeFile(options.tmpPath, value);
+        await rename(options.tmpPath, path);
+      },
       readUTF8: (file: string) => readFile(file, "utf8"),
       async writeUTF8(
         path: string,
@@ -374,7 +423,16 @@ test("validated source to Zotero attachment, pause/resume and cache reuse", asyn
       png,
     );
     assert.equal(await readFile(join(sourceDir, "full.md"), "utf8"), body);
-    assert.equal(existsSync(join(root, "paper-translate-for-zotero")), false);
+    const context = join(root, "paper-translate-for-zotero", parentKey);
+    assert.equal(
+      JSON.parse(await readFile(join(context, "_paper_source.json"), "utf8"))
+        .parentItemKey,
+      parentKey,
+    );
+    assert.equal(
+      await readFile(join(context, basename(outputPath)), "utf8"),
+      html,
+    );
   } finally {
     for (const [key, value] of before) globals[key] = value;
     await rm(root, { recursive: true, force: true });

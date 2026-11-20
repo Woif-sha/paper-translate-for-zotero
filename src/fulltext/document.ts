@@ -174,12 +174,10 @@ export function restoreTranslation(
     seen.add(index);
     return "";
   });
-  if (
-    remaining.includes("⟦PT:") ||
-    seen.size !== unit.protectedParts.length ||
-    (expectedText && !/\p{Script=Han}/u.test(remaining))
-  )
-    throw new Error("译文缺少中文正文或原文标记");
+  if (remaining.includes("⟦PT:") || seen.size !== unit.protectedParts.length)
+    throw new Error("模型遗漏或改写了公式、数字或链接的保护标记");
+  if (expectedText && !/\p{Script=Han}/u.test(remaining))
+    throw new Error("模型未返回中文正文");
   return text.replace(
     markerPattern,
     (_match, digit) => unit.protectedParts[Number(digit)],

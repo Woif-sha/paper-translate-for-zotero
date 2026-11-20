@@ -12,6 +12,8 @@ import {
   retrievePassages,
 } from "./paperContext";
 
+import { createDefaultMineruImageFileAccess } from "../ocr/mineruImages";
+
 const MINERU_ROOT_NAME = "llm-for-zotero-mineru";
 const CONTEXT_ROOT_NAME = "paper-translate-for-zotero";
 const PREPARATION_SCHEMA_VERSION = 2;
@@ -254,6 +256,70 @@ export async function readValidatedMineruSource(attachmentItemID: number) {
     provenancePath,
     manifestPath,
   };
+}
+
+/** Preserve the identity marker required by paper-context cleanup, without preparing knowledge. */
+export async function withFulltextPaperDirectory<T>(
+  source: Awaited<ReturnType<typeof readValidatedMineruSource>>,
+  operation: (paperDir: string) => Promise<T>,
+): Promise<T> {
+  const { identity, dataDir } = source;
+  const contextRoot = joinPath(dataDir, CONTEXT_ROOT_NAME);
+  const paperDir = resolvePaperDirectory(contextRoot, identity.parentItemKey);
+  return withPaperFileLock(paperDir, async () => {
+    const current = await readValidatedMineruSource(identity.attachmentID);
+    if (
+      current.dataDir !== dataDir ||
+      current.identity.libraryID !== identity.libraryID ||
+      current.identity.attachmentKey !== identity.attachmentKey ||
+      current.identity.parentItemKey !== identity.parentItemKey ||
+      current.fullMdSha256 !== source.fullMdSha256 ||
+      current.manifestSha256 !== source.manifestSha256 ||
+      current.provenanceRaw !== source.provenanceRaw
+    )
+      throw new Error(
+        "全文翻译期间 MinerU 源文件或 Zotero 附件发生变化，请重新运行",
+      );
+    const io = getIOUtils();
+    const access = createDefaultMineruImageFileAccess();
+    for (const [root, path] of [
+      [dataDir, contextRoot],
+      [contextRoot, paperDir],
+    ]) {
+      await io.makeDirectory(path, { ignoreExisting: true });
+      assertPathInside(
+        await access.canonicalize(root),
+        await access.canonicalize(path),
+      );
+    }
+    const sourcePath = joinPath(paperDir, "_paper_source.json");
+    if (await io.exists(sourcePath)) {
+      assertPathInside(
+        await access.canonicalize(paperDir),
+        await access.canonicalize(sourcePath),
+      );
+      const existing = validatePaperSourceForCleanup(
+        JSON.parse(await readRequiredText(io, sourcePath)),
+        sourcePath,
+      );
+      validateContextDeletionTarget(contextRoot, paperDir, existing);
+      if (existing.libraryID !== identity.libraryID)
+        throw new Error("全文翻译目录属于另一 Zotero 文献库");
+    } else {
+      if ((await io.getChildren(paperDir)).length)
+        throw new Error("全文翻译目录缺少 _paper_source.json");
+      const record: PaperSourceRecord = {
+        schemaVersion: PAPER_CONTEXT_SCHEMA_VERSION,
+        ...identity,
+        mineruCacheDir: source.mineruCacheDir,
+        fullMdPath: source.fullMdPath,
+        fullMdSha256: source.fullMdSha256,
+        updatedAt: new Date().toISOString(),
+      };
+      await writeJson(io, sourcePath, record);
+    }
+    return operation(paperDir);
+  });
 }
 
 export async function preparePaperContext(

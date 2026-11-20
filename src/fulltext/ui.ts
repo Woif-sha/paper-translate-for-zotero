@@ -19,8 +19,8 @@ export function registerFulltextUI(): void {
     target: "main/library/item",
     menus: [
       {
-        menuType: "menuitem",
-        l10nID: getLocaleID("fulltext-start"),
+        menuType: "submenu",
+        l10nID: getLocaleID("fulltext-menu"),
         onShowing(_event, context) {
           const item =
             context.items?.length === 1 ? context.items[0] : undefined;
@@ -28,12 +28,18 @@ export function registerFulltextUI(): void {
             !!item && (item.isRegularItem() || item.isPDFAttachment()),
           );
         },
-        onCommand(_event, context) {
-          showErrors(async () => {
-            const item = context.items?.[0];
-            if (item) await toggleFulltext(resolvePdf(item).id);
-          });
-        },
+        menus: [
+          {
+            menuType: "menuitem",
+            l10nID: getLocaleID("fulltext-start"),
+            onCommand(_event, context) {
+              showErrors(async () => {
+                const item = context.items?.[0];
+                if (item) await toggleFulltext(resolvePdf(item).id);
+              });
+            },
+          },
+        ],
       },
     ],
   });

@@ -116,6 +116,8 @@ pref-provider-codex-auth=Codex login
 pref-provider-key-auth=API key
 pref-provider-not-current=Not the active model
 
+fulltext-menu =
+    .label = Paper Translate
 fulltext-start = Translate or resume full paper
     .label = Translate or resume full paper
 fulltext-toolbar = Translate full paper. Click again to pause a running job.

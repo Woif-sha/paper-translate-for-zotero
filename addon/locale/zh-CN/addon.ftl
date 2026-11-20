@@ -116,6 +116,8 @@ pref-provider-codex-auth=Codex 登录
 pref-provider-key-auth=API 密钥
 pref-provider-not-current=未选择为当前模型
 
+fulltext-menu =
+    .label = Paper Translate
 fulltext-start = 全文翻译 / 继续
     .label = 全文翻译 / 继续
 fulltext-toolbar = 全文翻译。运行时再点一次可暂停

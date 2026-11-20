@@ -59,22 +59,8 @@ export async function translateFulltextUnits(options: {
     } catch {
       // Small models may not support structured responses. Keep the fallback bounded.
       for (const unit of batch) {
-        const reply = await send(
-          "Return only the translated text for this single input string.\n" +
-            JSON.stringify(unit.text),
-          model,
-          signal,
-          request,
-        );
-        try {
-          restoreTranslation(unit, reply);
-        } catch (error) {
-          throw new Error(
-            "段落 " + unit.id + " 翻译校验失败，重新运行可从已完成段落继续",
-            { cause: error },
-          );
-        }
-        await checkpointResults(new Map([[unit.id, reply.trim()]]));
+        const reply = await translateSingle(unit, model, signal, request);
+        await checkpointResults(new Map([[unit.id, reply]]));
       }
       continue;
     }
@@ -88,6 +74,44 @@ export async function translateFulltextUnits(options: {
     await save(completed);
     progress(completed.size, units.length);
   }
+}
+
+async function translateSingle(
+  unit: TranslationUnit,
+  model: RuntimeModel,
+  signal: AbortSignal,
+  request: typeof runModelRequest,
+): Promise<string> {
+  const canonical = /⟦PT:(\d+)⟧/gu;
+  const ascii = /\[\[PT_(\d+)\]\]/gu;
+  let failure: unknown;
+  for (const alternate of unit.protectedParts.length
+    ? [false, true]
+    : [false]) {
+    const input = alternate
+      ? unit.text.replace(canonical, "[[PT_$1]]")
+      : unit.text;
+    const prompt = alternate
+      ? "Translate the following text to Simplified Chinese. Copy every [[PT_n]] marker verbatim. Return only the translation.\n\n" +
+        input
+      : "Return only the translated text for this single input string.\n" +
+        JSON.stringify(input);
+    const output = (
+      await send(prompt, model, signal, request, alternate)
+    ).trim();
+    const reply = alternate ? output.replace(ascii, "⟦PT:$1⟧") : output;
+    try {
+      restoreTranslation(unit, reply);
+      return reply;
+    } catch (error) {
+      failure = error;
+    }
+  }
+  const reason = failure instanceof Error ? failure.message : String(failure);
+  throw new Error(
+    "段落 " + unit.id + "：" + reason + "。重新运行可从已完成段落继续",
+    { cause: failure },
+  );
 }
 
 function planBatches(units: TranslationUnit[]): TranslationUnit[][] {
@@ -131,13 +155,16 @@ async function send(
   model: RuntimeModel,
   signal: AbortSignal,
   request: typeof runModelRequest,
+  asciiMarkers = false,
 ): Promise<string> {
   for (let attempt = 0; ; attempt++) {
     signal.throwIfAborted();
     try {
       const result = await request(
         {
-          instructions: INSTRUCTIONS,
+          instructions: asciiMarkers
+            ? INSTRUCTIONS.replace("⟦PT:n⟧", "[[PT_n]]")
+            : INSTRUCTIONS,
           prompt,
           maxOutputCharacters: 20_000,
           maxResponseBytes: 1_000_000,

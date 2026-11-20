@@ -4,6 +4,7 @@
 // @ts-nocheck
 export type FluentMessageId =
   | 'fulltext-complete'
+  | 'fulltext-menu'
   | 'fulltext-multiple-pdfs'
   | 'fulltext-output'
   | 'fulltext-progress'

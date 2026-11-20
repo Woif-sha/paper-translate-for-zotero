@@ -1,6 +1,7 @@
 import {
   MineruMarkdownUnavailableError,
   readValidatedMineruSource,
+  withFulltextPaperDirectory,
 } from "../context/runtime";
 import { getActiveModelSnapshot } from "../models/runtime";
 import {
@@ -65,7 +66,7 @@ async function runFulltext(
   const model = getActiveModelSnapshot();
   progress({ phase: "source", model: model.label });
   const source = await resolveSource(attachmentId);
-  const parent = requireParent(source);
+  requireParent(source);
   const { identity } = source;
   const pathSegments = [
     "paper-translate-for-zotero-fulltext",
@@ -134,21 +135,16 @@ async function runFulltext(
     assets,
     figures,
   });
-  const current = await resolveSource(attachmentId);
-  if (
-    current.fullMdSha256 !== source.fullMdSha256 ||
-    current.manifestSha256 !== source.manifestSha256 ||
-    current.provenanceRaw !== source.provenanceRaw ||
-    current.identity.libraryID !== identity.libraryID ||
-    current.identity.attachmentKey !== identity.attachmentKey ||
-    current.identity.parentItemKey !== identity.parentItemKey
-  )
-    throw new Error(
-      "全文翻译期间 MinerU 源文件或 Zotero 附件发生变化，请重新运行",
-    );
-  requireParent(current);
   signal.throwIfAborted();
-  return saveAttachment(parent, directory, identity.attachmentKey, html);
+  return withFulltextPaperDirectory(source, (paperDir) => {
+    signal.throwIfAborted();
+    return saveAttachment(
+      requireParent(source),
+      paperDir,
+      identity.attachmentKey,
+      html,
+    );
+  });
 }
 
 async function resolveSource(attachmentId: number): Promise<Source> {
@@ -211,6 +207,8 @@ async function saveAttachment(
   const marker =
     "<!-- Paper Translate fulltext " + parent.key + "/" + sourceKey + " -->";
   const output = html.replace("<!doctype html>", "<!doctype html>" + marker);
+  const file = joinPath(directory, filename);
+  await writeAtomic(directory, file, output);
   const attachmentCandidates = Zotero.Items.get(parent.getAttachments()).filter(
     (item) =>
       item.attachmentLinkMode === Zotero.Attachments.LINK_MODE_IMPORTED_FILE &&
@@ -229,8 +227,6 @@ async function saveAttachment(
     await writeAtomic(storage, safePath, output);
     return item;
   }
-  const file = joinPath(directory, filename);
-  await writeAtomic(directory, file, output);
   return Zotero.Attachments.importFromFile({
     file,
     parentItemID: parent.id,
