@@ -149,4 +149,6 @@ Codex Auth 提示登录失效时，在终端重新执行 `codex login`。API Key
 
 Reader 交互和部分 Zotero 插件结构来自 [Translate for Zotero](https://github.com/windingwind/zotero-pdf-translate)。MinerU 缓存约定、Codex 认证、模型服务商注册和 OpenAI-compatible 传输设计参考了 [llm-for-zotero](https://github.com/yilewang/llm-for-zotero)。复用范围和提交哈希见 [NOTICE](NOTICE)。
 
+全文翻译的分段处理、断点续译和双语 HTML 附件设计参考了 [Zotero Context Translate](https://github.com/maverickzyc/zotero-context-translate)，并复用了 llm-for-zotero 生成的 MinerU 解析结果。
+
 本项目使用 [AGPL-3.0-or-later](LICENSE) 许可。
