@@ -474,7 +474,7 @@ test("validated source to Zotero attachment, pause/resume and cache reuse", asyn
     assert.ok(resumed);
     const output = await resumed;
     assert.equal(output.id, 20);
-    assert.equal(outputTitle, "Beam mechanics in layered elastic-translate");
+    assert.equal(outputTitle, "Beam mechanics in layered elastic-Translate");
     assert.equal(requests, Math.ceil(parseFulltext(body).units.length / 6));
     const html = await readFile(outputPath, "utf8");
     assert.match(html, /data:image\/png;base64,/u);
@@ -500,7 +500,7 @@ test("validated source to Zotero attachment, pause/resume and cache reuse", asyn
     outputTitle = "全文翻译 · 中英对照";
     assert.equal((await startFulltext(10, () => {})).id, 20);
     assert.equal(imports, 1);
-    assert.equal(outputTitle, "Beam mechanics in layered elastic-translate");
+    assert.equal(outputTitle, "Beam mechanics in layered elastic-Translate");
     assert.equal(titleSaves, 1);
     assert.equal(requests, count);
     assert.deepEqual(

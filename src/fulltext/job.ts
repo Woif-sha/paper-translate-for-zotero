@@ -229,8 +229,8 @@ async function saveAttachment(
   const lastWord = words[Math.min(words.length, 5) - 1];
   const title = lastWord
     ? itemTitle.slice(words[0].index, lastWord.index + lastWord.length) +
-      "-translate"
-    : "Paper-translate";
+      "-Translate"
+    : "Paper-Translate";
   const filename = "paper-translate-" + sourceKey + ".bilingual.html";
   const marker =
     "<!-- Paper Translate fulltext " + parent.key + "/" + sourceKey + " -->";
