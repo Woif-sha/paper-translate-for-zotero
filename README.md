@@ -67,7 +67,7 @@
 
 ### 全文翻译
 
-全文翻译基于 llm-for-zotero 的 MinerU 功能对当前 PDF 附件生成的解析结果。
+全文翻译也基于 MinerU 对当前 PDF 附件的解析结果。
 
 在 PDF 附件的右键菜单中选择「Paper Translate → 全文翻译」，或打开 PDF 后点击工具栏里的全文翻译按钮，即可生成双语 HTML 附件。
 
