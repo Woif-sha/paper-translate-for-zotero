@@ -88,7 +88,7 @@ _在服务商卡片中配置 Codex 模型与推理强度，已保存的模型可
 
 **Codex 登录**：先安装 Codex CLI，并在终端执行 `codex login`，然后在服务商卡片中选择账户可用的型号。
 
-**API Key**：填写服务商名称，选择接口预设，填写 HTTPS API 地址与 API Key，再选择模型。自定义接口需要明确选择 Chat Completions、Responses 或 Anthropic Messages 协议。
+**API Key**：填写服务商名称，选择接口预设，填写 API 地址与 API Key，再选择模型。自定义接口需要明确选择 Chat Completions、Responses 或 Anthropic Messages 协议。仅本机回环地址（如 `http://127.0.0.1:8518/v1`、`localhost` 和 `[::1]`）可使用 HTTP，其他地址须使用 HTTPS。
 
 连接信息完整后会自动加载模型目录；找不到所需型号时，可以刷新目录、开启“显示全部”，或选择“自定义型号…”手动填写。图中的型号只是配置示例，请选择自己账户可用的模型。
 

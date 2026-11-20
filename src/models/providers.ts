@@ -1,5 +1,6 @@
 import {
   normalizeApiSettings,
+  parseApiAddress,
   resolveApiEndpoint,
   type ApiSettings,
 } from "./protocols";
@@ -382,15 +383,7 @@ function migrateStoredProviderNames(configuration: {
 
 function normalizeApiBase(value: string): string {
   const normalized = value.trim();
-  let parsed: URL;
-  try {
-    parsed = new URL(normalized);
-  } catch (error) {
-    throw new Error(`API Base 不是有效 URL：${String(error)}`);
-  }
-  if (parsed.protocol !== "https:") {
-    throw new Error("API Base 必须使用 HTTPS");
-  }
+  parseApiAddress(normalized);
   return normalized;
 }
 
