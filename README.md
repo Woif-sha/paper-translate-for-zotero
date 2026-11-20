@@ -71,7 +71,7 @@
 
 在 PDF 附件的右键菜单中选择「Paper Translate → 全文翻译」，或打开 PDF 后点击工具栏里的全文翻译按钮，即可生成双语 HTML 附件。
 
-可多选 PDF 附件并逐篇翻译，也可以在翻译过程中追加文献。进度窗显示当前篇数和总篇数，队列可暂停和继续。
+支持批量全文翻译，可在翻译过程中追加文献。
 
 ![Zotero 中的双语全文，左侧显示目录，正文保留数学公式，右上角可切换阅读模式](.github/assets/screenshots/fulltext-translation.png)
 

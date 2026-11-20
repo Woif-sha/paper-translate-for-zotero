@@ -165,6 +165,39 @@ test("keeps standalone MinerU author emails out of translation after affiliation
   }
 });
 
+test("preserves standalone model names and math labels while translating descriptive captions", () => {
+  const document = parseFulltext(
+    [
+      "# Beam mechanics",
+      "(a) HyperPINN",
+      "(b) Small PINN baseline",
+      "(c) ν = 0.001",
+      "## A.4 HyperPINN",
+      "## METHODS",
+      "Figure 1: Results for HyperPINN.",
+    ].join("\n\n"),
+  );
+  assert.deepEqual(
+    document.units.map((unit) => unit.text),
+    [
+      "Beam mechanics",
+      "(b) Small PINN baseline",
+      "METHODS",
+      "⟦PT:0⟧: Results for HyperPINN.",
+    ],
+  );
+  const html = renderFulltext(
+    document,
+    new Map(
+      document.units.map((unit) => [unit.id, simulatedTranslation(unit.text)]),
+    ),
+    { title: "Beam mechanics", model: "Test", assets: new Map() },
+  );
+  assert.match(html, /<p>\(a\) HyperPINN<\/p>/u);
+  assert.match(html, /<p>\(c\) ν = 0\.001<\/p>/u);
+  assert.match(html, /<h2>A\.4 HyperPINN<\/h2>/u);
+});
+
 test("switches the reading mode from the Zotero toolbar", () => {
   const view = new JSDOM("<div id=toolbar></div><iframe></iframe>");
   try {
@@ -915,18 +948,17 @@ test("validated source to Zotero attachment, pause/resume and cache reuse", asyn
     await stopFulltext();
     assert.deepEqual(started, [pdf.getDisplayTitle()]);
     assertCommands([true, false], [second]);
+    assertCommands([true, false], [pdf, third]);
     enqueue(second);
     await drained;
     assert.deepEqual(started, [
       pdf.getDisplayTitle(),
-      pdf.getDisplayTitle(),
       second.getDisplayTitle(),
-      third.getDisplayTitle(),
       fourth.getDisplayTitle(),
     ]);
     assert.deepEqual(
       headings.map((value) => value.split(" · ").pop()),
-      ["1/1", "1/2", "1/3", "1/3", "2/3", "2/4", "3/4", "4/4"],
+      ["1/1", "1/2", "1/3", "1/1", "1/2", "2/2"],
     );
   } finally {
     await unregisterFulltextUI();

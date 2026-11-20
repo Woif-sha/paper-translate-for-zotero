@@ -170,6 +170,18 @@ function marker(index: number): string {
   return "⟦PT:" + index + "⟧";
 }
 
+function isTechnicalLabel(source: string, unprotected: string): boolean {
+  // A subfigure label can consist only of its panel letter and a math value.
+  if (/^\([a-z]\)(?:\s*\p{Script=Greek}\s*=)?$/iu.test(unprotected.trim()))
+    return true;
+
+  // Preserve standalone model names, including numbered headings such as A.4.
+  const name = source
+    .trim()
+    .replace(/^(?:\([a-z]\)|[a-z](?:\.\d+)+\.?)\s+/iu, "");
+  return /^[a-z][a-z\d+_.-]*$/iu.test(name) && /[a-z][A-Z]/u.test(name);
+}
+
 function createUnits(value: string, id: string): TranslationUnit[] {
   if (value.includes("⟦PT:"))
     throw new Error("源 Markdown 包含保留的全文翻译标记");
@@ -177,7 +189,9 @@ function createUnits(value: string, id: string): TranslationUnit[] {
   const masked = value.replace(literals, (part) =>
     marker(protectedParts.push(part) - 1),
   );
-  if (!/\p{L}/u.test(masked.replace(markerPattern, ""))) return [];
+  const unprotected = masked.replace(markerPattern, "");
+  if (!/\p{L}/u.test(unprotected) || isTechnicalLabel(value, unprotected))
+    return [];
   const chunks: string[] = [];
   let current = "";
   for (const piece of masked.match(/⟦PT:\d+⟧|[^\s⟦]+|[\s\S]/gu) ?? []) {

@@ -16,7 +16,6 @@ let registered = false;
 const queuedPdfs = new Map<number, Zotero.Item>();
 let processedPdfs = 0;
 let drainingQueue = false;
-let queuePaused = false;
 let activeProgress: InstanceType<typeof ztoolkit.ProgressWindow> | undefined;
 let queueNotice: InstanceType<typeof ztoolkit.ProgressWindow> | undefined;
 
@@ -84,7 +83,6 @@ export async function unregisterFulltextUI(): Promise<void> {
   }
   queuedPdfs.clear();
   processedPdfs = 0;
-  queuePaused = false;
   queueNotice?.close();
   queueNotice = undefined;
   const popup = activeProgress;
@@ -96,7 +94,7 @@ export async function unregisterFulltextUI(): Promise<void> {
 function canQueueSelection(item: Zotero.Item): boolean {
   try {
     const pdf = resolvePdf(item);
-    return queuePaused || canQueuePdf(pdf.id);
+    return canQueuePdf(pdf.id);
   } catch {
     // The command reports why an item cannot be resolved to a single PDF.
     return true;
@@ -118,13 +116,10 @@ async function enqueuePdfs(pdfs: readonly Zotero.Item[]): Promise<void> {
     activeProgress?.changeHeadline(queueProgressHeading());
     showQueueNotice(added);
   }
-  queuePaused = false;
   if (drainingQueue) return;
   drainingQueue = true;
   try {
-    while (!queuePaused) {
-      const pdf = queuedPdfs.values().next().value;
-      if (!pdf) break;
+    for (const pdf of queuedPdfs.values()) {
       if ((await openFulltext(pdf)) && queuedPdfs.delete(pdf.id)) {
         processedPdfs++;
       }
@@ -159,7 +154,8 @@ function showQueueNotice(count: number): void {
 
 function pauseTranslation(): void {
   if (!isFulltextRunning()) return;
-  queuePaused = true;
+  queuedPdfs.clear();
+  processedPdfs = 0;
   pauseFulltext();
   const popup = activeProgress;
   if (!popup) return;
