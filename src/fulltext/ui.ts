@@ -8,6 +8,7 @@ import {
   stopFulltext,
 } from "./job";
 import { createFulltextToolbarIcon } from "./toolbarIcon";
+import { appendFulltextReadingModes } from "./readingModes";
 
 const menuId = config.addonRef + "-fulltext";
 let registered = false;
@@ -111,7 +112,17 @@ const onRenderToolbar: _ZoteroTypes.Reader.EventHandler<"renderToolbar"> = ({
 }) => {
   const attachmentId = Number(reader.itemID);
   const item = Zotero.Items.get(attachmentId);
-  if (!item || !item.isPDFAttachment() || !item.parentItemID) return;
+  if (!item || !item.parentItemID) return;
+  if (
+    item.attachmentReaderType === "snapshot" &&
+    /^paper-translate-[A-Z0-9]{8}\.bilingual\.html$/u.test(
+      item.attachmentFilename,
+    )
+  ) {
+    appendFulltextReadingModes(doc, append);
+    return;
+  }
+  if (!item.isPDFAttachment()) return;
   const button = doc.createElementNS("http://www.w3.org/1999/xhtml", "button");
   button.setAttribute("type", "button");
   button.setAttribute("class", "toolbar-button");

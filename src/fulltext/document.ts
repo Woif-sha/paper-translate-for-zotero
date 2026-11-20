@@ -1,6 +1,7 @@
 import MarkdownIt from "markdown-it";
 import type Token from "markdown-it/lib/token.mjs";
 import { configureSafeMath } from "../modules/translationDisplay";
+import { renderFulltextReadingControls } from "./readingModes";
 
 export type TranslationUnit = {
   id: string;
@@ -332,17 +333,14 @@ export function renderFulltext(
     "section{margin:1rem 0}section:has(>.zh){border-bottom:1px solid #8885}.zh{margin:.45rem 0 .8rem}img{max-width:100%;height:auto}" +
     "table{border-collapse:collapse;display:block;overflow:auto}td,th{padding:.25rem .55rem;border:1px solid #8888}" +
     "pre{white-space:pre-wrap}math[display=block]{overflow:auto}.missing{border:1px dashed #888;padding:.4rem}" +
-    "body:has(#mode-zh:checked) .en,body:has(#mode-en:checked) .zh{display:none}label{margin-right:1rem}" +
-    "</style></head><body><header><h1>" +
-    title +
-    "</h1><p>翻译模型：" +
+    "body:has(#mode-zh:checked) .en,body:has(#mode-en:checked) .zh{display:none}" +
+    "#fulltext-reading-modes{position:sticky;top:0;z-index:1;display:flex;gap:1rem;padding:.4rem .65rem;background:Canvas;color:CanvasText;border-bottom:1px solid #8888}" +
+    "#fulltext-reading-modes[hidden]{display:none}header{font-size:.9rem}" +
+    "</style></head><body>" +
+    renderFulltextReadingControls() +
+    "<header><p>翻译模型：" +
     escapeHtml(options.model) +
-    "</p></header>" +
-    "<fieldset><legend>阅读模式</legend>" +
-    '<label><input type="radio" name="mode" checked id="mode-bi"> 双语</label>' +
-    '<label><input type="radio" name="mode" id="mode-zh"> 只看中文</label>' +
-    '<label><input type="radio" name="mode" id="mode-en"> 只看原文</label>' +
-    "</fieldset><main>" +
+    "</p></header><main>" +
     sections.join("\n") +
     "</main></body></html>"
   );

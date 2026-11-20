@@ -25,6 +25,7 @@ import { pauseFulltext, startFulltext } from "../src/fulltext/job";
 import { registerFulltextUI, unregisterFulltextUI } from "../src/fulltext/ui";
 import { resolveFulltextFigures } from "../src/fulltext/assets";
 import { translateFulltextUnits } from "../src/fulltext/translation";
+import { appendFulltextReadingModes } from "../src/fulltext/readingModes";
 import { setModelProviderConfiguration } from "../src/models/providers";
 import type { RuntimeModel } from "../src/models/runtime";
 
@@ -113,6 +114,40 @@ test("full-paper HTML preserves structure, uses safe MathML and isolates untrust
       /Reference entry/u,
     );
     assert.match(dom.querySelector(".zh")?.textContent ?? "", /中文译文/u);
+  } finally {
+    view.window.close();
+  }
+});
+
+test("switches the reading mode from the Zotero toolbar and hides the old page controls", () => {
+  const view = new JSDOM("<div id=toolbar></div><iframe></iframe>");
+  try {
+    const doc = view.window.document;
+    const toolbar = doc.querySelector("#toolbar")!;
+    const frame = doc.querySelector("iframe")!;
+    appendFulltextReadingModes(doc, (group) => toolbar.append(group));
+    const buttons = Array.from(toolbar.querySelectorAll("button"));
+    assert.deepEqual(
+      buttons.map((button) => button.textContent),
+      ["双语", "中文", "原文"],
+    );
+    buttons[1].click();
+    const body = frame.contentDocument!.body;
+    body.innerHTML =
+      "<header><h1>Duplicate title</h1></header><fieldset>" +
+      '<input id="mode-bi" type="radio" name="mode" checked><input id="mode-zh" type="radio" name="mode">' +
+      '<input id="mode-en" type="radio" name="mode"></fieldset><main><section data-block-id="1"><h1>Paper title</h1></section></main>';
+    frame.dispatchEvent(new view.window.Event("load"));
+    assert.equal(body.querySelector("input:checked")?.id, "mode-zh");
+    assert.equal(body.querySelector("header h1"), null);
+    assert.equal(body.querySelector("main h1")?.textContent, "Paper title");
+    assert.ok(body.querySelector("fieldset")?.hidden);
+    for (const [index, id] of ["mode-zh", "mode-en", "mode-bi"].entries()) {
+      const button = buttons[(index + 1) % buttons.length];
+      button.click();
+      assert.equal(body.querySelector("input:checked")?.id, id);
+      assert.equal(button.getAttribute("aria-pressed"), "true");
+    }
   } finally {
     view.window.close();
   }
