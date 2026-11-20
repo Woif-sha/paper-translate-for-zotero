@@ -21,7 +21,11 @@ import {
   renderFulltext,
   restoreTranslation,
 } from "../src/fulltext/document";
-import { pauseFulltext, startFulltext } from "../src/fulltext/job";
+import {
+  pauseFulltext,
+  startFulltext,
+  stopFulltext,
+} from "../src/fulltext/job";
 import { registerFulltextUI, unregisterFulltextUI } from "../src/fulltext/ui";
 import { resolveFulltextFigures } from "../src/fulltext/assets";
 import { translateFulltextUnits } from "../src/fulltext/translation";
@@ -116,6 +120,48 @@ test("full-paper HTML preserves structure, uses safe MathML and isolates untrust
     assert.match(dom.querySelector(".zh")?.textContent ?? "", /中文译文/u);
   } finally {
     view.window.close();
+  }
+});
+
+test("keeps standalone MinerU author emails out of translation after affiliation blocks", () => {
+  const contacts = [
+    "me@example.org",
+    "coauthor@example.org",
+    "first last2@example.org",
+  ];
+  const document = parseFulltext(
+    [
+      "# Beam mechanics",
+      "First Last<sup>∗</sup>",
+      "Department of Engineering",
+      ...contacts,
+      "Abstract—This work studies a beam.",
+      "Contact the authors at help@example.org for the data.",
+    ].join("\n\n"),
+  );
+  assert.equal(
+    document.units.some((unit) =>
+      contacts.some(
+        (address) =>
+          unit.text.includes(address) ||
+          unit.protectedParts.some((part) => part.includes(address)),
+      ),
+    ),
+    false,
+  );
+  assert.equal(
+    document.units.filter((unit) => unit.text.includes("@")).length,
+    1,
+  );
+  const html = renderFulltext(
+    document,
+    new Map(
+      document.units.map((unit) => [unit.id, simulatedTranslation(unit.text)]),
+    ),
+    { title: "Beam mechanics", model: "Test", assets: new Map() },
+  );
+  for (const address of contacts) {
+    assert.ok(html.includes("<p>" + address + "</p>"));
   }
 });
 
@@ -237,6 +283,41 @@ test("damaged structured response falls back and persists successful individual 
   assert.equal(calls, 3);
   assert.equal(output.size, 2);
   assert.deepEqual(checkpointSizes, [1, 2]);
+});
+
+test("checkpoints valid batch entries and retries only the failed prose with plain text", async () => {
+  const units = parseFulltext("A beam bends.\n\nA plate twists.").units;
+  const [beam, plate] = units;
+  const saved: string[][] = [];
+  let calls = 0;
+  const result = await translateFulltextUnits({
+    units,
+    checkpoint: {},
+    model: {} as RuntimeModel,
+    signal: new AbortController().signal,
+    progress() {},
+    async save(rows) {
+      saved.push([...rows.keys()]);
+    },
+    async request({ prompt }) {
+      calls++;
+      let text: string;
+      if (calls === 1) {
+        text = JSON.stringify([
+          { id: beam.id, text: beam.text },
+          { id: plate.id, text: "板发生扭转。" },
+        ]);
+      } else {
+        assert.doesNotMatch(prompt, /plate twists/u);
+        assert.deepEqual(saved, [[plate.id]]);
+        text = prompt.endsWith("\n\n" + beam.text) ? "梁发生弯曲。" : beam.text;
+      }
+      return { text, webSearchCalls: 0, urlCitations: [] };
+    },
+  });
+  assert.equal(calls, 3);
+  assert.equal(result.get(beam.id), "梁发生弯曲。");
+  assert.deepEqual(saved, [[plate.id], [plate.id, beam.id]]);
 });
 
 test("uses simpler markers when a model drops the original notation", async () => {
@@ -454,6 +535,7 @@ test("validated source to Zotero attachment, pause/resume and cache reuse", asyn
     parentItemID: 5,
     isAttachment: () => true,
     isPDFAttachment: () => true,
+    getDisplayTitle: () => "A very long fixture title for the PDF attachment",
   };
   const items = new Map<number, unknown>([
     [5, parent],
@@ -462,17 +544,20 @@ test("validated source to Zotero attachment, pause/resume and cache reuse", asyn
   const prefs = new Map();
   const globals = globalThis as Record<string, any>;
   const before = new Map(
-    ["Zotero", "IOUtils", "ztoolkit"].map((key) => [key, globals[key]]),
+    ["Zotero", "IOUtils", "ztoolkit", "addon"].map((key) => [
+      key,
+      globals[key],
+    ]),
   );
   let registeredMenu:
     | _ZoteroTypes.MenuManager.MenuOptions<"main/library/item">
     | undefined;
-  const assertCommands = (expected: boolean[]) => {
+  const assertCommands = (expected: boolean[], selected = [pdf]) => {
     const menu = registeredMenu?.menus[0].menus;
     assert.ok(menu);
     const states: boolean[] = [];
     const context = {
-      items: [pdf],
+      items: selected,
       setEnabled: (enabled: boolean) => states.push(enabled),
     };
     for (const command of menu) {
@@ -703,6 +788,145 @@ test("validated source to Zotero attachment, pause/resume and cache reuse", asyn
     assert.equal(
       await readFile(join(context, basename(outputPath)), "utf8"),
       html,
+    );
+
+    globals.addon = { data: {} };
+    const lines: string[] = [];
+    let heading = "";
+    let popupClosed = false;
+    const closed = new Promise<void>((resolve) => {
+      globals.ztoolkit.ProgressWindow = class {
+        constructor(text: string) {
+          heading = text;
+        }
+        createLine({ text }: { text: string }) {
+          lines.push(text);
+          return this;
+        }
+        show() {
+          return this;
+        }
+        changeLine({ idx, text }: { idx: number; text: string }) {
+          lines[idx] = text;
+        }
+        startCloseTimer() {
+          assert.fail("The paused popup should close on its own short timer");
+        }
+        close() {
+          popupClosed = true;
+          resolve();
+        }
+      };
+    });
+    const commands = registeredMenu?.menus[0].menus;
+    assert.ok(commands);
+    const selection = {
+      items: [pdf],
+    } as unknown as _ZoteroTypes.MenuManager.LibraryMenuContext;
+    commands[0].onCommand?.(new Event("command"), selection);
+    assert.match(heading, /fulltext-start · 1\/1$/u);
+    assert.equal(lines[0], pdf.getDisplayTitle());
+    commands[1].onCommand?.(new Event("command"), selection);
+    assert.match(lines[1], /fulltext-paused$/u);
+    assert.equal(popupClosed, false);
+    await closed;
+    assert.match(lines[1], /fulltext-paused$/u);
+    assert.equal(requests, count);
+
+    const second = {
+      ...pdf,
+      id: 11,
+      key: "PDFKEY11",
+      getDisplayTitle: () => "Second paper",
+    };
+    const third = {
+      ...pdf,
+      id: 12,
+      key: "PDFKEY13",
+      getDisplayTitle: () => "Third paper",
+    };
+    const fourth = {
+      ...pdf,
+      id: 13,
+      key: "PDFKEY14",
+      getDisplayTitle: () => "Fourth paper",
+    };
+    items.set(second.id, second);
+    items.set(third.id, third);
+    items.set(fourth.id, fourth);
+    const started: string[] = [];
+    const headings: string[] = [];
+    const notices: unknown[] = [];
+    globals.addon.data.locale = {
+      current: {
+        formatMessagesSync(
+          messages: { id: string; args?: { count?: number } }[],
+        ) {
+          for (const { id, args } of messages) {
+            if (id.endsWith("fulltext-queued")) notices.push(args?.count);
+          }
+          return [];
+        },
+      },
+    };
+    const drained = new Promise<void>((resolve) => {
+      globals.ztoolkit.ProgressWindow = class {
+        title = "";
+        constructor(public headline: string) {}
+        createLine({ text }: { text: string }) {
+          if (!this.title) this.title = text;
+          return this;
+        }
+        show() {
+          if (!this.title.endsWith("fulltext-queued")) {
+            started.push(this.title);
+            headings.push(this.headline);
+            if (this.title === second.getDisplayTitle()) {
+              queueMicrotask(() => enqueue(fourth));
+            }
+          }
+          return this;
+        }
+        changeHeadline(text: string) {
+          headings.push(text);
+        }
+        changeLine() {}
+        close() {}
+        startCloseTimer() {
+          if (this.title === fourth.getDisplayTitle()) resolve();
+        }
+      };
+    });
+    const enqueue = (...selected: (typeof pdf)[]) =>
+      commands[0].onCommand?.(new Event("command"), {
+        items: selected,
+      } as unknown as _ZoteroTypes.MenuManager.LibraryMenuContext);
+    enqueue(pdf);
+    assertCommands([false, true]);
+    assertCommands([true, true], [second]);
+    enqueue(pdf, second);
+    assertCommands([false, true], [second]);
+    assertCommands([true, true], [second, third]);
+    enqueue(second, third);
+    assert.deepEqual(notices, [1, 1]);
+    commands[1].onCommand?.(new Event("command"), {
+      items: [second],
+    } as unknown as _ZoteroTypes.MenuManager.LibraryMenuContext);
+    await stopFulltext();
+    assert.deepEqual(started, [pdf.getDisplayTitle()]);
+    assertCommands([true, false], [second]);
+    enqueue(second);
+    await drained;
+    assert.deepEqual(started, [
+      pdf.getDisplayTitle(),
+      pdf.getDisplayTitle(),
+      second.getDisplayTitle(),
+      third.getDisplayTitle(),
+      fourth.getDisplayTitle(),
+    ]);
+    assert.deepEqual(
+      headings.map((value) => value.split(" · ").pop()),
+      ["1/1", "1/2", "1/3", "1/3", "2/3", "2/4", "3/4", "4/4"],
     );
   } finally {
     await unregisterFulltextUI();

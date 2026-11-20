@@ -1,7 +1,7 @@
 import { runModelRequest, type RuntimeModel } from "../models/runtime";
 import {
   restoreTranslation,
-  TranslationMarkerError,
+  TranslationValidationError,
   type TranslationUnit,
 } from "./document";
 
@@ -57,18 +57,13 @@ export async function translateFulltextUnits(options: {
       signal,
       request,
     );
-    let translated: Results;
-    try {
-      translated = decodeBatch(batch, output);
-    } catch {
-      // Small models may not support structured responses. Keep the fallback bounded.
-      for (const unit of batch) {
-        const reply = await translateSingle(unit, model, signal, request);
-        await checkpointResults(new Map([[unit.id, reply]]));
-      }
-      continue;
+    const translated = decodeBatch(batch, output);
+    if (translated.size) await checkpointResults(translated);
+    for (const unit of batch) {
+      if (translated.has(unit.id)) continue;
+      const reply = await translateSingle(unit, model, signal, request);
+      await checkpointResults(new Map([[unit.id, reply]]));
     }
-    await checkpointResults(translated);
   }
   return completed;
 
@@ -89,34 +84,35 @@ async function translateSingle(
   const canonical = /⟦PT:(\d+)⟧/gu;
   const ascii = /\[\[PT_(\d+)\]\]/gu;
   let failure: unknown;
-  for (const alternate of unit.protectedParts.length
-    ? [false, true]
-    : [false]) {
-    const input = alternate
+  for (const plainText of [false, true]) {
+    const asciiMarkers = plainText && unit.protectedParts.length > 0;
+    const input = asciiMarkers
       ? unit.text.replace(canonical, " [[PT_$1]] ")
       : unit.text;
-    const prompt = alternate
-      ? "Translate the following text to Simplified Chinese. Copy every [[PT_n]] marker verbatim. Return only the translation.\n\n" +
+    const prompt = plainText
+      ? "Translate the following text to Simplified Chinese. " +
+        (asciiMarkers ? "Copy every [[PT_n]] marker verbatim. " : "") +
+        "Return only the translation.\n\n" +
         input
       : "Return only the translated text for this single input string.\n" +
         JSON.stringify(input);
     const output = (
-      await send(prompt, model, signal, request, alternate)
+      await send(prompt, model, signal, request, asciiMarkers)
     ).trim();
-    const reply = alternate ? output.replace(ascii, "⟦PT:$1⟧") : output;
+    const reply = asciiMarkers ? output.replace(ascii, "⟦PT:$1⟧") : output;
     try {
       restoreTranslation(unit, reply);
       return reply;
     } catch (error) {
+      if (!(error instanceof TranslationValidationError)) throw error;
       failure = error;
     }
   }
-  if (failure instanceof TranslationMarkerError && unit.protectedParts.length) {
+  if (unit.protectedParts.length) {
     try {
       return await translateAroundMarkers(unit, model, signal, request);
     } catch (error) {
-      if (!(error instanceof Error) || error.message !== "模型未返回中文正文")
-        throw error;
+      if (!(error instanceof TranslationValidationError)) throw error;
     }
   }
   const reason = failure instanceof Error ? failure.message : String(failure);
@@ -185,17 +181,31 @@ function decodeBatch(batch: TranslationUnit[], raw: string): Results {
   const clean = raw
     .trim()
     .replace(/^\x60{3}(?:json)?\s*([\s\S]*?)\s*\x60{3}$/iu, "$1");
-  const payload: unknown = JSON.parse(clean);
-  const expected = new Map(batch.map((unit) => [unit.id, unit]));
-  if (!Array.isArray(payload) || payload.length !== expected.size)
-    throw new Error("全文翻译批次返回的段落数量不符");
   const result: Results = new Map();
+  let payload: unknown;
+  try {
+    payload = JSON.parse(clean);
+  } catch {
+    return result;
+  }
+  if (!Array.isArray(payload)) return result;
+  const expected = new Map(batch.map((unit) => [unit.id, unit]));
+  const seen = new Set<string>();
   for (const item of payload) {
-    const unit = item && expected.get(item.id);
-    if (!unit || typeof item.text !== "string" || result.has(unit.id))
-      throw new Error("全文翻译批次返回的段落 ID 无效或重复");
-    restoreTranslation(unit, item.text);
-    result.set(unit.id, item.text.trim());
+    const unit = expected.get(item?.id);
+    if (!unit) continue;
+    if (seen.has(unit.id)) {
+      result.delete(unit.id);
+      continue;
+    }
+    seen.add(unit.id);
+    if (typeof item.text !== "string") continue;
+    try {
+      restoreTranslation(unit, item.text);
+      result.set(unit.id, item.text.trim());
+    } catch (error) {
+      if (!(error instanceof TranslationValidationError)) throw error;
+    }
   }
   return result;
 }

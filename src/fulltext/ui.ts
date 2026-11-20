@@ -11,7 +11,14 @@ import { createFulltextToolbarIcon } from "./toolbarIcon";
 import { appendFulltextReadingModes } from "./readingModes";
 
 const menuId = config.addonRef + "-fulltext";
+const confirmationDurationMs = 2000;
 let registered = false;
+const queuedPdfs = new Map<number, Zotero.Item>();
+let processedPdfs = 0;
+let drainingQueue = false;
+let queuePaused = false;
+let activeProgress: InstanceType<typeof ztoolkit.ProgressWindow> | undefined;
+let queueNotice: InstanceType<typeof ztoolkit.ProgressWindow> | undefined;
 
 export function registerFulltextUI(): void {
   if (registered) return;
@@ -24,10 +31,12 @@ export function registerFulltextUI(): void {
         menuType: "submenu",
         l10nID: getLocaleID("fulltext-menu"),
         onShowing(_event, context) {
-          const item =
-            context.items?.length === 1 ? context.items[0] : undefined;
+          const items = context.items ?? [];
           context.setVisible(
-            !!item && (item.isRegularItem() || item.isPDFAttachment()),
+            items.length > 0 &&
+              items.every(
+                (item) => item.isRegularItem() || item.isPDFAttachment(),
+              ),
           );
         },
         menus: [
@@ -36,29 +45,23 @@ export function registerFulltextUI(): void {
             l10nID: getLocaleID("fulltext-start"),
             onShowing(_event, context) {
               context.setEnabled(
-                !isSelectedTranslationRunning(context.items?.[0]),
+                context.items?.some(canQueueSelection) ?? false,
               );
             },
             onCommand(_event, context) {
-              showErrors(async () => {
-                const item = context.items?.[0];
-                if (item) await openFulltext(resolvePdf(item).id);
-              });
+              showErrors(() =>
+                enqueuePdfs((context.items ?? []).map(resolvePdf)),
+              );
             },
           },
           {
             menuType: "menuitem",
             l10nID: getLocaleID("fulltext-pause"),
             onShowing(_event, context) {
-              context.setEnabled(
-                isSelectedTranslationRunning(context.items?.[0]),
-              );
+              context.setEnabled(isFulltextRunning());
             },
-            onCommand(_event, context) {
-              showErrors(async () => {
-                const item = context.items?.[0];
-                if (item) pauseFulltext(resolvePdf(item).id);
-              });
+            onCommand() {
+              pauseTranslation();
             },
           },
         ],
@@ -79,17 +82,94 @@ export async function unregisterFulltextUI(): Promise<void> {
     Zotero.MenuManager?.unregisterMenu(menuId);
     registered = false;
   }
+  queuedPdfs.clear();
+  processedPdfs = 0;
+  queuePaused = false;
+  queueNotice?.close();
+  queueNotice = undefined;
+  const popup = activeProgress;
+  activeProgress = undefined;
+  popup?.close();
   await stopFulltext();
 }
 
-function isSelectedTranslationRunning(item: Zotero.Item | undefined): boolean {
-  if (!item) return false;
+function canQueueSelection(item: Zotero.Item): boolean {
   try {
-    return isFulltextRunning(resolvePdf(item).id);
+    const pdf = resolvePdf(item);
+    return queuePaused || canQueuePdf(pdf.id);
   } catch {
-    // Item selections without a single target PDF have no active command.
-    return false;
+    // The command reports why an item cannot be resolved to a single PDF.
+    return true;
   }
+}
+
+function canQueuePdf(id: number): boolean {
+  return !queuedPdfs.has(id) && !isFulltextRunning(id);
+}
+
+async function enqueuePdfs(pdfs: readonly Zotero.Item[]): Promise<void> {
+  if (!pdfs.length) return;
+  const previousCount = queuedPdfs.size;
+  for (const pdf of pdfs) {
+    if (canQueuePdf(pdf.id)) queuedPdfs.set(pdf.id, pdf);
+  }
+  const added = queuedPdfs.size - previousCount;
+  if (added && (previousCount || added > 1)) {
+    activeProgress?.changeHeadline(queueProgressHeading());
+    showQueueNotice(added);
+  }
+  queuePaused = false;
+  if (drainingQueue) return;
+  drainingQueue = true;
+  try {
+    while (!queuePaused) {
+      const pdf = queuedPdfs.values().next().value;
+      if (!pdf) break;
+      if ((await openFulltext(pdf)) && queuedPdfs.delete(pdf.id)) {
+        processedPdfs++;
+      }
+    }
+  } finally {
+    drainingQueue = false;
+    if (!queuedPdfs.size) processedPdfs = 0;
+  }
+}
+
+function queueProgressHeading(): string {
+  const current = processedPdfs + 1;
+  const total = processedPdfs + queuedPdfs.size;
+  return getString("fulltext-start") + " · " + current + "/" + total;
+}
+
+function showQueueNotice(count: number): void {
+  queueNotice?.close();
+  const popup = new ztoolkit.ProgressWindow(getString("fulltext-start"))
+    .createLine({
+      text: getString("fulltext-queued", { args: { count } }),
+      progress: 100,
+    })
+    .show(-1);
+  queueNotice = popup;
+  setTimeout(() => {
+    if (queueNotice !== popup) return;
+    queueNotice = undefined;
+    popup.close();
+  }, confirmationDurationMs);
+}
+
+function pauseTranslation(): void {
+  if (!isFulltextRunning()) return;
+  queuePaused = true;
+  pauseFulltext();
+  const popup = activeProgress;
+  if (!popup) return;
+  activeProgress = undefined;
+  popup.changeLine({
+    idx: 1,
+    text: getString("fulltext-paused"),
+    progress: 100,
+  });
+  setTimeout(() => popup.close(), confirmationDurationMs);
 }
 
 function resolvePdf(item: Zotero.Item): Zotero.Item {
@@ -137,29 +217,31 @@ const onRenderToolbar: _ZoteroTypes.Reader.EventHandler<"renderToolbar"> = ({
   button.title = getString("fulltext-toolbar");
   button.setAttribute("aria-label", button.title);
   button.addEventListener("click", () =>
-    showErrors(() => toggleFulltext(attachmentId)),
+    showErrors(() => toggleFulltext(item)),
   );
   append(button);
 };
 
-async function toggleFulltext(attachmentId: number): Promise<void> {
-  if (isFulltextRunning(attachmentId)) {
-    pauseFulltext(attachmentId);
+async function toggleFulltext(pdf: Zotero.Item): Promise<void> {
+  if (isFulltextRunning(pdf.id)) {
+    pauseTranslation();
     return;
   }
-  await openFulltext(attachmentId);
+  await enqueuePdfs([pdf]);
 }
 
-async function openFulltext(attachmentId: number): Promise<void> {
-  if (isFulltextRunning(attachmentId)) return;
-  const popup = new ztoolkit.ProgressWindow(getString("fulltext-start"), {
+async function openFulltext(pdf: Zotero.Item): Promise<boolean> {
+  const popup = new ztoolkit.ProgressWindow(queueProgressHeading(), {
     closeOnClick: false,
     closeOtherProgressWindows: false,
   })
+    .createLine({ text: pdf.getDisplayTitle(), progress: 100 })
     .createLine({ text: getString("fulltext-source"), progress: 0 })
     .show(-1);
+  activeProgress = popup;
   try {
-    await startFulltext(attachmentId, ({ phase, model, done, total }) => {
+    await startFulltext(pdf.id, ({ phase, done, total }) => {
+      if (activeProgress !== popup) return;
       const text =
         phase === "source"
           ? getString("fulltext-source")
@@ -169,21 +251,35 @@ async function openFulltext(attachmentId: number): Promise<void> {
                 args: { done: done ?? 0, total: total ?? 0 },
               });
       popup.changeLine({
-        text: text + " · " + model,
+        idx: 1,
+        text,
         progress: total ? (100 * (done ?? 0)) / total : undefined,
       });
     });
-    popup.changeLine({ text: getString("fulltext-complete"), progress: 100 });
+    if (activeProgress !== popup) return false;
+    if (queuedPdfs.size === 1) {
+      popup.changeLine({
+        idx: 1,
+        text: getString("fulltext-complete"),
+        progress: 100,
+      });
+      setTimeout(() => popup.close(), confirmationDurationMs);
+    } else {
+      popup.close();
+    }
   } catch (error) {
-    // Shared transports may wrap the AbortSignal reason.
-    const message = modelErrorMessage(error);
+    if (activeProgress !== popup) return false;
     popup.changeLine({
-      type: message.includes("全文翻译已暂停") ? "default" : "fail",
-      text: message,
+      idx: 1,
+      type: "fail",
+      text: modelErrorMessage(error),
+      progress: 100,
     });
+    popup.startCloseTimer(8000);
   } finally {
-    popup.startCloseTimer(14000);
+    if (activeProgress === popup) activeProgress = undefined;
   }
+  return true;
 }
 
 function showErrors(action: () => Promise<void>): void {

@@ -30,15 +30,18 @@ type ActiveJob = {
 };
 let activeJob: ActiveJob | undefined;
 
-export function isFulltextRunning(attachmentId: number): boolean {
+export function isFulltextRunning(
+  attachmentId = activeJob?.attachmentId,
+): boolean {
   return (
-    activeJob?.attachmentId === attachmentId &&
+    !!activeJob &&
+    activeJob.attachmentId === attachmentId &&
     !activeJob.controller.signal.aborted
   );
 }
 
-export function pauseFulltext(attachmentId: number): void {
-  if (activeJob?.attachmentId === attachmentId)
+export function pauseFulltext(attachmentId = activeJob?.attachmentId): void {
+  if (activeJob && activeJob.attachmentId === attachmentId)
     activeJob.controller.abort(new Error("全文翻译已暂停"));
 }
 

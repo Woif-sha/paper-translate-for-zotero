@@ -19,6 +19,15 @@ export type FulltextDocument = {
 export type FulltextFigure = { path: string; label: string; line?: number };
 
 const markerPattern = /⟦PT:(\d+)⟧/gu;
+const emailAddress = "[\\w.+-]+@[\\w.-]+\\.[a-z]{2,}";
+const emailLine = new RegExp(
+  "^(?:" + emailAddress + ")(?:[ ,;\\n]+(?:" + emailAddress + "))*$",
+  "iu",
+);
+const splitEmailLine = new RegExp(
+  "^[a-z0-9_.+-]+[ \\t]+" + emailAddress + "$",
+  "iu",
+);
 const literals =
   /(?<!\\)\$\$[\s\S]+?(?<!\\)\$\$|(?<!\\)\$(?!\$)[^\r\n$]+?(?<!\\)\$|\\\([\s\S]+?\\\)|\\\[[\s\S]+?\\\]|\\begin\{([a-zA-Z*]+)\}[\s\S]+?\\end\{\1\}|(\x60+)[\s\S]+?\2|!?\[[^\]\n]*\]\((?:[^()\n]|\([^()\n]*\))*\)|!?\[[^\]\n]+\]\[[^\]\n]*\]|<\/?[a-z][^<>\n]*>|https?:\/\/[^\s<>]+|10\.\d{4,9}\/[^\s<>"\]]+|\[(?:\s*\d+[,\s;–-]*)+\]|\b(?:fig(?:ure)?s?|tables?|eq(?:uation)?s?)\.?\s+\(?[A-Z]?\d+(?:[.\d]+)?[a-z]?\)?|[-−+]?\d+(?:[.,]\d+)*(?:[eE][+-]?\d+)?(?:[ \u00a0]*(?:GPa|MPa|kPa|Pa|GHz|MHz|kHz|Hz|mm|cm|km|µm|μm|nm|kg|°C|m\/s|N·m)\b|[%°])?/giu;
 
@@ -48,7 +57,8 @@ export function parseFulltext(source: string): FulltextDocument {
   const imagePaths = new Set<string>();
   const units: TranslationUnit[] = [];
   let referenceLevel: number | undefined;
-  let inFrontMatter = tokens[0]?.type === "heading_open";
+  let inOpeningParagraphs = tokens[0]?.type === "heading_open";
+  let inFrontMatter = inOpeningParagraphs;
   let hasAuthorLine = false;
   for (let start = 0; start < tokens.length; ) {
     let end = start + 1;
@@ -65,7 +75,10 @@ export function parseFulltext(source: string): FulltextDocument {
       line: group[0].map?.[0] ?? 0,
       translations: [],
     };
-    if (start > 0 && group[0].type !== "paragraph_open") inFrontMatter = false;
+    if (start > 0 && group[0].type !== "paragraph_open") {
+      inOpeningParagraphs = false;
+      inFrontMatter = false;
+    }
     if (group[0].type === "heading_open") {
       const level = Number(group[0].tag.slice(1));
       if (referenceLevel !== undefined && level <= referenceLevel)
@@ -86,15 +99,19 @@ export function parseFulltext(source: string): FulltextDocument {
       }
       if (referenceLevel !== undefined || group[0].type === "table_open")
         continue;
+      if (group[0].type === "paragraph_open") {
+        if (/^abstract(?:\s*[:—–-]|\s*$)/iu.test(token.content.trim()))
+          inOpeningParagraphs = false;
+        if (isContactLine(token.content, inOpeningParagraphs)) continue;
+      }
       if (inFrontMatter && group[0].type === "paragraph_open") {
         if (isAuthorList(token.content)) {
           hasAuthorLine = true;
           continue;
         }
         if (
-          isContactLine(token.content) ||
-          (hasAuthorLine &&
-            /^<sup>[^<>]+<\/sup>\s*\p{L}/iu.test(token.content.trim()))
+          hasAuthorLine &&
+          /^<sup>[^<>]+<\/sup>\s*\p{L}/iu.test(token.content.trim())
         )
           continue;
         inFrontMatter = false;
@@ -127,15 +144,13 @@ function isAuthorList(value: string): boolean {
   );
 }
 
-function isContactLine(value: string): boolean {
-  const address = "[\\w.+-]+@[\\w.-]+\\.[a-z]{2,}";
-  const repeated = new RegExp(
-    "^(?:" + address + ")(?:[ ,;\\n]+(?:" + address + "))*$",
-    "iu",
-  );
+function isContactLine(value: string, inOpeningParagraphs: boolean): boolean {
+  const text = value.trim();
+  // MinerU can insert a space in the local part of an author address.
   return (
-    repeated.test(value.trim()) ||
-    /^\{[\w.+,\s-]+\}@[\w.-]+\.[a-z]{2,}$/iu.test(value.trim())
+    emailLine.test(text) ||
+    /^\{[\w.+,\s-]+\}@[\w.-]+\.[a-z]{2,}$/iu.test(text) ||
+    (inOpeningParagraphs && splitEmailLine.test(text))
   );
 }
 
@@ -194,7 +209,9 @@ function createUnits(value: string, id: string): TranslationUnit[] {
   });
 }
 
-export class TranslationMarkerError extends Error {}
+export class TranslationValidationError extends Error {}
+
+export class TranslationMarkerError extends TranslationValidationError {}
 
 export function restoreTranslation(
   unit: TranslationUnit,
@@ -202,7 +219,7 @@ export function restoreTranslation(
 ): string {
   const text = result.trim();
   if (!text || text.length > 6000)
-    throw new Error("译文为空或超过单段长度限制");
+    throw new TranslationValidationError("译文为空或超过单段长度限制");
   const expectedText = /[a-z]{2}|\p{Script=Han}/u.test(
     unit.text.replace(markerPattern, ""),
   );
@@ -223,7 +240,7 @@ export function restoreTranslation(
       "模型遗漏或改写了公式、数字或链接的保护标记",
     );
   if (expectedText && !/\p{Script=Han}/u.test(remaining))
-    throw new Error("模型未返回中文正文");
+    throw new TranslationValidationError("模型未返回中文正文");
   return text.replace(
     markerPattern,
     (_match, digit) => unit.protectedParts[Number(digit)],
