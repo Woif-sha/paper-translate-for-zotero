@@ -245,20 +245,25 @@ export function renderFulltext(
   };
   const sections: string[] = [];
   const placed = new Map<number, FulltextFigure[]>();
+  const unplaced: FulltextFigure[] = [];
   for (const figure of options.figures ?? []) {
     if (document.imagePaths.has(figure.path)) continue;
     const line = figure.line;
-    const next =
-      line === undefined
-        ? -1
-        : document.blocks.findIndex((block) => block.line > line);
+    if (line === undefined) {
+      unplaced.push(figure);
+      continue;
+    }
+    const next = document.blocks.findIndex(
+      (block) => block.line >= line || (block.tokens[0].map?.[1] ?? 0) > line,
+    );
     const index = next === -1 ? document.blocks.length : next;
     const figures = placed.get(index) ?? [];
     figures.push(figure);
     placed.set(index, figures);
   }
   const renderFigures = (index: number) => {
-    for (const figure of placed.get(index) ?? []) {
+    const figures = placed.get(index) ?? [];
+    for (const figure of figures.sort((a, b) => a.line! - b.line!)) {
       sections.push(
         "<figure>" +
           renderImage(figure.path, figure.label, options.assets) +
@@ -301,6 +306,20 @@ export function renderFulltext(
     );
   }
   renderFigures(document.blocks.length);
+  if (unplaced.length) {
+    sections.push(
+      "<aside><h2>位置未确认的图像</h2>" +
+        unplaced
+          .map(
+            (figure) =>
+              "<figure>" +
+              renderImage(figure.path, figure.label, options.assets) +
+              "</figure>",
+          )
+          .join("") +
+        "</aside>",
+    );
+  }
   const title = escapeHtml(options.title);
   return (
     '<!doctype html><html lang="zh-CN"><head><meta charset="utf-8">' +

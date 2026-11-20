@@ -8,7 +8,11 @@ import {
   createDefaultMineruImageFileAccess,
   sha256Hex,
 } from "../ocr/mineruImages";
-import { loadFulltextAssets, resolveFulltextFigures } from "./assets";
+import {
+  loadFulltextAssets,
+  readFulltextFigureMetadata,
+  resolveFulltextFigures,
+} from "./assets";
 import { parseFulltext, renderFulltext } from "./document";
 import { FULLTEXT_PROMPT_VERSION, translateFulltextUnits } from "./translation";
 
@@ -132,7 +136,14 @@ async function runFulltext(
     },
   });
   progress({ phase: "output", model: model.label });
-  const figures = resolveFulltextFigures(source.manifest, source.markdown);
+  const figureMetadata = await readFulltextFigureMetadata(
+    source.mineruCacheDir,
+  );
+  const figures = resolveFulltextFigures(
+    source.manifest,
+    source.markdown,
+    figureMetadata,
+  );
   const assets = await loadFulltextAssets(
     source.mineruCacheDir,
     [...document.imagePaths, ...figures.map((figure) => figure.path)],

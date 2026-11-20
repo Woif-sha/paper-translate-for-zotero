@@ -667,7 +667,7 @@ export async function readContainedMineruRaster(
   }
 }
 
-async function requireContainedFile(
+export async function requireContainedFile(
   canonicalCacheDir: string,
   path: string,
   fileAccess: MineruImageFileAccess,

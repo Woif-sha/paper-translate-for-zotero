@@ -285,10 +285,99 @@ test("includes chart panels outside allFigures and anchors groups to verified ca
     "Intro\nFigure 1: Architecture\n\nFigure 2: Results\n\nConclusion";
   assert.deepEqual(resolveFulltextFigures(manifest as never, markdown), [
     { path: first, label: "Figure 1", line: 1 },
-    { path: panelA, label: "", line: 3 },
+    { path: panelA, label: "Figure 2", line: 3 },
     { path: panelB, label: "Figure 2", line: 3 },
-    { path: unplaced, label: "Figure 3", line: undefined },
+    { path: unplaced, label: "Figure 3" },
   ]);
+});
+
+test("places case-insensitive pipe captions and splits multipanel ranges by the content list", () => {
+  const paths = [
+    "images/a.png",
+    "images/b.png",
+    "images/c.png",
+    "images/d.png",
+    "images/b1.png",
+  ];
+  const caption8 = "FIGURE 8 | Scores";
+  const caption9 = "FIGURE 9 | A second experiment";
+  const appendix = "FIGURE B1 | Supplementary results";
+  const md = [
+    "Figure 8 shows the results in the text.",
+    "(A)\n" + caption8,
+    caption9,
+    appendix,
+  ].join("\n\n");
+  const manifest = {
+    figureBlocks: [
+      {
+        imagePaths: paths,
+        labelHints: ["Figure 8", "Figure 9"],
+        markdownStart: 990,
+      },
+    ],
+  };
+  const content = [
+    { type: "chart", img_path: paths[0], page_idx: 8, bbox: [10, 15, 40, 100] },
+    { type: "text", text: "A paragraph between columns" },
+    {
+      type: "chart",
+      img_path: paths[1],
+      page_idx: 8,
+      bbox: [50, 15, 90, 100],
+      chart_caption: [caption8],
+    },
+    { type: "chart", img_path: paths[2], page_idx: 9 },
+    {
+      type: "chart",
+      img_path: paths[3],
+      page_idx: 9,
+      chart_caption: [caption9],
+    },
+    {
+      type: "image",
+      img_path: paths[4],
+      page_idx: 22,
+      image_caption: [appendix],
+    },
+  ];
+  const figures = resolveFulltextFigures(manifest as never, md, content);
+  assert.deepEqual(
+    figures.map(({ path, line }) => [path, line]),
+    paths.map((path, i) => [path, [3, 3, 5, 5, 7][i]]),
+  );
+  const paper = parseFulltext(md);
+  const rows = new Map(
+    paper.units.map((unit) => [unit.id, simulatedTranslation(unit.text)]),
+  );
+  const images = new Map(
+    paths.map((path) => [path, "data:image/png;base64,AA=="]),
+  );
+  const view = new JSDOM(
+    renderFulltext(paper, rows, {
+      title: "Fixture",
+      model: "Test",
+      assets: images,
+      figures,
+    }),
+  );
+  try {
+    const main = view.window.document.querySelector("main")!;
+    const sections = main.querySelectorAll("section");
+    for (const [index, label] of [
+      "Figure 8",
+      "Figure 9",
+      "Figure B1",
+    ].entries()) {
+      assert.equal(
+        sections[index + 1].previousElementSibling?.querySelector("img")?.alt,
+        label,
+      );
+    }
+    assert.equal(main.querySelectorAll("aside").length, 0);
+  } finally {
+    view.window.close();
+  }
 });
 
 test("validated source to Zotero attachment, pause/resume and cache reuse", async () => {

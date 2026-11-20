@@ -1,114 +1,276 @@
 import {
   createDefaultMineruImageFileAccess,
   readContainedMineruRaster,
+  requireContainedFile,
 } from "../ocr/mineruImages";
 import type { readValidatedMineruSource } from "../context/runtime";
 import { normalizeImageReference, type FulltextFigure } from "./document";
 
 type Source = Awaited<ReturnType<typeof readValidatedMineruSource>>;
+type Anchor = { line: number; label: string };
+type CachedFigure = { path?: unknown; label?: unknown; caption?: unknown };
+type FigureBlock = {
+  imagePaths?: unknown;
+  markdownStart?: number;
+  markdownEnd?: number;
+  contextEnd?: number;
+  labelHints?: unknown;
+  captionHints?: unknown;
+  ambiguous?: boolean;
+};
+type VisualEntry = {
+  path: string;
+  page: number | undefined;
+  box: number[];
+  index: number;
+};
+
+const FIGURE_NUMBER = /^fig(?:ure)?\.?\s*([a-z]*\d+(?:[.-]\d+)*[a-z]?)\b/iu;
+const CAPTION_SEPARATOR = /^\s*(?:[:|：｜]|\.(?:\s|$))/u;
+
+export async function readFulltextFigureMetadata(
+  cacheDirectory: string,
+): Promise<unknown[]> {
+  const separator = cacheDirectory.includes("\\") ? "\\" : "/";
+  const path = cacheDirectory + separator + "content_list.json";
+  if (!(await IOUtils.exists(path))) return [];
+  const access = createDefaultMineruImageFileAccess();
+  const file = await requireContainedFile(
+    await access.canonicalize(cacheDirectory),
+    path,
+    access,
+  );
+  const limit = 32 * 1024 * 1024;
+  const { size } = await access.stat(file);
+  if (!size || size > limit)
+    throw new Error("MinerU 图块清单为空或超出大小限制");
+  const bytes = await access.read(file);
+  if (bytes.byteLength > limit) throw new Error("MinerU 图块清单超出大小限制");
+  const metadata: unknown = JSON.parse(
+    new TextDecoder("utf-8", { fatal: true }).decode(bytes),
+  );
+  if (!Array.isArray(metadata)) throw new Error("MinerU 图块清单格式无效");
+  return metadata;
+}
 
 export function resolveFulltextFigures(
   manifest: Source["manifest"],
   markdown: string,
+  content: unknown[] = [],
 ): FulltextFigure[] {
   const metadata = manifest as {
-    allFigures?: unknown;
-    figureBlocks?: unknown;
+    allFigures?: CachedFigure[];
+    figureBlocks?: FigureBlock[];
   };
   const figures = new Map<string, FulltextFigure>();
-  if (Array.isArray(metadata.allFigures)) {
-    for (const figure of metadata.allFigures) {
-      if (!figure || typeof figure.path !== "string" || !figure.path.trim())
-        continue;
-      const path = normalizeImageReference(figure.path);
-      if (!path || figures.has(path)) continue;
-      figures.set(path, {
-        path,
-        label: typeof figure.label === "string" ? figure.label : "",
-      });
-    }
+  const findAnchor = createCaptionLocator(markdown);
+  for (const figure of Array.isArray(metadata.allFigures)
+    ? metadata.allFigures
+    : []) {
+    const path = normalizePath(figure?.path);
+    if (!path || figures.has(path)) continue;
+    const label = typeof figure.label === "string" ? figure.label : "";
+    const anchor = findAnchor([figure.caption], [label]);
+    figures.set(path, {
+      path,
+      label: anchor?.label ?? label,
+      line: anchor?.line,
+    });
   }
-  const lines = markdown.split(/\r\n?|\n/u);
-  const positions = new Map<string, number | undefined>();
+  // Older caches can still place single-caption groups using the manifest alone.
   const pending: string[] = [];
   let previousEnd: number | undefined;
   for (const block of Array.isArray(metadata.figureBlocks)
     ? metadata.figureBlocks
     : []) {
-    if (!block || !Array.isArray(block.imagePaths)) {
-      pending.length = 0;
-      previousEnd = undefined;
-      continue;
-    }
-    const paths = block.imagePaths.flatMap((value: unknown) => {
-      if (typeof value !== "string") return [];
-      const path = normalizeImageReference(value);
-      return path ? [path] : [];
-    }) as string[];
-    const label = Array.isArray(block.labelHints)
-      ? block.labelHints.find(
-          (value: unknown): value is string =>
-            typeof value === "string" && !!value.trim(),
-        )
-      : undefined;
-    for (const path of paths) {
-      if (!figures.has(path)) figures.set(path, { path, label: label ?? "" });
-    }
-    const start = block.markdownStart;
-    const end = block.markdownEnd;
+    const paths = Array.isArray(block?.imagePaths)
+      ? block.imagePaths.map(normalizePath).filter(Boolean)
+      : [];
+    const captions = Array.isArray(block?.captionHints)
+      ? block.captionHints
+      : [];
+    const labels = Array.isArray(block?.labelHints) ? block.labelHints : [];
+    const displayLabel =
+      labels.length === 1 && typeof labels[0] === "string" ? labels[0] : "";
+    for (const path of paths)
+      if (!figures.has(path)) figures.set(path, { path, label: displayLabel });
+    const start = block?.markdownStart;
+    const end = block?.markdownEnd;
     if (
       previousEnd === undefined ||
+      typeof start !== "number" ||
       !Number.isInteger(start) ||
       start < previousEnd ||
       start - previousEnd > 4
     )
       pending.length = 0;
-    previousEnd = Number.isInteger(block.contextEnd)
+    previousEnd = Number.isInteger(block?.contextEnd)
       ? block.contextEnd
       : undefined;
-    if (block.ambiguous) {
+    if (block?.ambiguous || !paths.length) {
       pending.length = 0;
       continue;
     }
-    const hasSourceEmbed =
+    const anchor = findAnchor(captions, labels);
+    if (anchor) {
+      for (const path of [...pending, ...paths]) {
+        const figure = figures.get(path)!;
+        if (figure.line === undefined) figures.set(path, { path, ...anchor });
+      }
+      pending.length = 0;
+    } else if (labels.length || captions.length) {
+      pending.length = 0;
+    } else {
+      pending.push(...paths);
+    }
+    if (
+      typeof start === "number" &&
+      typeof end === "number" &&
       Number.isInteger(start) &&
       Number.isInteger(end) &&
       start >= 0 &&
-      paths.some((path) => markdown.slice(start, end).includes(path));
-    const matches = label
-      ? lines.flatMap((line, index) =>
-          line.trim().startsWith(label + ":") ||
-          line.trim().startsWith(label + ". ")
-            ? [index]
-            : [],
-        )
-      : [];
-    const line =
-      matches.length === 1
-        ? matches[0]
-        : hasSourceEmbed
-          ? markdown.slice(0, start).split(/\r\n?|\n/u).length - 1
-          : undefined;
-    if (line !== undefined) {
-      for (const path of [...pending, ...paths]) {
-        positions.set(
-          path,
-          positions.has(path) && positions.get(path) !== line
-            ? undefined
-            : line,
-        );
+      end > start &&
+      end <= markdown.length
+    ) {
+      const slice = markdown.slice(start, end);
+      for (const path of paths) {
+        const figure = figures.get(path)!;
+        if (figure.line === undefined && slice.includes(path))
+          figure.line = markdown.slice(0, start).split(/\r\n?|\n/u).length - 1;
       }
-      pending.length = 0;
-    } else if (!label) {
-      pending.push(...paths);
-    } else {
-      pending.length = 0;
     }
   }
-  return [...figures.values()].map((figure) => ({
-    ...figure,
-    line: positions.get(figure.path),
-  }));
+  const visualAnchors = resolveVisualAnchors(figures, content, findAnchor);
+  return [
+    ...Array.from(visualAnchors, ([path, anchor]) => ({ path, ...anchor })),
+    ...Array.from(figures.values()).filter(
+      (figure) => !visualAnchors.has(figure.path),
+    ),
+  ];
+}
+
+function createCaptionLocator(markdown: string) {
+  const exact = new Map<string, number[]>();
+  const byNumber = new Map<string, number[]>();
+  for (const [line, text] of markdown.split(/\r\n?|\n/u).entries()) {
+    const normalized = normalizeCaption(text);
+    const figure = FIGURE_NUMBER.exec(normalized);
+    if (!figure) continue;
+    addLine(exact, normalized, line);
+    if (CAPTION_SEPARATOR.test(normalized.slice(figure[0].length)))
+      addLine(byNumber, figure[1].toUpperCase(), line);
+  }
+  return (captions: unknown[], labels: unknown[] = []): Anchor | undefined => {
+    const anchors = new Map<number, Anchor>();
+    const numbers = new Set<string>();
+    for (const value of [...captions, ...labels]) {
+      if (typeof value !== "string") continue;
+      const caption = normalizeCaption(value);
+      const number = FIGURE_NUMBER.exec(caption)?.[1].toUpperCase();
+      if (!number) continue;
+      numbers.add(number);
+      const lines = exact.get(caption) ?? byNumber.get(number);
+      if (lines?.length === 1)
+        anchors.set(lines[0], { line: lines[0], label: "Figure " + number });
+    }
+    return numbers.size === 1 && anchors.size === 1
+      ? anchors.values().next().value
+      : undefined;
+  };
+}
+
+function addLine(
+  index: Map<string, number[]>,
+  key: string,
+  line: number,
+): void {
+  const matches = index.get(key);
+  if (matches) matches.push(line);
+  else index.set(key, [line]);
+}
+
+function normalizeCaption(caption: string): string {
+  return caption
+    .replaceAll("\0", " ")
+    .replace(/\s+/gu, " ")
+    .trim()
+    .replace(/^\*{1,3}/u, "");
+}
+
+function normalizePath(value: unknown): string {
+  return typeof value === "string" ? normalizeImageReference(value.trim()) : "";
+}
+
+function resolveVisualAnchors(
+  figures: Map<string, FulltextFigure>,
+  content: unknown[],
+  findAnchor: ReturnType<typeof createCaptionLocator>,
+): Map<string, Anchor> {
+  const pending: VisualEntry[] = [];
+  const placed = new Map<string, Anchor>();
+  for (const [index, value] of content.entries()) {
+    if (!value || typeof value !== "object") continue;
+    const raw = value as Record<string, unknown>;
+    if (raw.type === "table") pending.length = 0;
+    if (raw.type !== "image" && raw.type !== "chart") continue;
+    const path = normalizePath(raw.img_path);
+    if (!figures.has(path)) {
+      pending.length = 0;
+      continue;
+    }
+    const entry: VisualEntry = {
+      path,
+      page:
+        typeof raw.page_idx === "number" && Number.isInteger(raw.page_idx)
+          ? raw.page_idx
+          : undefined,
+      box:
+        Array.isArray(raw.bbox) &&
+        raw.bbox.length === 4 &&
+        raw.bbox.every(Number.isFinite)
+          ? raw.bbox
+          : [],
+      index,
+    };
+    const previous = pending.at(-1);
+    if (
+      previous &&
+      (entry.page === undefined ||
+        entry.page !== previous.page ||
+        (index !== previous.index + 1 &&
+          !panelsShareRow(previous.box, entry.box)))
+    )
+      pending.length = 0;
+    const rawCaptions =
+      raw.type === "chart" ? raw.chart_caption : raw.image_caption;
+    const captions = (Array.isArray(rawCaptions) ? rawCaptions : []).filter(
+      (caption): caption is string =>
+        typeof caption === "string" &&
+        FIGURE_NUMBER.test(normalizeCaption(caption)),
+    );
+    if (!captions.length) {
+      pending.push(entry);
+      continue;
+    }
+    const anchor = findAnchor(captions);
+    if (anchor) {
+      for (const panel of [...pending, entry]) placed.set(panel.path, anchor);
+    }
+    // A numbered caption closes this group even when it could not be located.
+    pending.length = 0;
+  }
+  return placed;
+}
+
+function panelsShareRow(first: number[], second: number[]): boolean {
+  if (first.length !== 4 || second.length !== 4) return false;
+  const overlap = Math.min(first[3], second[3]) - Math.max(first[1], second[1]);
+  const shortest = Math.min(first[3] - first[1], second[3] - second[1]);
+  return (
+    shortest > 0 &&
+    overlap >= shortest * 0.8 &&
+    (first[2] <= second[0] || second[2] <= first[0])
+  );
 }
 
 export async function loadFulltextAssets(
