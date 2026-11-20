@@ -28,24 +28,69 @@ export function resolveFulltextFigures(
       });
     }
   }
+  const lines = markdown.split(/\r\n?|\n/u);
   const positions = new Map<string, number | undefined>();
-  if (Array.isArray(metadata.figureBlocks)) {
-    for (const block of metadata.figureBlocks) {
-      if (
-        !block ||
-        block.ambiguous ||
-        !Array.isArray(block.imagePaths) ||
-        !Number.isInteger(block.markdownStart) ||
-        block.markdownStart < 0 ||
-        block.markdownStart >= markdown.length
-      )
-        continue;
-      const line =
-        markdown.slice(0, block.markdownStart).split(/\r\n?|\n/u).length - 1;
-      for (const rawPath of block.imagePaths) {
-        if (typeof rawPath !== "string") continue;
-        const path = normalizeImageReference(rawPath);
-        if (!figures.has(path)) continue;
+  const pending: string[] = [];
+  let previousEnd: number | undefined;
+  for (const block of Array.isArray(metadata.figureBlocks)
+    ? metadata.figureBlocks
+    : []) {
+    if (!block || !Array.isArray(block.imagePaths)) {
+      pending.length = 0;
+      previousEnd = undefined;
+      continue;
+    }
+    const paths = block.imagePaths.flatMap((value: unknown) => {
+      if (typeof value !== "string") return [];
+      const path = normalizeImageReference(value);
+      return path ? [path] : [];
+    }) as string[];
+    const label = Array.isArray(block.labelHints)
+      ? block.labelHints.find(
+          (value: unknown): value is string =>
+            typeof value === "string" && !!value.trim(),
+        )
+      : undefined;
+    for (const path of paths) {
+      if (!figures.has(path)) figures.set(path, { path, label: label ?? "" });
+    }
+    const start = block.markdownStart;
+    const end = block.markdownEnd;
+    if (
+      previousEnd === undefined ||
+      !Number.isInteger(start) ||
+      start < previousEnd ||
+      start - previousEnd > 4
+    )
+      pending.length = 0;
+    previousEnd = Number.isInteger(block.contextEnd)
+      ? block.contextEnd
+      : undefined;
+    if (block.ambiguous) {
+      pending.length = 0;
+      continue;
+    }
+    const hasSourceEmbed =
+      Number.isInteger(start) &&
+      Number.isInteger(end) &&
+      start >= 0 &&
+      paths.some((path) => markdown.slice(start, end).includes(path));
+    const matches = label
+      ? lines.flatMap((line, index) =>
+          line.trim().startsWith(label + ":") ||
+          line.trim().startsWith(label + ". ")
+            ? [index]
+            : [],
+        )
+      : [];
+    const line =
+      matches.length === 1
+        ? matches[0]
+        : hasSourceEmbed
+          ? markdown.slice(0, start).split(/\r\n?|\n/u).length - 1
+          : undefined;
+    if (line !== undefined) {
+      for (const path of [...pending, ...paths]) {
         positions.set(
           path,
           positions.has(path) && positions.get(path) !== line
@@ -53,6 +98,11 @@ export function resolveFulltextFigures(
             : line,
         );
       }
+      pending.length = 0;
+    } else if (!label) {
+      pending.push(...paths);
+    } else {
+      pending.length = 0;
     }
   }
   return [...figures.values()].map((figure) => ({

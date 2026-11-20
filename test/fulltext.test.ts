@@ -257,20 +257,38 @@ test("rebuilds a translation around intact source literals when a model drops ma
   assert.equal(responses.length, 0);
 });
 
-test("cache figure placement uses only explicit unambiguous offsets", () => {
-  const path = "images/f1.png";
+test("includes chart panels outside allFigures and anchors groups to verified captions", () => {
+  const first = "images/f1.png";
+  const panelA = "images/chart-a.png";
+  const panelB = "images/chart-b.png";
+  const unplaced = "images/unplaced.png";
   const manifest = {
-    allFigures: [{ path, label: "Figure 1" }],
-    figureBlocks: [{ imagePaths: [path], markdownStart: 6 }],
+    allFigures: [{ path: first, label: "Figure 1" }],
+    figureBlocks: [
+      {
+        imagePaths: [first],
+        labelHints: ["Figure 1"],
+        markdownStart: 0,
+        contextEnd: 10,
+      },
+      { imagePaths: [panelA], markdownStart: 90, contextEnd: 100 },
+      {
+        imagePaths: [panelB],
+        labelHints: ["Figure 2"],
+        markdownStart: 101,
+        contextEnd: 115,
+      },
+      { imagePaths: [unplaced], labelHints: ["Figure 3"], markdownStart: 0 },
+    ],
   };
-  assert.deepEqual(resolveFulltextFigures(manifest as never, "hello\nworld"), [
-    { path, label: "Figure 1", line: 1 },
+  const markdown =
+    "Intro\nFigure 1: Architecture\n\nFigure 2: Results\n\nConclusion";
+  assert.deepEqual(resolveFulltextFigures(manifest as never, markdown), [
+    { path: first, label: "Figure 1", line: 1 },
+    { path: panelA, label: "", line: 3 },
+    { path: panelB, label: "Figure 2", line: 3 },
+    { path: unplaced, label: "Figure 3", line: undefined },
   ]);
-  manifest.figureBlocks.push({ imagePaths: [path], markdownStart: 0 });
-  assert.equal(
-    resolveFulltextFigures(manifest as never, "hello\nworld")[0].line,
-    undefined,
-  );
 });
 
 test("validated source to Zotero attachment, pause/resume and cache reuse", async () => {
