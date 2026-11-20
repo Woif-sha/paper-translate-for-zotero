@@ -8,7 +8,7 @@ const listeners = new WeakMap<Document, AbortController>();
 
 export function renderFulltextReadingControls(): string {
   return (
-    '<nav id="fulltext-reading-modes" aria-label="阅读模式">' +
+    '<nav id="fulltext-reading-modes" aria-label="阅读模式" hidden>' +
     FULLTEXT_READING_MODES.map(
       ({ id, label }, index) =>
         '<label><input type="radio" name="mode" id="' +
@@ -65,6 +65,21 @@ export function appendFulltextReadingModes(
       doc.querySelectorAll("iframe"),
     ) as unknown as HTMLIFrameElement[];
     for (const frame of frames) {
+      try {
+        const source = frame.getAttribute("srcdoc") ?? "";
+        if (source.includes('id="fulltext-reading-modes"')) {
+          const html = source.replace(
+            /<nav\b([^>]*\bid=["\x27]fulltext-reading-modes["\x27][^>]*)>/iu,
+            (tag) =>
+              /\shidden(?:\s|=|>)/iu.test(tag)
+                ? tag
+                : tag.replace(/>$/u, " hidden>"),
+          );
+          if (html !== source) frame.setAttribute("srcdoc", html);
+        }
+      } catch {
+        // The view can be replaced while the toolbar is rendering.
+      }
       if (!watched.has(frame)) {
         frame.addEventListener("load", update, { signal: controller.signal });
         watched.add(frame);

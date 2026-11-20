@@ -334,7 +334,6 @@ export function renderFulltext(
     "table{border-collapse:collapse;display:block;overflow:auto}td,th{padding:.25rem .55rem;border:1px solid #8888}" +
     "pre{white-space:pre-wrap}math[display=block]{overflow:auto}.missing{border:1px dashed #888;padding:.4rem}" +
     "body:has(#mode-zh:checked) .en,body:has(#mode-en:checked) .zh{display:none}" +
-    "#fulltext-reading-modes{position:sticky;top:0;z-index:1;display:flex;gap:1rem;padding:.4rem .65rem;background:Canvas;color:CanvasText;border-bottom:1px solid #8888}" +
     "#fulltext-reading-modes[hidden]{display:none}header{font-size:.9rem}" +
     "</style></head><body>" +
     renderFulltextReadingControls() +
