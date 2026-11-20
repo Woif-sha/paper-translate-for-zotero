@@ -181,10 +181,14 @@ export function validateProviderConfiguration(
 export function validateProviderConfigurationForSave(
   providers: ModelProviderGroup[],
   activeModelId: string,
+  editedProviderId?: string,
 ): ModelProviderConfiguration {
   const configuration = validateProviderConfiguration(providers, activeModelId);
   for (const provider of configuration.providers) {
-    if (provider.authMode === "openai_compatible")
+    if (
+      provider.authMode === "openai_compatible" &&
+      (editedProviderId === undefined || provider.id === editedProviderId)
+    )
       resolveApiEndpoint(
         provider.apiBase,
         provider.protocol ?? "chat_completions",
@@ -267,10 +271,12 @@ export function getModelProviderConfiguration(): ModelProviderConfiguration {
 export function setModelProviderConfiguration(
   providers: ModelProviderGroup[],
   activeModelId: string,
+  editedProviderId?: string,
 ): ModelProviderConfiguration {
   const configuration = validateProviderConfigurationForSave(
     providers,
     activeModelId,
+    editedProviderId,
   );
   persistConfiguration(configuration);
   notifyListeners();

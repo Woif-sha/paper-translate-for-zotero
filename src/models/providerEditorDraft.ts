@@ -91,11 +91,21 @@ export class ProviderEditorDraft {
     this.acceptSaved(providers);
   }
 
-  save(saveConfiguration: () => ModelProviderGroup[]): void {
+  save(
+    providerId: string,
+    saveConfiguration: () => ModelProviderGroup[],
+  ): void {
     // Saving notifies open editors synchronously, before the write returns.
     this.saving = true;
     try {
-      this.acceptSaved(saveConfiguration());
+      const saved = saveConfiguration();
+      this.base = JSON.stringify(saved);
+      const committed = saved.find((provider) => provider.id === providerId);
+      this.providers = committed
+        ? this.providers.map((provider) =>
+            provider.id === providerId ? clone(committed) : provider,
+          )
+        : this.providers.filter((provider) => provider.id !== providerId);
     } finally {
       this.saving = false;
     }
