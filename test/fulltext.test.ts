@@ -4,6 +4,7 @@ import {
   mkdir,
   readFile,
   rm,
+  rmdir,
   stat,
   writeFile,
   rename,
@@ -553,6 +554,11 @@ test("validated source to Zotero attachment, pause/resume and cache reuse", asyn
         await rename(options.tmpPath, path);
       },
       makeDirectory: (path: string) => mkdir(path, { recursive: true }),
+      async remove(path: string) {
+        if (!existsSync(path)) return;
+        if ((await stat(path)).isDirectory()) await rmdir(path);
+        else await rm(path);
+      },
     };
     globals.ztoolkit = {
       getGlobal: () => async (url: string, init: RequestInit) => {
@@ -618,23 +624,29 @@ test("validated source to Zotero attachment, pause/resume and cache reuse", asyn
     const html = await readFile(outputPath, "utf8");
     assert.match(html, /data:image\/png;base64,/u);
     assert.match(html, /中文译文/u);
-    const checkpoints = await readdir(
-      join(root, "paper-translate-for-zotero-fulltext", "1-" + sourceKey),
+    const context = join(root, "paper-translate-for-zotero", parentKey);
+    const checkpoint = join(context, "fulltext-" + sourceKey + ".json");
+    const raw = await readFile(checkpoint, "utf8");
+    assert.doesNotMatch(raw, /private-fixture-key/u);
+    assert.equal(
+      existsSync(join(root, "paper-translate-for-zotero-fulltext")),
+      false,
     );
-    const checkpoint = checkpoints.find((name) => name.startsWith("blocks-"))!;
-    assert.ok(checkpoint);
-    assert.doesNotMatch(
-      await readFile(
-        join(
-          root,
-          "paper-translate-for-zotero-fulltext",
-          "1-" + sourceKey,
-          checkpoint,
-        ),
-        "utf8",
-      ),
-      /private-fixture-key/u,
+    const saved = JSON.parse(raw);
+    const [[hash, blocks]] = Object.entries(saved.versions);
+    const legacyRoot = join(root, "paper-translate-for-zotero-fulltext");
+    const legacy = join(legacyRoot, "1-" + sourceKey);
+    const alternateHash = "f".repeat(64);
+    await mkdir(legacy, { recursive: true });
+    await writeFile(
+      join(legacy, "blocks-" + hash + ".json"),
+      JSON.stringify(blocks),
     );
+    await writeFile(
+      join(legacy, "blocks-" + alternateHash + ".json"),
+      JSON.stringify(blocks),
+    );
+    await rm(checkpoint);
     const count = requests;
     outputTitle = "全文翻译 · 中英对照";
     assert.equal((await startFulltext(10, () => {})).id, 20);
@@ -642,12 +654,16 @@ test("validated source to Zotero attachment, pause/resume and cache reuse", asyn
     assert.equal(outputTitle, "Beam mechanics in layered elastic-Translate");
     assert.equal(titleSaves, 1);
     assert.equal(requests, count);
+    assert.equal(existsSync(legacyRoot), false);
+    assert.deepEqual(JSON.parse(await readFile(checkpoint, "utf8")), {
+      schemaVersion: 1,
+      versions: { [hash]: blocks, [alternateHash]: blocks },
+    });
     assert.deepEqual(
       await readFile(join(sourceDir, "images", "plot.png")),
       png,
     );
     assert.equal(await readFile(join(sourceDir, "full.md"), "utf8"), body);
-    const context = join(root, "paper-translate-for-zotero", parentKey);
     assert.equal(
       JSON.parse(await readFile(join(context, "_paper_source.json"), "utf8"))
         .parentItemKey,
