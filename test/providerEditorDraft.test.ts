@@ -117,7 +117,7 @@ test("saving Codex settings retains inactive API memory across the next editor i
   const memory = new ProviderEditorDraft(saved, "");
   memory.switchAuth(memory.providers[0], "codex_auth");
   const committed = memory.providers.map(validateProviderGroup);
-  memory.save(() => committed);
+  memory.save("p", () => committed);
   memory.remember();
   const restored = new ProviderEditorDraft(committed, read());
   restored.switchAuth(restored.providers[0], "openai_compatible");

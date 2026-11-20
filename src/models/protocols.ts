@@ -115,18 +115,31 @@ export function normalizeApiSettings(
   };
 }
 
-/** Resolve only the explicitly selected protocol; never rewrite another endpoint. */
-export function resolveApiEndpoint(
-  apiBase: string,
-  protocol: ApiProtocol,
-): string {
+export function parseApiAddress(apiBase: string): URL {
   let url: URL;
   try {
     url = new URL(apiBase.trim());
   } catch {
     throw new Error("Invalid API address / API 地址无效");
   }
-  if (url.protocol !== "https:") throw new Error("API address must use HTTPS");
+  const isLoopback =
+    url.hostname === "localhost" ||
+    url.hostname === "[::1]" ||
+    /^127\.\d+\.\d+\.\d+$/u.test(url.hostname);
+  if (url.protocol !== "https:" && !(url.protocol === "http:" && isLoopback)) {
+    throw new Error(
+      "API address must use HTTPS unless it is a loopback address / 仅本机回环地址可使用 HTTP",
+    );
+  }
+  return url;
+}
+
+/** Resolve only the explicitly selected protocol; never rewrite another endpoint. */
+export function resolveApiEndpoint(
+  apiBase: string,
+  protocol: ApiProtocol,
+): string {
+  const url = parseApiAddress(apiBase);
   if (url.username || url.password || url.hash) {
     throw new Error("API address cannot contain credentials or a fragment");
   }

@@ -1,5 +1,6 @@
 import {
   normalizeApiSettings,
+  parseApiAddress,
   resolveApiEndpoint,
   type ApiSettings,
 } from "./protocols";
@@ -180,10 +181,14 @@ export function validateProviderConfiguration(
 export function validateProviderConfigurationForSave(
   providers: ModelProviderGroup[],
   activeModelId: string,
+  editedProviderId?: string,
 ): ModelProviderConfiguration {
   const configuration = validateProviderConfiguration(providers, activeModelId);
   for (const provider of configuration.providers) {
-    if (provider.authMode === "openai_compatible")
+    if (
+      provider.authMode === "openai_compatible" &&
+      (editedProviderId === undefined || provider.id === editedProviderId)
+    )
       resolveApiEndpoint(
         provider.apiBase,
         provider.protocol ?? "chat_completions",
@@ -266,10 +271,12 @@ export function getModelProviderConfiguration(): ModelProviderConfiguration {
 export function setModelProviderConfiguration(
   providers: ModelProviderGroup[],
   activeModelId: string,
+  editedProviderId?: string,
 ): ModelProviderConfiguration {
   const configuration = validateProviderConfigurationForSave(
     providers,
     activeModelId,
+    editedProviderId,
   );
   persistConfiguration(configuration);
   notifyListeners();
@@ -382,15 +389,7 @@ function migrateStoredProviderNames(configuration: {
 
 function normalizeApiBase(value: string): string {
   const normalized = value.trim();
-  let parsed: URL;
-  try {
-    parsed = new URL(normalized);
-  } catch (error) {
-    throw new Error(`API Base 不是有效 URL：${String(error)}`);
-  }
-  if (parsed.protocol !== "https:") {
-    throw new Error("API Base 必须使用 HTTPS");
-  }
+  parseApiAddress(normalized);
   return normalized;
 }
 

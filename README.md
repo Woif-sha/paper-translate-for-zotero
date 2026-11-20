@@ -7,6 +7,8 @@
 
 你可以在原文旁直接查看译文，也可以翻译图表中的文字。每篇论文整理出的背景和术语会保留在本地，供后续阅读使用。
 
+可以复用已有的 MinerU 解析结果，快速生成带图表和公式的双语 HTML 全文翻译，直接在 Zotero 中阅读。
+
 [下载插件](https://github.com/Woif-sha/paper-translate-for-zotero/releases) · [开始使用](#开始使用) · [更新记录](CHANGELOG.md) · [反馈问题](https://github.com/Woif-sha/paper-translate-for-zotero/issues)
 
 ## 功能介绍
@@ -63,6 +65,18 @@
 
 图片取词需要完整的 MinerU 解析结果和支持图片输入的模型，使用的是当前附件对应的本地 MinerU 图片。
 
+### 全文翻译
+
+全文翻译也基于 MinerU 对当前 PDF 附件的解析结果。
+
+在 PDF 附件的右键菜单中选择「Paper Translate → 全文翻译」，或打开 PDF 后点击工具栏里的全文翻译按钮，即可生成双语 HTML 附件。
+
+支持批量全文翻译，可在翻译过程中追加文献。
+
+![Zotero 中的双语全文，左侧显示目录，正文保留数学公式，右上角可切换阅读模式](.github/assets/screenshots/fulltext-translation.png)
+
+译文保留章节、图表和公式。打开 HTML 后，可以在工具栏切换「双语」「中文」「原文」。
+
 ### 使用自己常用的模型
 
 插件支持 Codex 登录和 API Key，可以保存多个服务商与模型，在 Reader 侧栏选择当前使用的型号。你可以沿用已有的模型服务，翻译、背景整理、术语提取和图片取词都会使用当前模型。
@@ -88,7 +102,7 @@ _在服务商卡片中配置 Codex 模型与推理强度，已保存的模型可
 
 **Codex 登录**：先安装 Codex CLI，并在终端执行 `codex login`，然后在服务商卡片中选择账户可用的型号。
 
-**API Key**：填写服务商名称，选择接口预设，填写 HTTPS API 地址与 API Key，再选择模型。自定义接口需要明确选择 Chat Completions、Responses 或 Anthropic Messages 协议。
+**API Key**：填写服务商名称，选择接口预设，填写 API 地址与 API Key，再选择模型。自定义接口需要明确选择 Chat Completions、Responses 或 Anthropic Messages 协议。仅本机回环地址（如 `http://127.0.0.1:8518/v1`、`localhost` 和 `[::1]`）可使用 HTTP，其他地址须使用 HTTPS。
 
 连接信息完整后会自动加载模型目录；找不到所需型号时，可以刷新目录、开启“显示全部”，或选择“自定义型号…”手动填写。图中的型号只是配置示例，请选择自己账户可用的模型。
 
@@ -136,5 +150,7 @@ Codex Auth 提示登录失效时，在终端重新执行 `codex login`。API Key
 ## 致谢与许可
 
 Reader 交互和部分 Zotero 插件结构来自 [Translate for Zotero](https://github.com/windingwind/zotero-pdf-translate)。MinerU 缓存约定、Codex 认证、模型服务商注册和 OpenAI-compatible 传输设计参考了 [llm-for-zotero](https://github.com/yilewang/llm-for-zotero)。复用范围和提交哈希见 [NOTICE](NOTICE)。
+
+全文翻译的分段处理、断点续译和双语 HTML 附件设计参考了 [Zotero Context Translate](https://github.com/maverickzyc/zotero-context-translate)，并复用了 llm-for-zotero 生成的 MinerU 解析结果。
 
 本项目使用 [AGPL-3.0-or-later](LICENSE) 许可。

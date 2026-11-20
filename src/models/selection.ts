@@ -12,6 +12,7 @@ export type ModelSelectionDependencies = {
   setConfiguration(
     providers: ModelProviderGroup[],
     activeModelId: string,
+    editedProviderId?: string,
   ): ModelProviderConfiguration;
   cancelModelTasks(): void;
 };
@@ -21,6 +22,7 @@ export type ModelSelectionActions = {
   saveModelProviderConfiguration(
     providers: ModelProviderGroup[],
     activeModelId: string,
+    editedProviderId?: string,
   ): ModelProviderConfiguration;
 };
 
@@ -29,8 +31,17 @@ export function createModelSelectionActions(
 ): ModelSelectionActions {
   return {
     switchActiveModel: (modelId) => selectActiveModel(modelId, dependencies),
-    saveModelProviderConfiguration: (providers, activeModelId) =>
-      saveProviderConfiguration(providers, activeModelId, dependencies),
+    saveModelProviderConfiguration: (
+      providers,
+      activeModelId,
+      editedProviderId,
+    ) =>
+      saveProviderConfiguration(
+        providers,
+        activeModelId,
+        dependencies,
+        editedProviderId,
+      ),
   };
 }
 
@@ -49,11 +60,13 @@ export function saveProviderConfiguration(
   providers: ModelProviderGroup[],
   activeModelId: string,
   dependencies: ModelSelectionDependencies,
+  editedProviderId?: string,
 ): ModelProviderConfiguration {
   const current = dependencies.getConfiguration();
   const validated = validateProviderConfigurationForSave(
     providers,
     activeModelId,
+    editedProviderId,
   );
   const previousActive = requireRuntimeModel(current, current.activeModelId);
   const nextActive = requireRuntimeModel(validated, validated.activeModelId);
@@ -66,6 +79,7 @@ export function saveProviderConfiguration(
   return dependencies.setConfiguration(
     validated.providers,
     validated.activeModelId,
+    editedProviderId,
   );
 }
 
